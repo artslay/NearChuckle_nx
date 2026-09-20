@@ -545,18 +545,72 @@ static void logUnrecoveredFault(ThreadExceptionDump* ctx) {
     static bool logged = false;
     if (logged) return;
     logged = true;
-    char buf[256];
-    snprintf(buf, sizeof(buf), "UNRECOVERED FAULT desc=0x%x esr=0x%08x pc=%p far=%p lr=%p sp=%p",
-             (unsigned)ctx->error_desc, ctx->esr, (void*)ctx->pc.x, (void*)ctx->far.x,
-             (void*)ctx->lr.x, (void*)ctx->sp.x);
+
+    char buf[320];
+    snprintf(buf, sizeof(buf),
+             "UNRECOVERED FAULT desc=0x%x esr=0x%08x pc=%p far=%p lr=%p sp=%p fp=%p x0=%p x1=%p x2=%p x3=%p",
+             (unsigned)ctx->error_desc, ctx->esr,
+             (void*)ctx->pc.x, (void*)ctx->far.x,
+             (void*)ctx->lr.x, (void*)ctx->sp.x, (void*)ctx->fp.x,
+             (void*)ctx->cpu_gprs[0].x, (void*)ctx->cpu_gprs[1].x,
+             (void*)ctx->cpu_gprs[2].x, (void*)ctx->cpu_gprs[3].x);
     compatLogRaw(buf);
+
+    snprintf(buf, sizeof(buf),
+             "UNRECOVERED FAULT x4=%p x5=%p x6=%p x7=%p x8=%p x9=%p x10=%p x11=%p x12=%p x13=%p x14=%p x15=%p",
+             (void*)ctx->cpu_gprs[4].x, (void*)ctx->cpu_gprs[5].x,
+             (void*)ctx->cpu_gprs[6].x, (void*)ctx->cpu_gprs[7].x,
+             (void*)ctx->cpu_gprs[8].x, (void*)ctx->cpu_gprs[9].x,
+             (void*)ctx->cpu_gprs[10].x, (void*)ctx->cpu_gprs[11].x,
+             (void*)ctx->cpu_gprs[12].x, (void*)ctx->cpu_gprs[13].x,
+             (void*)ctx->cpu_gprs[14].x, (void*)ctx->cpu_gprs[15].x);
+    compatLogRaw(buf);
+
     char where[256];
     elfDescribePc(ctx->pc.x, where, sizeof(where));
     snprintf(buf, sizeof(buf), "UNRECOVERED FAULT at %s", where);
     compatLogRaw(buf);
+
     elfDescribePc(ctx->lr.x, where, sizeof(where));
     snprintf(buf, sizeof(buf), "UNRECOVERED FAULT lr in %s", where);
     compatLogRaw(buf);
+
+    // PC=0 with LR inside a guest function means the fault is almost certainly
+    // an indirect branch through a null function pointer. On AArch64 the normal
+    // call form is BLR Xn, whose encoding is 0xD63F0000 | (n << 5). Decode the
+    // instruction immediately before LR and print both the selected register
+    // and its live value. This turns "EF_PipelineShutdown()+0x2a0, PC=0" into
+    // the exact null callback/dispatch slot the renderer tried to invoke.
+    const uint64_t lr = ctx->lr.x;
+    if (lr >= 4 && (lr & 3) == 0) {
+        const uint32_t blr = *(const volatile uint32_t*)(uintptr_t)(lr - 4);
+        const uint32_t br  = *(const volatile uint32_t*)(uintptr_t)(lr - 4);
+        const uint32_t op  = blr & 0xFFFFFC1Fu;
+        if (op == 0xD63F0000u || (br & 0xFFFFFC1Fu) == 0xD61F0000u) {
+            const unsigned rn = (blr >> 5) & 31u;
+            uint64_t target = 0;
+            if (rn < 31) target = ctx->cpu_gprs[rn].x;
+            else         target = ctx->lr.x;
+            snprintf(buf, sizeof(buf),
+                     "UNRECOVERED FAULT indirect-call: [lr-4]=0x%08x %s x%u=%p",
+                     blr, (op == 0xD63F0000u) ? "BLR" : "BR",
+                     rn, (void*)target);
+            compatLogRaw(buf);
+        } else {
+            // Dump a small window even when LR-4 is not BLR/BR; this catches
+            // veneers, tail calls and unusual hand-written dispatch sequences.
+            const uint32_t i0 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x10);
+            const uint32_t i1 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x0c);
+            const uint32_t i2 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x08);
+            const uint32_t i3 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x04);
+            const uint32_t i4 = *(const volatile uint32_t*)(uintptr_t)(lr + 0x00);
+            snprintf(buf, sizeof(buf),
+                     "UNRECOVERED FAULT LR insns: -10=%08x -0c=%08x -08=%08x -04=%08x +00=%08x",
+                     i0, i1, i2, i3, i4);
+            compatLogRaw(buf);
+        }
+    }
+
     elfLogAddrInfo("UNRECOVERED FAULT pc", ctx->pc.x);
     elfLogAddrInfo("UNRECOVERED FAULT far", ctx->far.x);
 }
