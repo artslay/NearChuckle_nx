@@ -2326,14 +2326,22 @@ static bool pakExtractPrefix(const std::string& pakPath,
         if (normalized.empty())
             continue;
 
-        // Keep the original archive entry spelling on disk.  CryEngine's
-        // internal FindFirst() can use the exact Android-side path spelling,
-        // so lowercasing the extracted tree breaks shader enumeration.
-        if (!pakExtractEntry(pakPath, normalized, name))
+        // CryPak::AdjustFileName() lowercases the physical directory path on
+        // Linux before FindFirst().  Keep directory components lowercase so
+        // enumeration reaches the extracted tree, but preserve the original
+        // filename spelling for the entries returned by FindFirst().
+        std::string materialized = name;
+        for (size_t slash = materialized.find('/'); slash != std::string::npos;
+             slash = materialized.find('/', slash + 1)) {
+            for (size_t j = 0; j < slash; ++j)
+                materialized[j] = (char)std::tolower((unsigned char)materialized[j]);
+        }
+
+        if (!pakExtractEntry(pakPath, normalized, materialized))
             continue;
 
         extractedAny = true;
-        compatLogFmt("pak DIR EXTRACT: %s <- %s", name.c_str(), pakPath.c_str());
+        compatLogFmt("pak DIR EXTRACT: %s <- %s", materialized.c_str(), pakPath.c_str());
     }
 
     return true;
