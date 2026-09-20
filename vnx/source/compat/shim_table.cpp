@@ -257,7 +257,26 @@ static int stub_fesetround(int r) { return fesetround(r); }
 static char* stub_strptime(const char*, const char*, struct tm*) { return nullptr; }
 // clearerr / fileno / fdopen
 static void  stub_clearerr(FILE* f)              { clearerr(f); }
-static int   stub_fileno(FILE* f)                { return (f) ? (int)(size_t)f : -1; }
+static int   stub_fileno(FILE* f)                { return f ? ::fileno(f) : -1; }
+static int   stub_fstat64(int fd, void* out) {
+    if (!out) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    struct stat st = {};
+    const int rc = ::fstat(fd, &st);
+    if (rc != 0)
+        return rc;
+
+    // Android arm64 stat64 places st_mtime at offset 80.  GetModificationTime()
+    // only consumes that field here, so provide the value in the ABI expected
+    // by the game while keeping the host-side fstat implementation.
+    std::memset(out, 0, 128);
+    std::memcpy(static_cast<unsigned char*>(out) + 80,
+                &st.st_mtime, sizeof(st.st_mtime));
+    return 0;
+}
 static FILE* stub_fdopen(int fd, const char* m)  { (void)fd; (void)m; return nullptr; }
 // tmpfile — forward to newlib
 static FILE* stub_tmpfile()                      { return tmpfile(); }
@@ -3382,6 +3401,7 @@ static const ShimEntry g_shims[] = {
     {"stat",        (void*)stub_stat},
     {"stat64",       (void*)stub_stat},
     {"fstat",       (void*)fstat},
+    {"fstat64",      (void*)stub_fstat64},
     {"mkdir",       (void*)mkdir},
     {"opendir",     (void*)stub_opendir},
     {"readdir",     (void*)readdir},
