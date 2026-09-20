@@ -2326,11 +2326,14 @@ static bool pakExtractPrefix(const std::string& pakPath,
         if (normalized.empty())
             continue;
 
-        if (!pakExtractEntry(pakPath, normalized, normalized))
+        // Keep the original archive entry spelling on disk.  CryEngine's
+        // internal FindFirst() can use the exact Android-side path spelling,
+        // so lowercasing the extracted tree breaks shader enumeration.
+        if (!pakExtractEntry(pakPath, normalized, name))
             continue;
 
         extractedAny = true;
-        compatLogFmt("pak DIR EXTRACT: %s <- %s", normalized.c_str(), pakPath.c_str());
+        compatLogFmt("pak DIR EXTRACT: %s <- %s", name.c_str(), pakPath.c_str());
     }
 
     return true;
