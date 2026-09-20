@@ -82,6 +82,8 @@ extern "C" {
 #include <string>
 #include <algorithm>
 
+static std::string asciiLower(std::string value);
+
 // Case-insensitive filesystem resolver used by file wrappers below.
 static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
 
@@ -1465,7 +1467,7 @@ static bool pakExtractEntrySuffix(const std::string& pakPath,
     return wrote;
 }
 
-static void prepareShaderSourceFiles() {
+static void prepareShaderSourceFiles(const char* dataRoot) {
     const char* wanted[] = {
         "Shaders/statenocull.ext",
         "Shaders/hdrprocess.ext",
@@ -1495,7 +1497,8 @@ static void prepareShaderSourceFiles() {
 
     std::vector<std::string> archives;
     int visited = 0;
-    collectAndroidArchivesRecursive(config.data_root, archives, 0, visited);
+    const char* root = (dataRoot && *dataRoot) ? dataRoot : ".";
+    collectAndroidArchivesRecursive(root, archives, 0, visited);
 
     int looseVisited = 0;
     int foundCount = 0;
@@ -1515,7 +1518,7 @@ static void prepareShaderSourceFiles() {
         }
 
         std::string loose;
-        if (findLooseShaderSourceRecursive(config.data_root, target, loose,
+        if (findLooseShaderSourceRecursive(root, target, loose,
                                            0, looseVisited)) {
             ensureParentDirectories(target);
             if (copyFileBinary(loose, target)) {
@@ -3036,7 +3039,7 @@ static void probeShaderPakEntries() {
     }
 }
 
-void compatPrepareShaderDirectories() {
+void compatPrepareShaderDirectories(const char* dataRoot) {
     const char* dirs[] = {
         "Shaders/Scripts",
         "Shaders/HWScripts",
@@ -3046,7 +3049,7 @@ void compatPrepareShaderDirectories() {
     // First pull the critical system shader files from any loose Android asset
     // tree or secondary APK/OBB/ZIP source. FCData/*.pak alone is not enough
     // for this Far Cry build.
-    prepareShaderSourceFiles();
+    prepareShaderSourceFiles(dataRoot);
 
     for (size_t i = 0; dirs[i]; ++i) {
         if (tryMaterializePakDirectory(dirs[i]))
