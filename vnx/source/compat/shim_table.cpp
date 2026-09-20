@@ -1091,14 +1091,17 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
 }
 
 static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
-    if (!requested || !mode || mode[0] != 'r') return nullptr;
+    if (!requested || !mode || mode[0] != 'r')
+        return nullptr;
 
     const std::string wanted = pakNormalizeName(requested);
-    if (wanted.empty()) return nullptr;
+    if (wanted.empty())
+        return nullptr;
 
     const std::string cacheRoot = "_pakcache";
     std::string safeName = wanted;
-    for (char& c : safeName) if (c == '/') c = '_';
+    for (char& c : safeName)
+        if (c == '/') c = '_';
     const std::string outPath = cacheRoot + "/" + safeName;
 
     struct stat cached = {};
@@ -1111,32 +1114,56 @@ static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
     }
 
     const char* roots[] = {
-        "FCData/Localized", "fcdata/Localized",
-        "FCData/localized", "fcdata/localized", nullptr
-    };
-    const char* paks[] = {
-        "english.pak", "english1.pak", "english2.pak", nullptr
+        ".",
+        "FCData",
+        "fcdata",
+        "FCData/Localized",
+        "fcdata/Localized",
+        "FCData/localized",
+        "fcdata/localized",
+        nullptr
     };
 
     for (size_t r = 0; roots[r]; ++r) {
-        for (size_t i = 0; paks[i]; ++i) {
-            std::string pakPath = std::string(roots[r]) + "/" + paks[i];
+        DIR* dir = opendir(roots[r]);
+        if (!dir)
+            continue;
+
+        while (dirent* ent = readdir(dir)) {
+            const char* name = ent->d_name;
+            const size_t len = std::strlen(name);
+            if (len < 4)
+                continue;
+
+            const char c0 = (char)std::tolower((unsigned char)name[len - 4]);
+            const char c1 = (char)std::tolower((unsigned char)name[len - 3]);
+            const char c2 = (char)std::tolower((unsigned char)name[len - 2]);
+            const char c3 = (char)std::tolower((unsigned char)name[len - 1]);
+            if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
+                continue;
+
+            std::string pakPath = std::string(roots[r]);
+            if (pakPath != ".")
+                pakPath += "/";
+            pakPath += name;
+
             struct stat st = {};
-            if (::stat(pakPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
-                std::string resolved;
-                if (!resolvePathCaseInsensitive(pakPath.c_str(), resolved)) continue;
-                pakPath = resolved;
-                if (::stat(pakPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) continue;
-            }
+            if (::stat(pakPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+                continue;
+
             if (pakExtractEntry(pakPath, wanted, outPath)) {
                 FILE* f = fopen(outPath.c_str(), mode);
                 if (f) {
                     compatLogFmt("pak EXTRACT: %s <- %s", requested, pakPath.c_str());
+                    closedir(dir);
                     return f;
                 }
             }
         }
+
+        closedir(dir);
     }
+
     return nullptr;
 }
 
