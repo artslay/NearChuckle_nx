@@ -1243,6 +1243,218 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
 }
 
 
+static bool pakFindUniqueBasename(const std::string& pakPath,
+                                  const std::string& wantedBasename,
+                                  std::string& matchedEntry) {
+    matchedEntry.clear();
+
+    FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak)
+        return false;
+
+    if (fseek(pak, 0, SEEK_END) != 0) {
+        fclose(pak);
+        return false;
+    }
+
+    const long fileSize = ftell(pak);
+    if (fileSize < 22) {
+        fclose(pak);
+        return false;
+    }
+
+    const size_t tailSize =
+        (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
+    std::vector<unsigned char> tail(tailSize);
+    if (fseek(pak, fileSize - (long)tailSize, SEEK_SET) != 0 ||
+        !pakReadExact(pak, tail.data(), tail.size())) {
+        fclose(pak);
+        return false;
+    }
+
+    size_t eocd = tail.size();
+    while (eocd >= 22) {
+        --eocd;
+        if (eocd + 4 <= tail.size() &&
+            pakRd32(tail.data() + eocd) == 0x06054b50u)
+            break;
+    }
+    if (eocd + 22 > tail.size()) {
+        fclose(pak);
+        return false;
+    }
+
+    const uint16_t entries = pakRd16(tail.data() + eocd + 10);
+    const uint32_t cdSize = pakRd32(tail.data() + eocd + 12);
+    const uint32_t cdOffset = pakRd32(tail.data() + eocd + 16);
+    if (!entries || !cdSize || cdSize > 128 * 1024 * 1024u) {
+        fclose(pak);
+        return false;
+    }
+
+    std::vector<unsigned char> cd(cdSize);
+    if (fseek(pak, (long)cdOffset, SEEK_SET) != 0 ||
+        !pakReadExact(pak, cd.data(), cd.size())) {
+        fclose(pak);
+        return false;
+    }
+
+    const std::string wanted =
+        pakNormalizeName(wantedBasename.c_str());
+
+    std::string firstMatch;
+    int matches = 0;
+    size_t pos = 0;
+
+    for (uint16_t i = 0; i < entries && pos + 46 <= cd.size(); ++i) {
+        const unsigned char* h = cd.data() + pos;
+        if (pakRd32(h) != 0x02014b50u)
+            break;
+
+        const uint16_t nameLen = pakRd16(h + 28);
+        const uint16_t extraLen = pakRd16(h + 30);
+        const uint16_t commentLen = pakRd16(h + 32);
+        const size_t recordSize =
+            46u + nameLen + extraLen + commentLen;
+
+        if (pos + recordSize > cd.size())
+            break;
+
+        const std::string entry(
+            (const char*)h + 46, nameLen);
+        const std::string normalized =
+            pakNormalizeName(entry.c_str());
+
+        size_t slash = normalized.find_last_of('/');
+        const std::string base =
+            (slash == std::string::npos)
+                ? normalized
+                : normalized.substr(slash + 1);
+
+        if (base == wanted) {
+            ++matches;
+            if (matches == 1) {
+                firstMatch = entry;
+                compatLogFmt(
+                    "PAK BASENAME MATCH: %s <- %s :: %s",
+                    wantedBasename.c_str(),
+                    pakPath.c_str(),
+                    normalized.c_str());
+            }
+        }
+
+        pos += recordSize;
+    }
+
+    fclose(pak);
+
+    if (matches == 1) {
+        matchedEntry = firstMatch;
+        return true;
+    }
+
+    if (matches > 1) {
+        compatLogFmt(
+            "PAK BASENAME AMBIGUOUS: %s <- %s (%d matches)",
+            wantedBasename.c_str(), pakPath.c_str(), matches);
+    }
+
+    return false;
+}
+
+static bool tryMaterializeUniquePakBasename(const char* targetPath) {
+    if (!targetPath || !*targetPath)
+        return false;
+
+    const std::string normalizedTarget =
+        pakNormalizeName(targetPath);
+
+    const size_t slash =
+        normalizedTarget.find_last_of('/');
+    const std::string wantedBasename =
+        (slash == std::string::npos)
+            ? normalizedTarget
+            : normalizedTarget.substr(slash + 1);
+
+    if (wantedBasename.empty())
+        return false;
+
+    std::string resolvedRoot;
+    if (!resolvePathCaseInsensitive("FCData", resolvedRoot)) {
+        compatLogFmt(
+            "PAK BASENAME NOT FOUND: %s (FCData missing)",
+            targetPath);
+        return false;
+    }
+
+    DIR* root = opendir(resolvedRoot.c_str());
+    if (!root) {
+        compatLogFmt(
+            "PAK BASENAME NOT FOUND: %s (cannot open FCData)",
+            targetPath);
+        return false;
+    }
+
+    std::string uniquePak;
+    std::string uniqueEntry;
+    int globalMatches = 0;
+
+    for (struct dirent* ent = readdir(root); ent; ent = readdir(root)) {
+        const char* name = ent->d_name;
+        const size_t len = std::strlen(name);
+        if (len < 4 ||
+            std::tolower((unsigned char)name[len - 4]) != '.' ||
+            std::tolower((unsigned char)name[len - 3]) != 'p' ||
+            std::tolower((unsigned char)name[len - 2]) != 'a' ||
+            std::tolower((unsigned char)name[len - 1]) != 'k')
+            continue;
+
+        const std::string pakPath =
+            resolvedRoot + "/" + name;
+        std::string matchedEntry;
+
+        if (!pakFindUniqueBasename(
+                pakPath, wantedBasename, matchedEntry))
+            continue;
+
+        ++globalMatches;
+        if (globalMatches == 1) {
+            uniquePak = pakPath;
+            uniqueEntry = matchedEntry;
+        }
+    }
+
+    closedir(root);
+
+    if (globalMatches == 0) {
+        compatLogFmt(
+            "PAK BASENAME NOT FOUND: %s",
+            targetPath);
+        return false;
+    }
+
+    if (globalMatches > 1) {
+        compatLogFmt(
+            "PAK BASENAME AMBIGUOUS: %s (%d PAKs)",
+            targetPath, globalMatches);
+        return false;
+    }
+
+    if (!pakExtractEntry(
+            uniquePak, uniqueEntry, targetPath)) {
+        compatLogFmt(
+            "PAK BASENAME EXTRACT FAILED: %s <- %s :: %s",
+            targetPath, uniquePak.c_str(), uniqueEntry.c_str());
+        return false;
+    }
+
+    compatLogFmt(
+        "PAK BASENAME MATERIALIZED: %s <- %s :: %s",
+        targetPath, uniquePak.c_str(), uniqueEntry.c_str());
+    return true;
+}
+
+
 
 // ─── Shader source discovery outside FCData/*.pak ────────────────────────────
 //
@@ -3291,6 +3503,15 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
             compatLogFmt("pak DIR READY: %s", dirs[i]);
         logShaderScriptInventory(dirs[i]);
     }
+
+    // CommonSubroutines is referenced by the GL Cg shader loader by logical
+    // name, and its archive path is not guaranteed to match the runtime path.
+    // Only materialize it when there is exactly one basename match across all
+    // FCData PAKs, so a duplicate name never gets chosen arbitrarily.
+    tryMaterializeUniquePakBasename(
+        "Shaders/Scripts/CommonSubroutines.csl");
+    tryMaterializeUniquePakBasename(
+        "Shaders/Scripts/CommonSubroutines.csi");
 
     // Also report the declaration tree independently. This is useful when a
     // package contains HWScripts but stores Declarations in another PAK.
