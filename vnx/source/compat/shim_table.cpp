@@ -899,7 +899,19 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         // Fall through: if the remap missed, the original path deserves its own
         // failure line rather than being swallowed by ours.
     }
+
     FILE* f = fopen(path, mode);
+    if (!f && path) {
+        std::string resolved;
+        if (resolvePathCaseInsensitive(path, resolved) && resolved != path) {
+            FILE* rf = fopen(resolved.c_str(), mode);
+            if (rf) {
+                compatLogFmt("fopen CASEFIX: %s -> %s", path, resolved.c_str());
+                f = rf;
+            }
+        }
+    }
+
     if (!f) {
         if (mode && mode[0] == 'r' && isOptionalLanguagePak(path)) {
             FILE* fallback = makeEmptyLanguagePak(path, mode);
@@ -907,24 +919,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 return fallback;
         }
 
-        // Some files a game reads are written for it before it runs — by a
-        // backend fetch, or by Java. Nothing here does that, so the read fails
-        // on a file the game is entitled to assume exists. Only consulted after
-        // a real open has already failed, so nothing real is ever shadowed.
         compatLogFmt("fopen FAIL: %s (mode=%s)", path ? path : "?", mode ? mode : "?");
         return f;
     }
-    // Default newlib stdio buffer is small (~1KB), so reading a single
-    // texture PNG off the SD card means dozens of small reads — each one a
-    // real IPC round-trip to the FS sysmodule, not free like a page-cached
-    // read on real Android. A 64KB buffer collapses that into a handful of
-    // syscalls for the sequential top-to-bottom access pattern decoders use
-    // (libpng, asset parsers, ...). NULL buf: newlib allocates/frees it
-    // itself, tied to the FILE*'s own lifetime, so no leak on fclose.
-    // The APK is the exception: the game seeks around inside it constantly, and
-    // a large stdio buffer makes that worse rather than better — every seek
-    // throws away read-ahead that was just paid for, turning a small asset read
-    // into hundreds of KB of card traffic. It gets the block cache instead.
+
     if (apkcache::adopt(f, path)) {
         setvbuf(f, nullptr, _IOFBF, 16 * 1024);
         compatLogFmt("apkcache: caching reads from %s", path);
@@ -973,12 +971,36 @@ static int sh_fclose(FILE* f) {
 static int stub_open(const char* path, int flags, ...) {
     int vfd = devUrandomOpen(path);
     if (vfd >= 0) return vfd;
+
+    va_list va;
+    va_start(va, flags);
+    int mode = 0;
+    if (flags & O_CREAT)
+        mode = va_arg(va, int);
+    va_end(va);
+
+    auto doOpen = [&](const char* p) -> int {
+        return (flags & O_CREAT) ? open(p, flags, mode) : open(p, flags);
+    };
+
     if (std::string mapped = obbRemap(path); !mapped.empty()) {
-        int mfd = open(mapped.c_str(), flags);
-        compatLogFmt("obb: open %s -> %s (fd=%d)", path, mapped.c_str(), mfd);
+        int mfd = doOpen(mapped.c_str());
+        compatLogFmt("obb: open %s -> %s (fd=%d)", path ? path : "?", mapped.c_str(), mfd);
         if (mfd >= 0) return mfd;
     }
-    int fd = open(path, flags);
+
+    int fd = doOpen(path);
+    if (fd < 0 && path) {
+        std::string resolved;
+        if (resolvePathCaseInsensitive(path, resolved) && resolved != path) {
+            int rfd = doOpen(resolved.c_str());
+            if (rfd >= 0) {
+                compatLogFmt("open CASEFIX: %s -> %s fd=%d", path, resolved.c_str(), rfd);
+                return rfd;
+            }
+        }
+    }
+
     if (fd < 0) compatLogFmt("open FAIL: %s flags=0x%x", path ? path : "?", flags);
     else        compatLogFmt("open OK:   %s flags=0x%x fd=%d", path ? path : "?", flags, fd);
     return fd;
@@ -1777,8 +1799,24 @@ static long  stub_pathconf(const char*, int) { return -1; }
 // The *at() family, resolved against the process CWD — Switch has no directory
 // file descriptors, and every caller here passes AT_FDCWD anyway.
 static int stub_openat(int, const char* path, int flags, ...) {
-    va_list va; va_start(va, flags); int mode = va_arg(va, int); va_end(va);
-    return open(path, flags, mode);
+    va_list va;
+    va_start(va, flags);
+    int mode = 0;
+    if (flags & O_CREAT)
+        mode = va_arg(va, int);
+    va_end(va);
+
+    auto doOpen = [&](const char* p) -> int {
+        return (flags & O_CREAT) ? open(p, flags, mode) : open(p, flags);
+    };
+
+    int fd = doOpen(path);
+    if (fd < 0 && path) {
+        std::string resolved;
+        if (resolvePathCaseInsensitive(path, resolved) && resolved != path)
+            fd = doOpen(resolved.c_str());
+    }
+    return fd;
 }
 
 // ─── Case-insensitive directory/file enumeration for CryPak ─────────────────
