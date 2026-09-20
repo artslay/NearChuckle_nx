@@ -848,10 +848,15 @@ static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
         return nullptr;
     };
 
+    int patched = 0;
+    int missing = 0;
     for (const PatchTarget& t : targets) {
         const Elf64_Sym* sym = findGuestSymbol(t.name);
-        if (!sym)
+        if (!sym) {
+            ++missing;
+            compatLogFmt("ELF: patch libXRenderOGL.so %s: symbol not present in dynamic symtab", t.name);
             continue;
+        }
 
         void* target = shimResolve(t.shim_name);
         if (!target)
@@ -881,9 +886,11 @@ static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
         memcpy(code, insn, sizeof(insn));
         memcpy(code + sizeof(insn), &target_addr, sizeof(target_addr));
 
+        ++patched;
         compatLogFmt("ELF: patch libXRenderOGL.so %s @+0x%llx -> %s %p",
                      t.name, (unsigned long long)rel, t.shim_name, target);
     }
+    compatLogFmt("ELF: libXRenderOGL find64 patch summary: patched=%d missing=%d", patched, missing);
 }
 
 
