@@ -482,6 +482,20 @@ static bool dispatchAchievement(const MethodEntry*, va_list&) {
     return false;
 }
 
+static jboolean dispatchBoolMethod(jobject recv, MethodEntry* e, va_list) {
+    if (!e) return JNI_FALSE;
+
+    const char* m = e->name;
+    JavaObj* self = jget(recv);
+
+    if (!strcmp(m, "hasNext") || !strcmp(m, "hasNextLine")) {
+        return (self && self->cls == JCls::Scanner &&
+                self->pos < self->data.size()) ? JNI_TRUE : JNI_FALSE;
+    }
+
+    return JNI_FALSE;
+}
+
 } // namespace
 
 // ─── Instance-method call stubs ───────────────────────────────────────────────
@@ -1002,7 +1016,8 @@ static void    s_ReleaseStringUTFChars(JNIEnv*, jstring, const char* c) { free((
 static jstring s_NewString(JNIEnv*, const jchar*, jsize) { return nullptr; }
 static jsize   s_GetStringLength(JNIEnv*, jstring)       { return 0; }
 static const jchar* s_GetStringChars(JNIEnv*, jstring, jboolean* cp) {
-    if (cp) *cp = JNI_FALSE; return nullptr;
+    if (cp) *cp = JNI_FALSE;
+    return nullptr;
 }
 static void    s_ReleaseStringChars(JNIEnv*, jstring, const jchar*) {}
 static void    s_GetStringRegion(JNIEnv*, jstring, jsize, jsize, jchar*) {}
@@ -1102,11 +1117,13 @@ static jobjectRefType s_GetObjectRefType(JNIEnv*, jobject)   { return JNILocalRe
 // ─── JavaVM stubs ─────────────────────────────────────────────────────────────
 static jint vm_DestroyJavaVM(JavaVM*) { return 0; }
 static jint vm_AttachCurrentThread(JavaVM*, JNIEnv** e, void*) {
-    if (e) *e = (JNIEnv*)g_jni_outer; return JNI_OK;
+    if (e) *e = (JNIEnv*)g_jni_outer;
+    return JNI_OK;
 }
 static jint vm_DetachCurrentThread(JavaVM*) { return 0; }
 static jint vm_GetEnv(JavaVM*, void** e, jint) {
-    if (e) *e = g_jni_outer; return JNI_OK;
+    if (e) *e = g_jni_outer;
+    return JNI_OK;
 }
 static jint vm_AttachDaemon(JavaVM*, JNIEnv** e, void*) {
     if (e) *e = (JNIEnv*)g_jni_outer; return JNI_OK;
