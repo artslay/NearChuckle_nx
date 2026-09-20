@@ -1914,8 +1914,14 @@ static long stub_sysconf(int n) {
     }
 }
 static char* stub_getcwd(char* buf, size_t sz) {
-    if (!buf || sz < 2) return nullptr;
-    buf[0] = '/'; buf[1] = '\0'; return buf;
+    if (!buf || sz == 0)
+        return nullptr;
+
+    // CryEngine uses getcwd() when building its master root and when its
+    // internal filesystem enumeration resolves relative paths. Returning "/"
+    // here makes paths such as Shaders/Scripts resolve from the Switch root
+    // instead of the game's data directory.
+    return ::getcwd(buf, sz);
 }
 // getrandom(2) works (libnx CSRNG) — libc++'s std::random_device may use it.
 // Other syscall numbers are logged so the compat log shows what the game wanted.
