@@ -1626,6 +1626,20 @@ static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
 
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
+    // Trace the guest call site for shader files. If this fires from a
+    // CryEngine renderer function while directory enumeration stays silent,
+    // we know the lookup reached the CRT path rather than our FindFirst shim.
+    const bool shaderPath = [&]() {
+        if (!path || !*path) return false;
+        std::string p = pakNormalizeName(path);
+        return p == "shaders" || p.rfind("shaders/", 0) == 0;
+    }();
+    if (shaderPath) {
+        char caller[256];
+        elfDescribePc((uint64_t)__builtin_return_address(0), caller, sizeof(caller));
+        compatLogFmt("SHADER fopen CALL: %s mode=%s caller=%s",
+                     path ? path : "?", mode ? mode : "?", caller);
+    }
     if (std::string mapped = obbRemap(path); !mapped.empty()) {
         FILE* mf = fopen(mapped.c_str(), mode);
         compatLogFmt("obb: fopen %s -> %s (%s)", path, mapped.c_str(),
