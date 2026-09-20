@@ -1173,8 +1173,7 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     compatLog("ELF: process-code copy complete");
     compatLogFlush();
 
-    // ── PT_LOAD permissions above make PF_X pages executable ────────────────
-    uint32_t this_svc_perm_code = 0;
+    // PT_LOAD permissions above make PF_X pages executable.
     bool code_is_exec = true;
 
     // ── Store DT_INIT / DT_INIT_ARRAY for deferred constructor run ──────────
