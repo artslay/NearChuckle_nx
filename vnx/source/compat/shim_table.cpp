@@ -1013,6 +1013,133 @@ static bool pakFindEntry(FILE* pak, const std::string& wanted,
     return false;
 }
 
+static bool pakExtractEntry(const std::string& pakPath, const std::string& wanted,
+                            const std::string& outPath) {
+    FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak) return false;
+
+    uint32_t localOffset = 0, compressedSize = 0, uncompressedSize = 0;
+    uint16_t method = 0;
+    if (!pakFindEntry(pak, wanted, localOffset, compressedSize,
+                      uncompressedSize, method)) {
+        fclose(pak);
+        return false;
+    }
+    if (!compressedSize || !uncompressedSize ||
+        compressedSize > 128 * 1024 * 1024u ||
+        uncompressedSize > 128 * 1024 * 1024u) {
+        fclose(pak);
+        return false;
+    }
+
+    unsigned char local[30];
+    if (fseek(pak, (long)localOffset, SEEK_SET) != 0 ||
+        !pakReadExact(pak, local, sizeof(local)) ||
+        pakRd32(local) != 0x04034b50u) {
+        fclose(pak);
+        return false;
+    }
+
+    const uint16_t nameLen = pakRd16(local + 26);
+    const uint16_t extraLen = pakRd16(local + 28);
+    const long dataOffset = (long)localOffset + 30L + nameLen + extraLen;
+    if (fseek(pak, dataOffset, SEEK_SET) != 0) {
+        fclose(pak);
+        return false;
+    }
+
+    std::vector<unsigned char> compressed(compressedSize);
+    std::vector<unsigned char> plain(uncompressedSize);
+    const bool readOk = pakReadExact(pak, compressed.data(), compressed.size());
+    fclose(pak);
+    if (!readOk) return false;
+
+    bool ok = false;
+    if (method == 0 && compressedSize == uncompressedSize) {
+        memcpy(plain.data(), compressed.data(), uncompressedSize);
+        ok = true;
+    } else if (method == 8) {
+        ok = pakInflateRaw(compressed.data(), compressed.size(),
+                           plain.data(), plain.size());
+    }
+    if (!ok) return false;
+
+    size_t slash = outPath.find_last_of('/');
+    if (slash != std::string::npos) {
+        const std::string dir = outPath.substr(0, slash);
+        std::string cur;
+        size_t pos = 0;
+        while (pos <= dir.size()) {
+            size_t end = dir.find('/', pos);
+            std::string part = dir.substr(pos, end == std::string::npos ?
+                                           dir.size() - pos : end - pos);
+            if (!part.empty()) {
+                if (!cur.empty()) cur += "/";
+                cur += part;
+                mkdir(cur.c_str(), 0755);
+            }
+            if (end == std::string::npos) break;
+            pos = end + 1;
+        }
+    }
+
+    FILE* out = fopen(outPath.c_str(), "wb");
+    if (!out) return false;
+    const bool wrote = fwrite(plain.data(), 1, plain.size(), out) == plain.size();
+    fclose(out);
+    return wrote;
+}
+
+static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
+    if (!requested || !mode || mode[0] != 'r') return nullptr;
+
+    const std::string wanted = pakNormalizeName(requested);
+    if (wanted.empty()) return nullptr;
+
+    const std::string cacheRoot = std::string(config.data_root) + "/_pakcache";
+    std::string safeName = wanted;
+    for (char& c : safeName) if (c == '/') c = '_';
+    const std::string outPath = cacheRoot + "/" + safeName;
+
+    struct stat cached = {};
+    if (::stat(outPath.c_str(), &cached) == 0 && S_ISREG(cached.st_mode)) {
+        FILE* f = fopen(outPath.c_str(), mode);
+        if (f) {
+            compatLogFmt("pak CACHE: %s", requested);
+            return f;
+        }
+    }
+
+    const char* roots[] = {
+        "FCData/Localized", "fcdata/Localized",
+        "FCData/localized", "fcdata/localized", nullptr
+    };
+    const char* paks[] = {
+        "english.pak", "english1.pak", "english2.pak", nullptr
+    };
+
+    for (size_t r = 0; roots[r]; ++r) {
+        for (size_t i = 0; paks[i]; ++i) {
+            std::string pakPath = std::string(config.data_root) + "/" + roots[r] + "/" + paks[i];
+            struct stat st = {};
+            if (::stat(pakPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+                std::string resolved;
+                if (!resolvePathCaseInsensitive(pakPath.c_str(), resolved)) continue;
+                pakPath = resolved;
+                if (::stat(pakPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) continue;
+            }
+            if (pakExtractEntry(pakPath, wanted, outPath)) {
+                FILE* f = fopen(outPath.c_str(), mode);
+                if (f) {
+                    compatLogFmt("pak EXTRACT: %s <- %s", requested, pakPath.c_str());
+                    return f;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     if (std::string mapped = obbRemap(path); !mapped.empty()) {
