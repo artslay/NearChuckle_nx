@@ -2236,57 +2236,6 @@ static bool resolvePathCaseInsensitive(const char* input, std::string& resolved)
 
 
 
-static bool pakCopyFile(const std::string& srcPath, const std::string& dstPath) {
-    FILE* in = fopen(srcPath.c_str(), "rb");
-    if (!in)
-        return false;
-
-    size_t slash = dstPath.find_last_of('/');
-    if (slash != std::string::npos) {
-        const std::string dir = dstPath.substr(0, slash);
-        std::string cur;
-        size_t pos = 0;
-        while (pos <= dir.size()) {
-            size_t end = dir.find('/', pos);
-            const std::string part = dir.substr(
-                pos, end == std::string::npos ? dir.size() - pos : end - pos);
-            if (!part.empty()) {
-                if (!cur.empty())
-                    cur += "/";
-                cur += part;
-                mkdir(cur.c_str(), 0755);
-            }
-            if (end == std::string::npos)
-                break;
-            pos = end + 1;
-        }
-    }
-
-    FILE* out = fopen(dstPath.c_str(), "wb");
-    if (!out) {
-        fclose(in);
-        return false;
-    }
-
-    unsigned char buf[64 * 1024];
-    bool ok = true;
-    while (true) {
-        const size_t got = fread(buf, 1, sizeof(buf), in);
-        if (!got)
-            break;
-        if (fwrite(buf, 1, got, out) != got) {
-            ok = false;
-            break;
-        }
-    }
-
-    if (ferror(in))
-        ok = false;
-
-    fclose(out);
-    fclose(in);
-    return ok;
-}
 
 static bool pakExtractPrefix(const std::string& pakPath,
                              const std::string& prefix,
@@ -2383,11 +2332,20 @@ static bool pakExtractPrefix(const std::string& pakPath,
         // the platform _findfirst64().  On the Switch's case-sensitive
         // filesystem that means we need a real lowercase mirror of the PAK
         // tree, while FOpen() can still use the archive's original spelling.
+        //
+        // Extract the lowercase path directly from the archive rather than
+        // copying the just-created file. This also handles archive entries that
+        // use '\\' as path separators, which must become real POSIX '/' paths
+        // on the Switch filesystem.
         if (!pakExtractEntry(pakPath, normalized, name))
             continue;
 
-        if (name != normalized)
-            pakCopyFile(name, normalized);
+        if (name != normalized &&
+            !pakExtractEntry(pakPath, normalized, normalized)) {
+            // The original spelling is still useful for FOpen(), but a missing
+            // lowercase mirror means CryPak's FindFirst() cannot recurse into it.
+            continue;
+        }
 
         extractedAny = true;
     }
