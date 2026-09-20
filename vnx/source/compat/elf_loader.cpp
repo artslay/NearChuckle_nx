@@ -8,6 +8,7 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <switch/arm/thread_context.h>
+#include <runtime/env.h>
 
 // Log helpers — declared before the exception handler so it can use them.
 extern void compatLog(const char* msg);
@@ -684,53 +685,6 @@ LoadedSo* elfDlopen(const char* name) {
     return so;
 }
 
-// ─── ADRP data-segment redirect ───────────────────────────────────────────────
-// Scans code_buf (the writable copy of the code segment, size code_size words),
-// finds ADRP instructions whose natural runtime target falls in the phantom data
-// range [phantom_data_start, phantom_data_end), and rewrites them to land in the
-// separate data_jit allocation at data_rx instead.  Both allocations are in the
-// same svcMapCodeMemory code-region VA band, so the delta fits in ADRP ±4 GB.
-static void patchAdrpToDataJit(uint8_t* code_buf, size_t code_size,
-                                uint64_t code_rx,
-                                uint64_t phantom_data_start,
-                                uint64_t phantom_data_end,
-                                uint64_t data_rx) {
-    uint32_t* words  = (uint32_t*)code_buf;
-    size_t    nwords = code_size / 4;
-    int       patched = 0, skipped = 0;
-    for (size_t i = 0; i < nwords; i++) {
-        uint32_t insn = words[i];
-        if ((insn & 0x9F000000u) != 0x90000000u) continue;  // not ADRP
-
-        uint64_t pc      = code_rx + (uint64_t)i * 4;
-        uint64_t pc_page = pc & ~0xfffULL;
-
-        int64_t immhi = (int64_t)((insn >> 5) & 0x7ffff);
-        int64_t immlo = (int64_t)((insn >> 29) & 3);
-        int64_t imm21 = (immhi << 2) | immlo;
-        if (imm21 & (1LL << 20)) imm21 -= (1LL << 21);
-
-        uint64_t tgt_page = (uint64_t)((int64_t)pc_page + imm21 * 4096LL);
-        if (tgt_page < phantom_data_start || tgt_page >= phantom_data_end) continue;
-
-        uint64_t off_in_data = tgt_page - phantom_data_start;
-        uint64_t new_tgt     = data_rx + off_in_data;
-        int64_t  new_imm21   = ((int64_t)new_tgt - (int64_t)pc_page) / 4096LL;
-
-        if (new_imm21 < -(1 << 20) || new_imm21 >= (1 << 20)) { ++skipped; continue; }
-
-        uint32_t nlo = (uint32_t)(new_imm21 & 3);
-        uint32_t nhi = (uint32_t)((new_imm21 >> 2) & 0x7ffff);
-        words[i] = (insn & 0x9F00001Fu) | (nlo << 29) | (nhi << 5);
-        ++patched;
-    }
-    compatLogFmt("ADRP→data_jit: %d patched %d skipped (code_rx=%p data_rx=0x%llx phantom=0x%llx..0x%llx)",
-                 patched, skipped, (void*)code_rx,
-                 (unsigned long long)data_rx,
-                 (unsigned long long)phantom_data_start,
-                 (unsigned long long)phantom_data_end);
-}
-
 // ─── Per-game binary quirk patches ─────────────────────────────────────────────
 // The actual fixups live in source/compat/games/ (one file per title), reached
 // through compat/games.h, so game-specific patches stay isolated from the shared
@@ -922,142 +876,49 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     size_t code_jit_size = (data_off_pg > 0) ? (size_t)data_off_pg : alloc_size;
     size_t data_jit_size = alloc_size - code_jit_size;
 
-    // ── Allocate memory regions ───────────────────────────────────────────────
-    // Primary strategy: split-VA CodeMemory map.
-    // svcCreateCodeMemory wraps a heap allocation into a kernel handle whose
-    // pages can be placed at any code-region VA via svcControlCodeMemory.
-    // Two separate handles (code + data) are placed at adjacent VAs so ADRP
-    // instructions in the code segment naturally reach data with no patching.
-    // Code VA is promoted to Rx; data VA stays Rw permanently.
-    bool     using_split_map = false;
-    uint8_t* code_heap_buf   = nullptr;        // heap placeholder for svcCreateCodeMemory
-    uint8_t* data_heap_buf   = nullptr;        // heap placeholder for svcCreateCodeMemory
-    uint8_t* code_va_base    = nullptr;        // code VA (MapSlave → Rx exec alias)
-    uint8_t* data_va_base    = nullptr;        // data VA (MapOwner → Rw, permanent)
-    uint8_t* code_write_va   = nullptr;        // temporary MapOwner write alias for code
-    Handle   split_h_code    = INVALID_HANDLE;
-    Handle   split_h_data    = INVALID_HANDLE;
-    VirtmemReservation* split_va_rv         = nullptr;
-    VirtmemReservation* split_code_write_rv = nullptr;
-
-    // Reserve adjacent exec+data VAs and a separate write VA for code.
-    // Writes go through MapOwner aliases AFTER svcCreateCodeMemory so they
-    // reach the physical pages the kernel maps — the heap backing buffers are
-    // only placeholders and their content does not matter.
-    if (data_off_pg > 0 && data_jit_size > 0) {
-        code_heap_buf = (uint8_t*)memalign(0x1000, code_jit_size);
-        data_heap_buf = (uint8_t*)memalign(0x1000, data_jit_size);
-        if (code_heap_buf && data_heap_buf) {
-            virtmemLock();
-            void* va = virtmemFindCodeMemory(alloc_size, 0x1000);
-            if (va) {
-                split_va_rv = virtmemAddReservation(va, alloc_size);
-                // Find write VA while exec reservation is held (prevents overlap)
-                void* wva = virtmemFindCodeMemory(code_jit_size, 0x1000);
-                if (wva) {
-                    split_code_write_rv = virtmemAddReservation(wva, code_jit_size);
-                    using_split_map = true;
-                    code_va_base  = (uint8_t*)va;
-                    data_va_base  = code_va_base + code_jit_size;
-                    code_write_va = (uint8_t*)wva;
-                    compatLogFmt("SplitMap: reserved code_va=%p data_va=%p write_va=%p csz=0x%zx dsz=0x%zx",
-                                 code_va_base, data_va_base, code_write_va, code_jit_size, data_jit_size);
-                } else {
-                    compatLog("SplitMap: no write VA found");
-                    virtmemRemoveReservation(split_va_rv);
-                    split_va_rv = nullptr;
-                }
-            } else {
-                compatLog("SplitMap: virtmemFindCodeMemory failed");
-            }
-            virtmemUnlock();
-        }
-        if (!using_split_map) {
-            free(code_heap_buf); code_heap_buf = nullptr;
-            free(data_heap_buf); data_heap_buf = nullptr;
-        }
+    // ── Allocate unified process-code image ──────────────────────────────────
+    // One persistent heap-backed ELF image is mapped into the process code
+    // region. Unlike the old SplitMap path, this creates no KCodeMemory object
+    // per guest library and keeps one contiguous ELF load bias for code/data.
+    Handle process_handle = envGetOwnProcessHandle();
+    const bool have_map_syscalls =
+        envIsSyscallHinted(0x77) && envIsSyscallHinted(0x78) && envIsSyscallHinted(0x73);
+    compatLogFmt("ProcessMap: own_handle=0x%08x hints map=%d unmap=%d perm=%d",
+                 (unsigned)process_handle,
+                 envIsSyscallHinted(0x77) ? 1 : 0,
+                 envIsSyscallHinted(0x78) ? 1 : 0,
+                 envIsSyscallHinted(0x73) ? 1 : 0);
+    if (process_handle == INVALID_HANDLE || !have_map_syscalls) {
+        compatLog("ProcessMap: required process-code syscalls are unavailable");
+        free(file_data);
+        return nullptr;
     }
 
-    Jit      code_jit = {}, data_jit = {};
-    bool     using_jit      = false;
-    bool     using_data_jit = false;
-    uint8_t* code_write = nullptr;
-    uint8_t* code_exec  = nullptr;
-    uint8_t* data_write = nullptr;
-    uint8_t* data_exec  = nullptr;
-
-    if (using_split_map) {
-        code_write = code_heap_buf;
-        code_exec  = code_va_base;
-        data_write = data_heap_buf;
-        data_exec  = data_va_base;
-    } else {
-        Result jit_rc = jitCreate(&code_jit, code_jit_size);
-        if (R_SUCCEEDED(jit_rc)) {
-            Result w_rc = jitTransitionToWritable(&code_jit);
-            if (R_SUCCEEDED(w_rc)) {
-                using_jit  = true;
-                code_write = (uint8_t*)code_jit.rw_addr;
-                code_exec  = (uint8_t*)code_jit.rx_addr;
-                compatLogFmt("JIT: code write=%p exec=%p size=0x%zx",
-                             (void*)code_write, (void*)code_exec, code_jit_size);
-            } else {
-                compatLogFmt("JIT: code jitTransitionToWritable 0x%08X", w_rc);
-                jitClose(&code_jit);
-            }
-        } else {
-            compatLogFmt("JIT: code jitCreate 0x%08X — heap fallback", (uint32_t)jit_rc);
-        }
-
-        if (!using_jit) {
-            code_write = code_exec = (uint8_t*)memalign(0x1000, alloc_size);
-            if (!code_write) { free(file_data); compatLog("ELF: memalign failed"); return nullptr; }
-        } else if (data_jit_size > 0) {
-            Result d_rc = jitCreate(&data_jit, data_jit_size);
-            if (R_SUCCEEDED(d_rc)) {
-                d_rc = jitTransitionToWritable(&data_jit);
-                if (R_SUCCEEDED(d_rc)) {
-                    data_write = (uint8_t*)data_jit.rw_addr;
-                    data_exec  = (uint8_t*)data_jit.rx_addr;
-                    int64_t delta = (int64_t)data_exec - (int64_t)code_exec;
-                    if (delta < 0) delta = -delta;
-                    if ((uint64_t)delta < (4ULL * 1024 * 1024 * 1024)) {
-                        using_data_jit = true;
-                        compatLogFmt("JIT: data write=%p exec=%p size=0x%zx (stays Rw, delta=0x%llx)",
-                                     (void*)data_write, (void*)data_exec, data_jit_size,
-                                     (unsigned long long)delta);
-                    } else {
-                        compatLogFmt("JIT: data_jit too far (delta=0x%llx) — single-JIT fallback",
-                                     (unsigned long long)delta);
-                        jitClose(&data_jit);
-                        data_write = data_exec = nullptr;
-                        jitClose(&code_jit);
-                        using_jit = false;
-                        Result jit_rc2 = jitCreate(&code_jit, alloc_size);
-                        if (R_SUCCEEDED(jit_rc2) && R_SUCCEEDED(jitTransitionToWritable(&code_jit))) {
-                            using_jit  = true;
-                            code_write = (uint8_t*)code_jit.rw_addr;
-                            code_exec  = (uint8_t*)code_jit.rx_addr;
-                            code_jit_size = alloc_size;
-                            data_jit_size = 0;
-                            data_off_pg   = 0;
-                            compatLogFmt("JIT: single-JIT write=%p exec=%p size=0x%zx",
-                                         (void*)code_write, (void*)code_exec, alloc_size);
-                        } else {
-                            code_write = code_exec = (uint8_t*)memalign(0x1000, alloc_size);
-                            if (!code_write) { free(file_data); compatLog("ELF: memalign failed"); return nullptr; }
-                        }
-                    }
-                } else {
-                    compatLogFmt("JIT: data jitTransitionToWritable 0x%08X", (uint32_t)d_rc);
-                    jitClose(&data_jit);
-                }
-            } else {
-                compatLogFmt("JIT: data jitCreate 0x%08X — data writes will fault", (uint32_t)d_rc);
-            }
-        }
+    uint8_t* backing = (uint8_t*)memalign(0x1000, alloc_size);
+    if (!backing) {
+        free(file_data);
+        compatLog("ProcessMap: heap backing allocation failed");
+        return nullptr;
     }
 
+    VirtmemReservation* process_code_rv = nullptr;
+    virtmemLock();
+    void* va = virtmemFindCodeMemory(alloc_size, 0x1000);
+    if (va)
+        process_code_rv = virtmemAddReservation(va, alloc_size);
+    virtmemUnlock();
+    if (!process_code_rv) {
+        free(backing);
+        free(file_data);
+        compatLog("ProcessMap: unable to reserve code-region VA");
+        return nullptr;
+    }
+
+    uint8_t* code_exec = (uint8_t*)va;
+    uint64_t data_off_pg = (data_seg_vaddr != UINT64_MAX && data_seg_vaddr > min_vaddr)
+                         ? ALIGN_DOWN(data_seg_vaddr - min_vaddr, 0x1000) : 0;
+    uint8_t* data_exec = data_off_pg ? code_exec + data_off_pg : nullptr;
+    uint8_t* code_write = backing;
     // ── Heap staging buffer ───────────────────────────────────────────────────
     elfHeapCanaryArm();                 // bracket the biggest allocation we make
     // One staging buffer for the whole process, grown as needed and never
@@ -1080,17 +941,13 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     uint8_t* stage = s_stage;
     if (!stage) {
         compatLog("ELF: malloc staging buffer OOM");
-        if (using_split_map) {
-            // svcCreateCodeMemory not yet called — just release VA reservation and free buffers
-            virtmemLock();
-            if (split_va_rv) { virtmemRemoveReservation(split_va_rv); split_va_rv = nullptr; }
-            virtmemUnlock();
-            free(code_heap_buf); free(data_heap_buf);
-        } else if (using_jit) {
-            jitClose(&code_jit); if (using_data_jit) jitClose(&data_jit);
-        } else {
-            free(code_write);
+        virtmemLock();
+        if (process_code_rv) {
+            virtmemRemoveReservation(process_code_rv);
+            process_code_rv = nullptr;
         }
+        virtmemUnlock();
+        free(backing);
         free(file_data);
         return nullptr;
     }
@@ -1171,16 +1028,14 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
 
     // ── Build LoadedSo — strtab/symtab point into staging buffer ─────────────
     LoadedSo* so = new LoadedSo();
-    so->using_jit   = using_jit;
-    so->jit_mem     = code_jit;
+    so->using_jit   = false;
+    so->jit_mem     = {};
     so->alloc       = code_exec;
-    so->write_alloc = code_write;
-    so->data_alloc  = data_exec;   // nullptr if single-jit
+    so->write_alloc = backing;
+    so->data_alloc  = data_exec;
     so->alloc_size  = alloc_size;
     so->min_vaddr   = min_vaddr;
-    // data_vaddr stores the page-aligned vaddr base of the data_jit allocation,
-    // used by findSym to route data-segment symbols to data_exec.
-    so->data_vaddr  = using_data_jit ? (min_vaddr + data_off_pg) : 0;
+    so->data_vaddr  = data_off_pg ? (min_vaddr + data_off_pg) : 0;
     so->base        = exec_base;
     so->path        = path;
 
@@ -1238,189 +1093,103 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     compatLog("ELF: strtab/symtab copied");
     compatLogFlush();
 
-    // ── Post-relocation: remap phantom data pointers → data_exec ─────────────
-    // Relocations above used exec_base = code_exec − min_vaddr, so any
-    // R_AARCH64_RELATIVE / local-symbol address that falls in the data segment
-    // will have been written as (code_exec + data_vaddr_offset), which is a
-    // "phantom" address (code pages, not the real data_jit allocation).
-    // Scan the data portion of stage and fix up those 64-bit pointers.
-    if (using_data_jit) {
-        uint64_t ph_start = (uint64_t)code_exec + data_off_pg;
-        uint64_t ph_end   = (uint64_t)code_exec + alloc_size;
-        uint64_t* scan    = (uint64_t*)(stage + data_off_pg);
-        size_t    nscan   = data_jit_size / 8;
-        int       remapped = 0;
-        for (size_t i = 0; i < nscan; i++) {
-            uint64_t v = scan[i];
-            if (v >= ph_start && v < ph_end) {
-                scan[i] = (uint64_t)data_exec + (v - ph_start);
-                ++remapped;
-            }
-        }
-        compatLogFmt("data-ptr remap: %d entries (phantom=0x%llx..0x%llx → data_rx=%p)",
-                     remapped, (unsigned long long)ph_start,
-                     (unsigned long long)ph_end, (void*)data_exec);
-        compatLogFlush();
-
-        // ── ADRP patch: redirect code→data ADRP instructions ─────────────
-        // ADRP instructions in the code segment will compute addresses in the
-        // phantom range (code_exec + data_off_pg ...). Patch them to land in
-        // data_exec instead, which is the actual Rw data allocation.
-        patchAdrpToDataJit(stage, code_jit_size,
-                           (uint64_t)code_exec,
-                           ph_start, ph_end,
-                           (uint64_t)data_exec);
-    }
-
+    // The complete ELF image is contiguous at one load bias, so local data
+    // pointers and ADRP targets already refer to their final runtime addresses.
     // Per-game instruction fixups (see patchKnownGameQuirks) — applied to the
     // staged code while it's still writable, before either mapping path below
     // makes it executable. Signature-gated, so a no-op for anything unmatched.
     patchKnownGameQuirks(stage_base, min_vaddr, alloc_size, path);
 
-    // ── Copy stage → final regions then map executable ───────────────────────
-    if (using_split_map) {
-        // Create handles from the placeholder heap buffers.  Their content is
-        // irrelevant — we write the real code/data through MapOwner aliases
-        // AFTER the SVCs so the writes actually reach the physical pages the
-        // kernel maps.  Writing to the original heap buffer before
-        // svcCreateCodeMemory only reaches D-cache; the physical RAM (which
-        // the kernel captures) still holds stale bytes.
-        Result rc_hc = svcCreateCodeMemory(&split_h_code, code_heap_buf, code_jit_size);
-        Result rc_hd = R_SUCCEEDED(rc_hc)
-                     ? svcCreateCodeMemory(&split_h_data, data_heap_buf, data_jit_size)
-                     : rc_hc;
+    // ── Copy staged ELF into persistent backing and map it once ─────────────
+    memcpy(backing, stage, alloc_size);
+    armDCacheFlush(backing, alloc_size);
 
-        // Release all VA reservations — kernel needs these VAs free in its page table
-        virtmemLock();
-        if (split_va_rv)         { virtmemRemoveReservation(split_va_rv);         split_va_rv         = nullptr; }
-        if (split_code_write_rv) { virtmemRemoveReservation(split_code_write_rv); split_code_write_rv = nullptr; }
-        virtmemUnlock();
+    virtmemLock();
+    virtmemRemoveReservation(process_code_rv);
+    process_code_rv = nullptr;
+    virtmemUnlock();
 
-        if (R_SUCCEEDED(rc_hc) && R_SUCCEEDED(rc_hd)) {
-            // Map code handle as temporary MapOwner (Rw write alias) at code_write_va
-            Result rc_wc = svcControlCodeMemory(split_h_code,
-                               CodeMapOperation_MapOwner, code_write_va, code_jit_size, Perm_Rw);
-            // Map data handle as MapOwner (Rw) at data_va_base — stays Rw permanently
-            Result rc_wd = R_SUCCEEDED(rc_wc)
-                         ? svcControlCodeMemory(split_h_data,
-                               CodeMapOperation_MapOwner, data_va_base, data_jit_size, Perm_Rw)
-                         : rc_wc;
+    Result map_rc = svcMapProcessCodeMemory(process_handle,
+                                             (uint64_t)code_exec,
+                                             (uint64_t)backing,
+                                             alloc_size);
+    if (R_FAILED(map_rc)) {
+        compatLogFmt("ProcessMap: svcMapProcessCodeMemory FAILED 0x%08x", (uint32_t)map_rc);
+        free(backing);
+        free(file_data);
+        g_loaded_sos.pop_back();
+        delete so;
+        return nullptr;
+    }
 
-            if (R_SUCCEEDED(rc_wc) && R_SUCCEEDED(rc_wd)) {
-                // Write code and data through MapOwner aliases → reaches physical pages
-                compatUiLog("Copying code segment...");
-                if (cb) cb("Loading ELF library", "Copying code segment");
-                memcpy(code_write_va, stage, code_jit_size);
-                compatUiLog("Copying data segment...");
-                memcpy(data_va_base, stage + data_off_pg, data_jit_size);
-                armDCacheFlush(code_write_va, code_jit_size);
-                armDCacheFlush(data_va_base, data_jit_size);
+    bool permissions_ok = true;
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        const Elf64_Phdr& ph = phdrs[i];
+        if (ph.p_type != PT_LOAD || ph.p_memsz == 0)
+            continue;
 
-                // Probe first 5 JMPREL GOT entries to confirm values reached data_va_base
-                if (jmprel_vaddr && jmprel_sz) {
-                    const Elf64_Rela* jr = (const Elf64_Rela*)(stage_base + jmprel_vaddr);
-                    size_t njr = jmprel_sz / sizeof(Elf64_Rela);
-                    for (size_t ji = 0; ji < 5 && ji < njr; ji++) {
-                        uint64_t off = jr[ji].r_offset;
-                        if (off >= data_off_pg && off + 8 <= data_off_pg + data_jit_size) {
-                            uint64_t val = *(const uint64_t*)(data_va_base + (off - data_off_pg));
-                            compatLogFmt("GOT[%zu] @va+0x%llx = %p",
-                                         ji, (unsigned long long)(off - data_off_pg), (void*)val);
-                        }
-                    }
-                    compatLogFlush();
-                }
+        const uint64_t rel_start  = ph.p_vaddr - min_vaddr;
+        const uint64_t rel_end    = rel_start + ph.p_memsz;
+        const uint64_t page_start = ALIGN_DOWN(rel_start, 0x1000);
+        const uint64_t page_end   = ALIGN_UP(rel_end, 0x1000);
+        const uint64_t page_size  = page_end - page_start;
+        uint32_t perm = Perm_None;
 
-                // Promote code: remove write alias, add MapSlave (Rx exec alias)
-                svcControlCodeMemory(split_h_code,
-                    CodeMapOperation_UnmapOwner, code_write_va, code_jit_size, Perm_None);
-                Result rc_mc = svcControlCodeMemory(split_h_code,
-                                   CodeMapOperation_MapSlave, code_va_base, code_jit_size, Perm_Rx);
-
-                if (R_SUCCEEDED(rc_mc)) {
-                    armICacheInvalidate(code_va_base, code_jit_size);
-                    compatLogFmt("SplitMap: code_va=%p Rx data_va=%p Rw OK",
-                                 (void*)code_va_base, (void*)data_va_base);
-                    compatLogFlush();
-                } else {
-                    compatLogFmt("SplitMap: MapSlave FAILED 0x%08x", (uint32_t)rc_mc);
-                    compatLogFlush();
-                    svcControlCodeMemory(split_h_data, CodeMapOperation_UnmapOwner,
-                                         data_va_base, data_jit_size, Perm_None);
-                    svcCloseHandle(split_h_code);
-                    svcCloseHandle(split_h_data);
-                    free(file_data);
-                    g_loaded_sos.pop_back(); delete so;
-                    return nullptr;
-                }
-            } else {
-                compatLogFmt("SplitMap: MapOwner FAILED rc_wc=0x%08x rc_wd=0x%08x",
-                             (uint32_t)rc_wc, (uint32_t)rc_wd);
-                compatLogFlush();
-                if (R_SUCCEEDED(rc_wc))
-                    svcControlCodeMemory(split_h_code, CodeMapOperation_UnmapOwner,
-                                         code_write_va, code_jit_size, Perm_None);
-                svcCloseHandle(split_h_code);
-                svcCloseHandle(split_h_data);
-                free(file_data);
-                g_loaded_sos.pop_back(); delete so;
-                return nullptr;
-            }
-        } else {
-            compatLogFmt("SplitMap: svcCreateCodeMemory FAILED rc_hc=0x%08x rc_hd=0x%08x",
-                         (uint32_t)rc_hc, (uint32_t)rc_hd);
-            compatLogFlush();
-            if (R_SUCCEEDED(rc_hc)) svcCloseHandle(split_h_code);
-            free(file_data);
-            g_loaded_sos.pop_back(); delete so;
-            return nullptr;
+        if ((ph.p_flags & PF_X) && (ph.p_flags & PF_W)) {
+            compatLogFmt("ProcessMap: refusing RWX PT_LOAD[%d] flags=0x%x", i, ph.p_flags);
+            permissions_ok = false;
+            break;
         }
-    } else if (using_jit) {
-        compatLogFmt("ELF: copy code→JIT write=%p size=0x%zx", (void*)code_write, code_jit_size);
-        memcpy(code_write, stage, code_jit_size);
-        if (using_data_jit) {
-            compatLogFmt("ELF: copy data→JIT write=%p size=0x%zx", (void*)data_write, data_jit_size);
-            memcpy(data_write, stage + data_off_pg, data_jit_size);
+        if (ph.p_flags & PF_X) perm = Perm_Rx;
+        else if (ph.p_flags & PF_W) perm = Perm_Rw;
+        else if (ph.p_flags & PF_R) perm = Perm_R;
+
+        Result perm_rc = svcSetProcessMemoryPermission(process_handle,
+                                                        (uint64_t)code_exec + page_start,
+                                                        page_size,
+                                                        perm);
+        compatLogFmt("ProcessMap: PT_LOAD[%d] rel=0x%llx size=0x%llx flags=0x%x perm=%s rc=0x%08x",
+                     i,
+                     (unsigned long long)page_start,
+                     (unsigned long long)page_size,
+                     ph.p_flags,
+                     (perm == Perm_Rx) ? "Rx" :
+                     (perm == Perm_Rw) ? "Rw" :
+                     (perm == Perm_R)  ? "R" : "None",
+                     (uint32_t)perm_rc);
+        if (R_FAILED(perm_rc)) {
+            permissions_ok = false;
+            break;
         }
     }
-    compatLog("ELF: JIT copy done (staging buffer retained for the next module)");
+
+    if (!permissions_ok) {
+        svcUnmapProcessCodeMemory(process_handle,
+                                  (uint64_t)code_exec,
+                                  (uint64_t)backing,
+                                  alloc_size);
+        free(backing);
+        free(file_data);
+        g_loaded_sos.pop_back();
+        delete so;
+        return nullptr;
+    }
+
+    armICacheInvalidate(code_exec, alloc_size);
+    compatLogFmt("ProcessMap: mapped image base=%p backing=%p size=0x%zx",
+                 (void*)code_exec, (void*)backing, alloc_size);
+    compatLog("ELF: process-code copy complete");
     compatLogFlush();
 
-    // ── Make code executable ─────────────────────────────────────────────────
+    // ── PT_LOAD permissions above make PF_X pages executable ────────────────
     uint32_t this_svc_perm_code = 0;
-    if (using_split_map) {
-        // MapSlave(Rx) established above after memcpy — cache flush makes writes visible.
-        this_svc_perm_code = 0u;
-    } else if (using_jit) {
-        Result exec_rc = jitTransitionToExecutable(&code_jit);
-        so->jit_mem = code_jit;
-        this_svc_perm_code = (uint32_t)exec_rc;
-        if (R_FAILED(exec_rc))
-            compatLogFmt("JIT: code jitTransitionToExecutable failed 0x%08X", exec_rc);
-        else
-            compatLogFmt("JIT: code Rx OK%s",
-                         using_data_jit ? "; data_jit stays Rw" : "");
-    } else {
-        this_svc_perm_code = 0xD801;
-    }
-    if (g_last_svc_perm_code == 0 && this_svc_perm_code != 0)
-        g_last_svc_perm_code = this_svc_perm_code;
-
-    // I-cache invalidate for JIT path (split_map does this inside its own block after MapSlave)
-    if (using_jit)
-        armICacheInvalidate(code_exec, code_jit_size);
+    bool code_is_exec = true;
 
     // ── Store DT_INIT / DT_INIT_ARRAY for deferred constructor run ──────────
-    // Helper: convert a vaddr to its runtime exec address, accounting for the
-    // split between code_exec and data_exec.
+    // One contiguous process-code mapping: every ELF vaddr uses one load bias.
     auto vaddr_to_exec = [&](uint64_t vaddr) -> uint8_t* {
-        uint64_t rel = vaddr - min_vaddr;
-        if (using_data_jit && rel >= data_off_pg)
-            return data_exec + (rel - data_off_pg);
-        return code_exec + rel;
+        return code_exec + (vaddr - min_vaddr);
     };
-
-    bool code_is_exec = (using_split_map || using_jit) && this_svc_perm_code == 0;
     if (init_fn_vaddr && code_is_exec) {
         so->init_fn = (LoadedSo::InitFn)vaddr_to_exec(init_fn_vaddr);
         compatLogFmt("ELF: DT_INIT fn deferred @%p", (void*)so->init_fn);
