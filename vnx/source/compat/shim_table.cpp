@@ -2894,6 +2894,130 @@ static void logShaderScriptInventory(const char* requestedPath) {
                  requestedPath, cslCount, csiCount);
 }
 
+
+static bool probeShaderPakPrefix(const char* prefix, int maxMatches = 16) {
+    if (!prefix || !*prefix)
+        return false;
+
+    const std::string wantedPrefix = pakNormalizeName(prefix);
+    bool anyFound = false;
+    int totalMatches = 0;
+
+    std::string resolvedRoot;
+    if (!resolvePathCaseInsensitive("FCData", resolvedRoot))
+        return false;
+
+    DIR* root = opendir(resolvedRoot.c_str());
+    if (!root)
+        return false;
+
+    for (struct dirent* ent = readdir(root); ent; ent = readdir(root)) {
+        const char* name = ent->d_name;
+        const size_t len = std::strlen(name);
+        if (len < 4 ||
+            std::tolower((unsigned char)name[len - 4]) != '.' ||
+            std::tolower((unsigned char)name[len - 3]) != 'p' ||
+            std::tolower((unsigned char)name[len - 2]) != 'a' ||
+            std::tolower((unsigned char)name[len - 1]) != 'k')
+            continue;
+
+        const std::string pakPath = resolvedRoot + "/" + name;
+        FILE* pak = fopen(pakPath.c_str(), "rb");
+        if (!pak)
+            continue;
+
+        if (fseek(pak, 0, SEEK_END) != 0) {
+            fclose(pak);
+            continue;
+        }
+
+        const long fileSize = ftell(pak);
+        if (fileSize < 22) {
+            fclose(pak);
+            continue;
+        }
+
+        const size_t tailSize =
+            (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
+        std::vector<unsigned char> tail(tailSize);
+        if (fseek(pak, fileSize - (long)tailSize, SEEK_SET) != 0 ||
+            !pakReadExact(pak, tail.data(), tail.size())) {
+            fclose(pak);
+            continue;
+        }
+
+        size_t eocd = tail.size();
+        while (eocd >= 22) {
+            --eocd;
+            if (eocd + 4 <= tail.size() &&
+                pakRd32(tail.data() + eocd) == 0x06054b50u)
+                break;
+        }
+        if (eocd + 22 > tail.size()) {
+            fclose(pak);
+            continue;
+        }
+
+        const uint16_t entries = pakRd16(tail.data() + eocd + 10);
+        const uint32_t cdSize = pakRd32(tail.data() + eocd + 12);
+        const uint32_t cdOffset = pakRd32(tail.data() + eocd + 16);
+        if (!entries || !cdSize || cdSize > 128 * 1024 * 1024u) {
+            fclose(pak);
+            continue;
+        }
+
+        std::vector<unsigned char> cd(cdSize);
+        if (fseek(pak, (long)cdOffset, SEEK_SET) != 0 ||
+            !pakReadExact(pak, cd.data(), cd.size())) {
+            fclose(pak);
+            continue;
+        }
+
+        int pakMatches = 0;
+        size_t pos = 0;
+        for (uint16_t i = 0; i < entries && pos + 46 <= cd.size(); ++i) {
+            const unsigned char* h = cd.data() + pos;
+            if (pakRd32(h) != 0x02014b50u)
+                break;
+
+            const uint16_t nameLen = pakRd16(h + 28);
+            const uint16_t extraLen = pakRd16(h + 30);
+            const uint16_t commentLen = pakRd16(h + 32);
+            const size_t recordSize = 46u + nameLen + extraLen + commentLen;
+            if (pos + recordSize > cd.size())
+                break;
+
+            const std::string entry((const char*)h + 46, nameLen);
+            const std::string normalized = pakNormalizeName(entry.c_str());
+
+            if (normalized.size() > wantedPrefix.size() &&
+                normalized.compare(0, wantedPrefix.size(), wantedPrefix) == 0) {
+                anyFound = true;
+                ++totalMatches;
+                ++pakMatches;
+                if (pakMatches <= maxMatches) {
+                    compatLogFmt("PAK PREFIX: %s <- %s :: %s",
+                                 prefix, pakPath.c_str(), normalized.c_str());
+                }
+            }
+
+            pos += recordSize;
+        }
+
+        if (pakMatches > maxMatches) {
+            compatLogFmt("PAK PREFIX: %s <- %s :: ... +%d more",
+                         prefix, pakPath.c_str(), pakMatches - maxMatches);
+        }
+
+        fclose(pak);
+    }
+
+    closedir(root);
+    compatLogFmt("PAK PREFIX SUMMARY: %s -> %d entries",
+                 prefix, totalMatches);
+    return anyFound;
+}
+
 static bool tryMaterializePakDirectory(const char* path) {
     if (!path || !*path)
         return false;
@@ -3041,6 +3165,7 @@ static void probeShaderPakEntries() {
 
 void compatPrepareShaderDirectories(const char* dataRoot) {
     const char* dirs[] = {
+        "Shaders/HWScripts/Declarations",
         "Shaders/Scripts",
         "Shaders/HWScripts",
         nullptr
@@ -3051,11 +3176,24 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     // for this Far Cry build.
     prepareShaderSourceFiles(dataRoot);
 
+    // The PC Far Cry layout separates the compiled shader cache from the
+    // source declarations. Do not blindly unpack the potentially very large
+    // Cache tree yet; first report exactly which FCData PAK contains it.
+    probeShaderPakPrefix("Shaders/Cache");
+
+    // CryEngine's Cg backend looks up shader declarations below:
+    //   Shaders/HWScripts/Declarations/CGVShaders/
+    //   Shaders/HWScripts/Declarations/CGPShaders/
+    // Materialize that tree explicitly before the broader HWScripts tree.
     for (size_t i = 0; dirs[i]; ++i) {
         if (tryMaterializePakDirectory(dirs[i]))
             compatLogFmt("pak DIR READY: %s", dirs[i]);
         logShaderScriptInventory(dirs[i]);
     }
+
+    // Also report the declaration tree independently. This is useful when a
+    // package contains HWScripts but stores Declarations in another PAK.
+    probeShaderPakPrefix("Shaders/HWScripts/Declarations");
 
     // Run the FCData-only probe after the generalized scan. This tells us
     // whether the source came from the ordinary CryPak set or from an Android
