@@ -3204,7 +3204,60 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     probeShaderPakEntries();
 }
 
+static bool isShaderEnumerationDirectory(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string p = path;
+    for (char& c : p) {
+        if ((unsigned char)c == 92)
+            c = '/';
+        else
+            c = (char)std::tolower((unsigned char)c);
+    }
+
+    while (p.size() > 1 && p.back() == '/')
+        p.pop_back();
+
+    return p == "shaders/scripts" ||
+           p == "shaders/hwscripts" ||
+           p == "shaders/hwscripts/declarations";
+}
+
+static bool directoryHasVisibleEntries(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    DIR* d = opendir(path);
+    if (!d)
+        return false;
+
+    bool hasEntry = false;
+    while (struct dirent* ent = readdir(d)) {
+        const char* name = ent->d_name;
+        if (!name || !*name || !std::strcmp(name, ".") || !std::strcmp(name, ".."))
+            continue;
+        hasEntry = true;
+        break;
+    }
+
+    closedir(d);
+    return hasEntry;
+}
+
 static DIR* stub_opendir(const char* path) {
+    // A critical Android/CryPak quirk: FindFirst/ScanFS can ask for a shader
+    // directory that already exists but is empty. The old implementation
+    // returned that empty DIR immediately, so the PAK materialization path was
+    // never reached. Only the known CryEngine shader directories get this
+    // empty-directory recovery; all other directories retain normal behavior.
+    if (path && isShaderEnumerationDirectory(path) &&
+        !directoryHasVisibleEntries(path)) {
+        if (tryMaterializePakDirectory(path)) {
+            compatLogFmt("opendir PAK MATERIALIZE: %s", path);
+        }
+    }
+
     DIR* d = opendir(path);
     if (d)
         return d;
@@ -3345,10 +3398,14 @@ static intptr_t stub_findfirst64(const char* pattern, NearFindData64* out) {
     std::string filePattern;
     std::string directory = findDirPart(pattern, filePattern);
 
-    DIR* d = opendir(directory.c_str());
+    // Do NOT bypass stub_opendir() here. CryPak commonly asks for a lowercase
+    // shader directory on the case-sensitive Switch filesystem. stub_opendir()
+    // is the point where we recover the real directory spelling and materialize
+    // an existing-but-empty shader directory from FCData/*.pak.
+    DIR* d = stub_opendir(directory.c_str());
     std::string resolvedDirectory = directory;
     if (!d && resolvePathCaseInsensitive(directory.c_str(), resolvedDirectory))
-        d = opendir(resolvedDirectory.c_str());
+        d = stub_opendir(resolvedDirectory.c_str());
 
     if (!d) {
         compatLogFmt("findfirst64 FAIL: %s (dir=%s pattern=%s)",
@@ -3366,7 +3423,32 @@ static intptr_t stub_findfirst64(const char* pattern, NearFindData64* out) {
                  pattern, state->directory.c_str(), state->pattern.c_str());
 
     if (!findNextMatch(state, out)) {
+        // The directory can exist before the PAK tree has been materialized.
+        // Give the shader directories one final materialization pass instead
+        // of treating an empty enumeration as "not found".
+        const bool shaderDir = isShaderEnumerationDirectory(directory.c_str());
         closedir(state->dir);
+
+        if (shaderDir && tryMaterializePakDirectory(directory.c_str())) {
+            resolvedDirectory = directory;
+            d = stub_opendir(directory.c_str());
+            if (!d && resolvePathCaseInsensitive(directory.c_str(), resolvedDirectory))
+                d = stub_opendir(resolvedDirectory.c_str());
+
+            if (d) {
+                state->dir = d;
+                state->directory = resolvedDirectory;
+
+                if (findNextMatch(state, out)) {
+                    compatLogFmt("findfirst64 MATCH AFTER PAK: %s -> %s",
+                                 pattern, out->name);
+                    return (intptr_t)state;
+                }
+
+                closedir(state->dir);
+            }
+        }
+
         delete state;
         errno = ENOENT;
         compatLogFmt("findfirst64: no match for %s", pattern);
