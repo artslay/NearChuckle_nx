@@ -218,62 +218,73 @@ static bool prepare_guest_sdl() {
     jclass activity_class = reinterpret_cast<jclass>(0x1001);
 
     // Android normally invokes JNI_OnLoad automatically when System.loadLibrary()
-    // loads SDL3. We load ELF files ourselves, so reproduce that bootstrap here.
+    // loads SDL3. We load ELF files ourselves, so reproduce that bootstrap first.
     void* onload_sym = sdl->findSym("JNI_OnLoad");
-    if (onload_sym) {
-        using JNIOnLoadFn = jint (*)(JavaVM*, void*);
-        JNIOnLoadFn onload = reinterpret_cast<JNIOnLoadFn>(onload_sym);
-        jint version = onload(vm, nullptr);
-        compatLogFmt("SDL: JNI_OnLoad(vm=%p) -> 0x%x",
-                     static_cast<void*>(vm), static_cast<unsigned>(version));
-    } else {
+    if (!onload_sym) {
         compatLog("SDL: JNI_OnLoad export not found");
-    }
-
-    // SDLActivity normally calls these Java natives before SDL_main(). They
-    // initialize SDL's JavaVM/activity callback state and mark SDL as ready.
-    using SetupFn = void (*)(JNIEnv*, jclass);
-    using InitMainThreadFn = void (*)(JNIEnv*, jclass);
-
-    void* setup_sym =
-        sdl->findSym("Java_org_libsdl_app_SDLActivity_nativeSetupJNI");
-    if (!setup_sym) {
-        compatLog("SDL: SDLActivity.nativeSetupJNI export not found");
         return false;
     }
 
-    SetupFn setup = reinterpret_cast<SetupFn>(setup_sym);
-    setup(env, activity_class);
-    compatLog("SDL: SDLActivity.nativeSetupJNI() called");
+    using JNIOnLoadFn = jint (*)(JavaVM*, void*);
+    JNIOnLoadFn onload = reinterpret_cast<JNIOnLoadFn>(onload_sym);
+    jint version = onload(vm, nullptr);
+    compatLogFmt("SDL: JNI_OnLoad(vm=%p) -> 0x%x",
+                 static_cast<void*>(vm), static_cast<unsigned>(version));
 
-    void* audio_sym =
-        sdl->findSym("Java_org_libsdl_app_SDLAudioManager_nativeSetupJNI");
-    if (audio_sym) {
-        SetupFn audio_setup = reinterpret_cast<SetupFn>(audio_sym);
-        audio_setup(env, activity_class);
-        compatLog("SDL: SDLAudioManager.nativeSetupJNI() called");
+    // SDL's Android entry points are registered with RegisterNatives. They are
+    // not required to remain visible as Java_org_* ELF exports, so resolve their
+    // actual fnPtr values from the JNI registry populated by JNI_OnLoad.
+    using SetupFn = void (*)(JNIEnv*, jclass);
+
+    void* activity_setup_sym =
+        jniFindRegisteredNative("nativeSetupJNI", 0);
+    if (!activity_setup_sym) {
+        compatLog("SDL: registered SDLActivity.nativeSetupJNI not found");
+        return false;
     }
 
-    void* controller_sym =
-        sdl->findSym("Java_org_libsdl_app_SDLControllerManager_nativeSetupJNI");
-    if (controller_sym) {
-        SetupFn controller_setup = reinterpret_cast<SetupFn>(controller_sym);
+    SetupFn activity_setup = reinterpret_cast<SetupFn>(activity_setup_sym);
+    activity_setup(env, activity_class);
+    compatLog("SDL: SDLActivity.nativeSetupJNI() called");
+
+    // nativeSetupJNI() only reaches SDL_SetMainReady after the audio and
+    // controller manager classes have also completed their own bootstrap.
+    // SDL registers all three nativeSetupJNI methods in SDL's JNI_OnLoad order:
+    // SDLActivity, SDLAudioManager, SDLControllerManager.
+    void* audio_setup_sym =
+        jniFindRegisteredNative("nativeSetupJNI", 1);
+    if (audio_setup_sym) {
+        SetupFn audio_setup = reinterpret_cast<SetupFn>(audio_setup_sym);
+        audio_setup(env, activity_class);
+        compatLog("SDL: SDLAudioManager.nativeSetupJNI() called");
+    } else {
+        compatLog("SDL: registered SDLAudioManager.nativeSetupJNI not found");
+    }
+
+    void* controller_setup_sym =
+        jniFindRegisteredNative("nativeSetupJNI", 2);
+    if (controller_setup_sym) {
+        SetupFn controller_setup = reinterpret_cast<SetupFn>(controller_setup_sym);
         controller_setup(env, activity_class);
         compatLog("SDL: SDLControllerManager.nativeSetupJNI() called");
+    } else {
+        compatLog("SDL: registered SDLControllerManager.nativeSetupJNI not found");
     }
 
     void* main_thread_sym =
-        sdl->findSym("Java_org_libsdl_app_SDLActivity_nativeInitMainThread");
+        jniFindRegisteredNative("nativeInitMainThread", 0);
     if (main_thread_sym) {
-        InitMainThreadFn init_main_thread =
-            reinterpret_cast<InitMainThreadFn>(main_thread_sym);
+        SetupFn init_main_thread = reinterpret_cast<SetupFn>(main_thread_sym);
         init_main_thread(env, activity_class);
         compatLog("SDL: SDLActivity.nativeInitMainThread() called");
+    } else {
+        compatLog("SDL: registered SDLActivity.nativeInitMainThread not found");
+        return false;
     }
 
-    // Keep this explicit as a final guard: nativeSetupJNI normally reaches
-    // SDL_SetMainReady through checkJNIReady(), but direct entry should not
-    // depend on every optional Android manager being present.
+    // Keep this explicit as a final guard. The manager setup normally calls
+    // checkJNIReady(), but direct execution should not depend on optional SDL
+    // configuration paths having supplied every Java callback.
     void* ready_sym = sdl->findSym("SDL_SetMainReady");
     if (ready_sym) {
         using SetMainReadyFn = void (*)();
