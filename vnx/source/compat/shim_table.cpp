@@ -2511,6 +2511,96 @@ static bool tryMaterializePakDirectory(const char* path) {
         compatLogFmt("pak DIR READY: %s (scanned %d FCData paks)", path, pakCount);
     return extractedAny;
 }
+static void probeShaderPakEntries() {
+    const char* wanted[] = {
+        "Shaders/statenocull.ext",
+        "Shaders/hdrprocess.ext",
+        "Shaders/sunflares.ext",
+        "Shaders/lightstyles.ext",
+        "Shaders/glare.ext",
+        "Shaders/cgvprogramms.ext",
+        "Shaders/cgpshaders.ext",
+        "Shaders/templfog.ext",
+        "Shaders/templvfog.ext",
+        "Shaders/templfog_fp.ext",
+        "Shaders/templfogcaustics.ext",
+        "Shaders/templvfogcaustics.ext",
+        "Shaders/templfogcaustics_fp.ext",
+        "Shaders/white.ext",
+        "Shaders/whiteshadow.ext",
+        "Shaders/templdecal.ext",
+        "Shaders/templheatvis_sources.ext",
+        "Shaders/templinvlight.ext",
+        "Shaders/templdof.ext",
+        "Shaders/Scripts/CommonSubroutines.csl",
+        "Shaders/Scripts/CommonSubroutines.csi",
+        "Shaders/HWScripts/CommonSubroutines.csl",
+        "Shaders/HWScripts/CommonSubroutines.csi",
+        nullptr
+    };
+
+    const char* roots[] = {
+        "FCData",
+        "fcdata",
+        "FCData/Localized",
+        "fcdata/localized",
+        ".",
+        nullptr
+    };
+
+    for (size_t w = 0; wanted[w]; ++w) {
+        const std::string normalized = pakNormalizeName(wanted[w]);
+        bool found = false;
+
+        for (size_t r = 0; roots[r] && !found; ++r) {
+            std::string resolvedRoot;
+            if (!resolvePathCaseInsensitive(roots[r], resolvedRoot))
+                continue;
+
+            DIR* dir = opendir(resolvedRoot.c_str());
+            if (!dir)
+                continue;
+
+            for (dirent* ent = readdir(dir); ent && !found; ent = readdir(dir)) {
+                const char* name = ent->d_name;
+                const size_t len = std::strlen(name);
+                if (len < 4)
+                    continue;
+
+                const char c0 = (char)std::tolower((unsigned char)name[len - 4]);
+                const char c1 = (char)std::tolower((unsigned char)name[len - 3]);
+                const char c2 = (char)std::tolower((unsigned char)name[len - 2]);
+                const char c3 = (char)std::tolower((unsigned char)name[len - 1]);
+                if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
+                    continue;
+
+                const std::string pakPath = resolvedRoot + "/" + name;
+                FILE* pak = fopen(pakPath.c_str(), "rb");
+                if (!pak)
+                    continue;
+
+                uint32_t localOffset = 0;
+                uint32_t compressedSize = 0;
+                uint32_t uncompressedSize = 0;
+                uint16_t method = 0;
+
+                if (pakFindEntry(pak, normalized, localOffset,
+                                 compressedSize, uncompressedSize, method)) {
+                    compatLogFmt("PAK PROBE: %s <- %s", wanted[w], pakPath.c_str());
+                    found = true;
+                }
+
+                fclose(pak);
+            }
+
+            closedir(dir);
+        }
+
+        if (!found)
+            compatLogFmt("PAK PROBE: %s -> NOT FOUND", wanted[w]);
+    }
+}
+
 void compatPrepareShaderDirectories() {
     const char* dirs[] = {
         "Shaders/Scripts",
@@ -2523,6 +2613,8 @@ void compatPrepareShaderDirectories() {
             compatLogFmt("pak DIR READY: %s", dirs[i]);
         logShaderScriptInventory(dirs[i]);
     }
+
+    probeShaderPakEntries();
 }
 
 static DIR* stub_opendir(const char* path) {
