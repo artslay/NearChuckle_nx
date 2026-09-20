@@ -181,12 +181,61 @@ static int stub_waitpid(int, int*, int)             { errno = ECHILD; return -1;
 static int stub_symlink(const char*, const char*)   { errno = ENOSYS; return -1; }
 static int stub_utimes(const char*, const void*)    { return 0; }
 static char* stub_realpath(const char* p, char* out) {
+    if (!p || !*p)
+        return nullptr;
+
+    // CryPak's Linux path code relies on POSIX realpath() semantics:
+    // existing paths are returned as absolute paths, while wildcard/nonexistent
+    // paths fail so AdjustFileName() can fall back to realpath(".") and append
+    // the original relative path itself. The old stub returned the input
+    // unchanged for every call, which broke OpenPacksCommon(): its PAK scan
+    // then constructed paths from "." and never registered the FCData archives.
+    bool callerOwnsBuffer = (out != nullptr);
     if (!out) {
         out = (char*)malloc(PATH_MAX);
         if (!out) return nullptr;
     }
-    strncpy(out, p, PATH_MAX - 1); out[PATH_MAX-1] = '\0';
-    return out;
+
+    if (strcmp(p, ".") == 0 || strcmp(p, "./") == 0) {
+        if (!::getcwd(out, PATH_MAX)) {
+            if (!callerOwnsBuffer) free(out);
+            return nullptr;
+        }
+        return out;
+    }
+
+    // Wildcards are deliberately not resolved. CryPak passes patterns such as
+    // "FCData/*.pak" here; returning failure is what makes AdjustFileName()
+    // construct the correct absolute wildcard path.
+    if (strpbrk(p, "*?[]") != nullptr) {
+        if (!callerOwnsBuffer) free(out);
+        errno = ENOENT;
+        return nullptr;
+    }
+
+    if (!::stat(p, &(struct stat){})) {
+        if (p[0] == '/') {
+            strncpy(out, p, PATH_MAX - 1);
+            out[PATH_MAX - 1] = '\0';
+            return out;
+        }
+
+        char cwd[PATH_MAX];
+        if (!::getcwd(cwd, sizeof(cwd))) {
+            if (!callerOwnsBuffer) free(out);
+            return nullptr;
+        }
+        if (snprintf(out, PATH_MAX, "%s/%s", cwd, p) >= PATH_MAX) {
+            if (!callerOwnsBuffer) free(out);
+            errno = ENAMETOOLONG;
+            return nullptr;
+        }
+        return out;
+    }
+
+    if (!callerOwnsBuffer) free(out);
+    errno = ENOENT;
+    return nullptr;
 }
 static int stub_readlink(const char*, char* buf, size_t sz) {
     if (sz > 0 && buf) buf[0] = '\0';
@@ -882,6 +931,27 @@ static std::string cdataToFcdata(const char* path) {
         return "FCData";
     if (lower.rfind("cdata/", 0) == 0)
         return "FCData/" + p.substr(6);
+
+    // After the realpath fix above, CryPak may pass absolute CData paths to
+    // opendir/open/fopen. Remap only when CData is exactly below the current
+    // game working directory; do not rewrite arbitrary system paths.
+    char cwd[PATH_MAX];
+    if (::getcwd(cwd, sizeof(cwd))) {
+        std::string root = cwd;
+        for (char& c : root) {
+            if ((unsigned char)c == 92)
+                c = '/';
+        }
+        std::string rootLower = asciiLower(root);
+        if (!root.empty() && root.back() == '/')
+            root.pop_back(), rootLower.pop_back();
+
+        const std::string absPrefix = rootLower + "/cdata";
+        if (lower == absPrefix)
+            return root + "/FCData";
+        if (lower.rfind(absPrefix + "/", 0) == 0)
+            return root + "/FCData/" + p.substr(absPrefix.size() + 1);
+    }
 
     return "";
 }
