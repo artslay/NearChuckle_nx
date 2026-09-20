@@ -1,6 +1,8 @@
 #include "config.h"
 #include "compat/loader.h"
 
+extern void compatPrepareShaderDirectories();
+
 #include <switch.h>
 
 #include <algorithm>
@@ -285,6 +287,7 @@ static void setup_environment() {
            "+GL_ARB_vertex_program +GL_ARB_fragment_program", 1);
 
     chdir(config.data_root);
+    compatPrepareShaderDirectories();
     normalize_engine_data_dirs();
     probe_engine_data_layout();
 }
