@@ -154,6 +154,32 @@ static void probe_engine_data_layout() {
                      pak_names.empty() ? "-" : pak_names.c_str());
     }
 
+    const std::string game_root = config.data_root;
+    DIR* root_dir = opendir(game_root.c_str());
+    if (root_dir) {
+        int pak_count = 0;
+        std::string pak_names;
+        while (dirent* ent = readdir(root_dir)) {
+            const size_t len = std::strlen(ent->d_name);
+            if (len >= 4 &&
+                std::tolower((unsigned char)ent->d_name[len - 4]) == '.' &&
+                std::tolower((unsigned char)ent->d_name[len - 3]) == 'p' &&
+                std::tolower((unsigned char)ent->d_name[len - 2]) == 'a' &&
+                std::tolower((unsigned char)ent->d_name[len - 1]) == 'k') {
+                if (pak_names.size() < 1500) {
+                    if (!pak_names.empty()) pak_names += ",";
+                    pak_names += ent->d_name;
+                }
+                ++pak_count;
+            }
+        }
+        closedir(root_dir);
+        compatLogFmt("data probe: game root -> pak_count=%d pak=%s",
+                     pak_count, pak_names.empty() ? "-" : pak_names.c_str());
+    } else {
+        compatLogFmt("data probe: game root -> MISSING");
+    }
+
     const char* rel_paths[] = {
         "languages/fonts/default.xml",
         "FCData/languages/fonts/default.xml",
