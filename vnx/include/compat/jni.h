@@ -139,3 +139,6 @@ typedef void** JavaVM;
 #define VM_SLOT_GetEnv                 6
 #define VM_SLOT_AttachCurrentThreadAsDaemon 7
 #define VM_NUM_SLOTS 8
+// Find a native function registered through JNI RegisterNatives. occurrence is
+// used because SDL registers nativeSetupJNI once for each Android manager class.
+void* jniFindRegisteredNative(const char* name, int occurrence = 0);
