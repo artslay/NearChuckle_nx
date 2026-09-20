@@ -1255,7 +1255,7 @@ static size_t   ev_getPointerCount(const AInputEvent*){ return 1; }
 static float    ev_getPressure(const AInputEvent*, size_t) { return 1.0f; }
 static float    ev_getSize(const AInputEvent*, size_t) { return 0.0f; }
 static int32_t  ev_getPointerId(const AInputEvent*, size_t idx) { return (int32_t)idx; }
-static void     ev_setAction(AInputEvent*, int)    {}
+[[maybe_unused]] static void ev_setAction(AInputEvent*, int) {}
 
 static int iq_getEvent(AInputQueue*, AInputEvent** e) { (void)e; return -1; }
 static int iq_hasEvents(AInputQueue*) { return 0; }
@@ -1836,6 +1836,9 @@ static void shim_glActiveStencilFaceEXT(GLenum) {}
 static void shim_glBindBufferARB(GLenum target, GLuint buffer) { glBindBuffer(target, buffer); }
 static void shim_glBufferDataARB(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
     glBufferData(target, size, data, usage);
+}
+static void shim_glGenBuffersARB(GLsizei n, GLuint* buffers) {
+    glGenBuffers(n, buffers);
 }
 static void shim_glBufferSubDataARB(GLenum target, GLintptr offset, GLsizeiptr size, const void* data) {
     glBufferSubData(target, offset, size, data);
@@ -3245,7 +3248,7 @@ static const ShimEntry g_shims[] = {
     {"glFogf", (void*)glFogf},
     {"glFogfv", (void*)glFogfv},
     {"glFogi", (void*)glFogi},
-    {"glGenBuffersARB", (void*)glGenBuffersARB},
+    {"glGenBuffersARB", (void*)shim_glGenBuffersARB},
     {"glGenFencesNV", (void*)shim_glGenFencesNV},
     {"glGetCompressedTexImageARB", (void*)shim_glGetCompressedTexImageARB},
     {"glGetDoublev", (void*)glGetDoublev},
