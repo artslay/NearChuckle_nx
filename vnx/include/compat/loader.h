@@ -74,6 +74,7 @@ typedef struct {
 #define DT_FINI_ARRAYSZ  28
 #define DT_STRSZ    10
 #define SHN_UNDEF   0
+#define STB_WEAK    2
 #define ELF64_R_SYM(i)  ((uint32_t)((i) >> 32))
 #define ELF64_R_TYPE(i) ((uint32_t)((i) & 0xFFFFFFFFULL))
 #define ELF64_ST_BIND(i) ((i) >> 4)
