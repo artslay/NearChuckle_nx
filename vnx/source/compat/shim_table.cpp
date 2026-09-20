@@ -61,6 +61,20 @@ extern "C" {
 #include <sys/socket.h>
 #include <utime.h>
 
+// pread is not exported by the devkitA64/newlib runtime used here.
+// The APK cache only needs positional reads, so emulate it with lseek/read
+// while preserving the caller's file position.
+extern "C" ssize_t pread(int fd, void* buf, size_t count, off_t offset) {
+    off_t saved = lseek(fd, 0, SEEK_CUR);
+    if (saved == (off_t)-1) return -1;
+    if (lseek(fd, offset, SEEK_SET) == (off_t)-1) return -1;
+    ssize_t rc = read(fd, buf, count);
+    int saved_errno = errno;
+    lseek(fd, saved, SEEK_SET);
+    errno = saved_errno;
+    return rc;
+}
+
 // Newlib stubs for POSIX functions that may be missing
 static size_t stub_strnlen(const char* s, size_t n) {
     size_t i = 0;
