@@ -2353,6 +2353,76 @@ static bool pakExtractPrefix(const std::string& pakPath,
     return true;
 }
 
+
+static void countShaderScriptsRecursive(const std::string& directory,
+                                        int& cslCount,
+                                        int& csiCount,
+                                        int depth = 0) {
+    if (depth > 16)
+        return;
+
+    DIR* d = opendir(directory.c_str());
+    if (!d)
+        return;
+
+    while (struct dirent* ent = readdir(d)) {
+        const char* name = ent->d_name;
+        if (!name || !*name || !std::strcmp(name, ".") || !std::strcmp(name, ".."))
+            continue;
+
+        std::string full = directory;
+        if (full.empty() || full == ".")
+            full = name;
+        else if (full == "/")
+            full += name;
+        else {
+            full += "/";
+            full += name;
+        }
+
+        struct stat st = {};
+        if (stat(full.c_str(), &st) != 0)
+            continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            countShaderScriptsRecursive(full, cslCount, csiCount, depth + 1);
+            continue;
+        }
+
+        std::string lower = asciiLower(name);
+        if (lower.size() >= 4 &&
+            lower.compare(lower.size() - 4, 4, ".csl") == 0) {
+            ++cslCount;
+        } else if (lower.size() >= 4 &&
+                   lower.compare(lower.size() - 4, 4, ".csi") == 0) {
+            ++csiCount;
+        }
+    }
+
+    closedir(d);
+}
+
+static void logShaderScriptInventory(const char* requestedPath) {
+    if (!requestedPath || !*requestedPath)
+        return;
+
+    std::string normalized = requestedPath;
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    std::string resolved;
+    if (!resolvePathCaseInsensitive(normalized.c_str(), resolved))
+        resolved = normalized;
+
+    int cslCount = 0;
+    int csiCount = 0;
+    countShaderScriptsRecursive(resolved, cslCount, csiCount);
+    compatLogFmt("pak DIR CONTENT: %s csl=%d csi=%d",
+                 requestedPath, cslCount, csiCount);
+}
+
 static bool tryMaterializePakDirectory(const char* path) {
     if (!path || !*path)
         return false;
@@ -2418,6 +2488,7 @@ void compatPrepareShaderDirectories() {
     for (size_t i = 0; dirs[i]; ++i) {
         if (tryMaterializePakDirectory(dirs[i]))
             compatLogFmt("pak DIR READY: %s", dirs[i]);
+        logShaderScriptInventory(dirs[i]);
     }
 }
 
