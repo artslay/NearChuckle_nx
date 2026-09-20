@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -129,7 +130,7 @@ static void probe_engine_data_layout() {
         int pak_count = 0;
         std::string pak_names;
         while (dirent* ent = readdir(d)) {
-            if (!ent->d_name || !*ent->d_name)
+            if (!*ent->d_name)
                 continue;
 
             const size_t len = std::strlen(ent->d_name);
