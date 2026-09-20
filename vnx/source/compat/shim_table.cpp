@@ -1242,7 +1242,8 @@ static void* w_eglGetProcAddress(const char* name) {
     if (!name || !*name)
         return nullptr;
 
-    void* p = eglGetProcAddress(name);
+    __eglMustCastToProperFunctionPointerType egl_p = eglGetProcAddress(name);
+    void* p = reinterpret_cast<void*>(egl_p);
     if (p)
         return p;
 
