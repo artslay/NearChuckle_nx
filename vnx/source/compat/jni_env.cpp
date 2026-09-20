@@ -1090,10 +1090,16 @@ static jint s_UnregisterNatives(JNIEnv*, jclass) { return JNI_OK; }
 // Look up a RegisterNatives-registered native by method name (Unity/IL2CPP
 // register their whole player API this way rather than exporting Java_ symbols,
 // so the Unity runtime finds nativeRender/initJni/etc. through here).
-void* jniFindRegisteredNative(const char* name) {
-    if (!name) return nullptr;
-    for (const auto& m : g_native_methods)
-        if (m.name && strcmp(m.name, name) == 0) return (void*)m.fnPtr;
+void* jniFindRegisteredNative(const char* name, int occurrence) {
+    if (!name || occurrence < 0) return nullptr;
+
+    int seen = 0;
+    for (const auto& m : g_native_methods) {
+        if (m.name && strcmp(m.name, name) == 0) {
+            if (seen++ == occurrence)
+                return (void*)m.fnPtr;
+        }
+    }
     return nullptr;
 }
 
