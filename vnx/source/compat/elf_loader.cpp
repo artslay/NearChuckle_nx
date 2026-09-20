@@ -583,17 +583,17 @@ static void logUnrecoveredFault(ThreadExceptionDump* ctx) {
     // the exact null callback/dispatch slot the renderer tried to invoke.
     const uint64_t lr = ctx->lr.x;
     if (lr >= 4 && (lr & 3) == 0) {
-        const uint32_t blr = *(const volatile uint32_t*)(uintptr_t)(lr - 4);
-        const uint32_t br  = *(const volatile uint32_t*)(uintptr_t)(lr - 4);
-        const uint32_t op  = blr & 0xFFFFFC1Fu;
-        if (op == 0xD63F0000u || (br & 0xFFFFFC1Fu) == 0xD61F0000u) {
-            const unsigned rn = (blr >> 5) & 31u;
+        const uint32_t insn = *(const volatile uint32_t*)(uintptr_t)(lr - 4);
+        const uint32_t op_blr = insn & 0xFFFFFC1Fu;
+        const uint32_t op_br  = insn & 0xFFFFFC1Fu;
+        if (op_blr == 0xD63F0000u || op_br == 0xD61F0000u) {
+            const unsigned rn = (insn >> 5) & 31u;
             uint64_t target = 0;
             if (rn < 31) target = ctx->cpu_gprs[rn].x;
             else         target = ctx->lr.x;
             snprintf(buf, sizeof(buf),
                      "UNRECOVERED FAULT indirect-call: [lr-4]=0x%08x %s x%u=%p",
-                     blr, (op == 0xD63F0000u) ? "BLR" : "BR",
+                     insn, (op_blr == 0xD63F0000u) ? "BLR" : "BR",
                      rn, (void*)target);
             compatLogRaw(buf);
         } else {
