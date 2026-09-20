@@ -1764,7 +1764,58 @@ static int stub_openat(int, const char* path, int flags, ...) {
     va_list va; va_start(va, flags); int mode = va_arg(va, int); va_end(va);
     return open(path, flags, mode);
 }
-static int stub_unlinkat(int, const char* path, int) { return remove(path); }
+// The original Android game can ask the C runtime to remove configuration
+// files while resetting profiles. Never let a guest-side cleanup operation
+// delete the root configs that control the Switch launch.
+//
+// Profile-specific files such as Profiles/Player/Maximk_system.cfg are NOT
+// protected because their basename is different.
+static bool isProtectedRootConfigPath(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    const char* base = strrchr(path, '/');
+    const char* back = strrchr(path, '\\\\');
+    if (back && (!base || back > base))
+        base = back;
+    if (base)
+        ++base;
+    else
+        base = path;
+
+    return strcasecmp(base, "system.cfg") == 0 ||
+           strcasecmp(base, "game.cfg") == 0;
+}
+
+static int stub_remove(const char* path) {
+    if (isProtectedRootConfigPath(path)) {
+        compatLogFmt("remove BLOCKED: protected config %s", path);
+        errno = EROFS;
+        return -1;
+    }
+    return ::remove(path);
+}
+
+static int stub_rename(const char* old_path, const char* new_path) {
+    if (isProtectedRootConfigPath(old_path) ||
+        isProtectedRootConfigPath(new_path)) {
+        compatLogFmt("rename BLOCKED: protected config %s -> %s",
+                     old_path ? old_path : "?",
+                     new_path ? new_path : "?");
+        errno = EROFS;
+        return -1;
+    }
+    return ::rename(old_path, new_path);
+}
+
+static int stub_unlinkat(int, const char* path, int) {
+    if (isProtectedRootConfigPath(path)) {
+        compatLogFmt("unlinkat BLOCKED: protected config %s", path);
+        errno = EROFS;
+        return -1;
+    }
+    return ::remove(path);
+}
 static int stub_utimensat(int, const char*, const void*, int) { return 0; }
 static int stub_fchmodat(int, const char*, mode_t, int) { return 0; }
 
@@ -2321,7 +2372,12 @@ typedef struct { int quot; int rem; } stub_div_t;
 static stub_div_t stub_div(int n, int d) { stub_div_t r; r.quot = d ? n/d : 0; r.rem = d ? n%d : 0; return r; }
 
 // ── filesystem (fail gracefully; nothing here needs them to succeed) ──
-static int  stub_unlink(const char*)             { errno = EROFS; return -1; }
+static int  stub_unlink(const char* path) {
+    if (isProtectedRootConfigPath(path))
+        compatLogFmt("unlink BLOCKED: protected config %s", path);
+    errno = EROFS;
+    return -1;
+}
 static int  stub_rmdir(const char*)              { errno = EROFS; return -1; }
 static int  stub_truncate(const char*, long)     { errno = EROFS; return -1; }
 static int  stub_ftruncate(int, long)            { errno = EROFS; return -1; }
@@ -3136,8 +3192,8 @@ static const ShimEntry g_shims[] = {
     {"strtold",   (void*)strtold},
 
     // ── file I/O extras ──────────────────────────────────────────────────────
-    {"rename",  (void*)rename},
-    {"remove",  (void*)remove},
+    {"rename",  (void*)stub_rename},
+    {"remove",  (void*)stub_remove},
     {"getcwd",  (void*)stub_getcwd},
     {"fcntl",   (void*)stub_fcntl_sock},
 
