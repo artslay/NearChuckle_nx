@@ -918,11 +918,31 @@ static FILE* makeEmptyLanguagePak(const char* path, const char* mode) {
         return nullptr;
 
     FILE* f = fopen(path, mode);
+
+    // The Android CryEngine binary used by NearChuckle attempts to open
+    // CData/517.pak during CSystem::OpenBasicPaks(), but that archive does not
+    // exist in the original repositories, the shipped FCData archives, or the
+    // current Switch data tree. Treat this single Android packaging artifact as
+    // an empty valid ZIP so ZipDir can complete archive initialization instead
+    // of throwing ZipDir::Error. Do not redirect or synthesize any other CData
+    // files; later real content requests must still fail normally.
+    if (!f && path && mode && mode[0] == 'r') {
+        const std::string normalizedPath = pakNormalizeName(path);
+        if (normalizedPath == "cdata/517.pak") {
+            mkdir("CData", 0755);
+            FILE* fallback = makeEmptyLanguagePak(path, mode);
+            if (fallback) {
+                compatLogFmt("fopen FALLBACK: %s -> empty ZIP for Android startup compatibility",
+                             path);
+                return fallback;
+            }
+        }
+    }
     if (!f)
         return nullptr;
 
     setvbuf(f, nullptr, _IOFBF, 16 * 1024);
-    compatLogFmt("fopen FALLBACK: %s -> created empty optional language pak", path);
+    compatLogFmt("fopen FALLBACK: %s -> created empty compatibility pak", path);
     return f;
 }
 
@@ -1112,88 +1132,6 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
 }
 
 
-
-// Diagnostic for the Android/CryPak startup archive lookup. The original game
-// tree used by this Switch port is rooted at FCData, while the current crash
-// asks ZipDir to open CData/517.pak. Before changing any path mapping, verify
-// whether that exact archive actually exists inside one of the FCData PAKs.
-static void probeExactPakEntryInFcData(const char* wantedName) {
-    if (!wantedName || !*wantedName)
-        return;
-
-    std::string wanted = pakNormalizeName(wantedName);
-    std::string resolvedRoot;
-    if (!resolvePathCaseInsensitive("FCData", resolvedRoot)) {
-        compatLogFmt("PAK EXACT PROBE: %s -> FCData directory not found", wantedName);
-        return;
-    }
-
-    DIR* root = opendir(resolvedRoot.c_str());
-    if (!root) {
-        compatLogFmt("PAK EXACT PROBE: %s -> opendir(%s) failed", wantedName,
-                     resolvedRoot.c_str());
-        return;
-    }
-
-    int pakCount = 0;
-    int foundCount = 0;
-
-    for (struct dirent* ent = readdir(root); ent; ent = readdir(root)) {
-        const char* name = ent->d_name;
-        if (!name)
-            continue;
-
-        const size_t len = std::strlen(name);
-        if (len < 4 ||
-            std::tolower((unsigned char)name[len - 4]) != '.' ||
-            std::tolower((unsigned char)name[len - 3]) != 'p' ||
-            std::tolower((unsigned char)name[len - 2]) != 'a' ||
-            std::tolower((unsigned char)name[len - 1]) != 'k')
-            continue;
-
-        ++pakCount;
-        const std::string pakPath = resolvedRoot + "/" + name;
-        FILE* pak = fopen(pakPath.c_str(), "rb");
-        if (!pak)
-            continue;
-
-        uint32_t localOffset = 0;
-        uint32_t compressedSize = 0;
-        uint32_t uncompressedSize = 0;
-        uint16_t method = 0;
-
-        if (pakFindEntry(pak, wanted, localOffset, compressedSize,
-                         uncompressedSize, method)) {
-            ++foundCount;
-            compatLogFmt("PAK EXACT PROBE: %s <- %s method=%u csize=%u usize=%u offset=%u",
-                         wantedName, pakPath.c_str(), (unsigned)method,
-                         (unsigned)compressedSize, (unsigned)uncompressedSize,
-                         (unsigned)localOffset);
-        }
-
-        fclose(pak);
-    }
-
-    closedir(root);
-
-    struct stat cdataDir = {};
-    struct stat cdataFile = {};
-    struct stat lowerDir = {};
-    struct stat lowerFile = {};
-    const bool haveCDataDir =
-        (stat("CData", &cdataDir) == 0) && S_ISDIR(cdataDir.st_mode);
-    const bool haveCDataFile =
-        (stat("CData/517.pak", &cdataFile) == 0) && S_ISREG(cdataFile.st_mode);
-    const bool haveLowerDir =
-        (stat("cdata", &lowerDir) == 0) && S_ISDIR(lowerDir.st_mode);
-    const bool haveLowerFile =
-        (stat("cdata/517.pak", &lowerFile) == 0) && S_ISREG(lowerFile.st_mode);
-
-    compatLogFmt("PAK EXACT SUMMARY: %s found=%d/%d | CData=%d CData/517.pak=%d cdata=%d cdata/517.pak=%d",
-                 wantedName, foundCount, pakCount,
-                 haveCDataDir ? 1 : 0, haveCDataFile ? 1 : 0,
-                 haveLowerDir ? 1 : 0, haveLowerFile ? 1 : 0);
-}
 
 // ─── Shader source discovery outside FCData/*.pak ────────────────────────────
 //
@@ -3446,10 +3384,6 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     // Also report the declaration tree independently. This is useful when a
     // package contains HWScripts but stores Declarations in another PAK.
     probeShaderPakPrefix("Shaders/HWScripts/Declarations");
-
-    // Check the archive named in the current startup exception before
-    // OpenBasicPaks() gets a chance to touch it. This is diagnostic only.
-    probeExactPakEntryInFcData("CData/517.pak");
 
     // Run the FCData-only probe after the generalized scan. This tells us
     // whether the source came from the ordinary CryPak set or from an Android
