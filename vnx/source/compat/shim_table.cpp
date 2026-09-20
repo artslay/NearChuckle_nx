@@ -2185,7 +2185,10 @@ static AAsset* asset_open(AAssetManager* mgr, const char* fn, int) {
     fseek(f, 0, SEEK_END);
     a->size = (int64_t)ftell(f);
     rewind(f);
-    strncpy(a->path, path, sizeof(a->path) - 1);
+    const size_t path_len = std::strlen(path);
+    const size_t path_copy = path_len < sizeof(a->path) - 1 ? path_len : sizeof(a->path) - 1;
+    std::memcpy(a->path, path, path_copy);
+    a->path[path_copy] = '\0';
     return a;
 }
 static void   asset_close(AAsset* a)  { if (a) { fclose(a->fp); free(a); } }
@@ -3311,8 +3314,10 @@ static bool fillFindData64(NearFindData64* out,
     out->time_access = (int64_t)st.st_atime;
     out->time_write  = (int64_t)st.st_mtime;
     out->size        = (int64_t)st.st_size;
-    strncpy(out->name, name, sizeof(out->name) - 1);
-    out->name[sizeof(out->name) - 1] = '\0';
+    const size_t name_len = std::strlen(name);
+    const size_t name_copy = name_len < sizeof(out->name) - 1 ? name_len : sizeof(out->name) - 1;
+    std::memcpy(out->name, name, name_copy);
+    out->name[name_copy] = '\0';
     return true;
 }
 
