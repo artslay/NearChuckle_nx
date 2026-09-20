@@ -129,7 +129,7 @@ static void normalize_engine_data_dirs() {
         struct stat st_from = {};
         struct stat st_to = {};
         const bool has_from = (stat(from.c_str(), &st_from) == 0) && S_ISDIR(st_from.st_mode);
-        const bool has_to = (stat(to.c_str(), &st_to) == 0) && S_ISDIR(st_to);
+        const bool has_to = (stat(to.c_str(), &st_to) == 0) && S_ISDIR(st_to.st_mode);
 
         if (has_from && !has_to) {
             if (rename(from.c_str(), to.c_str()) == 0) {
