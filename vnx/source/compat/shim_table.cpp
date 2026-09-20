@@ -171,7 +171,16 @@ static int stub_readlink(const char*, char* buf, size_t sz) {
     if (sz > 0 && buf) buf[0] = '\0';
     errno = EINVAL; return -1;
 }
-static int stub_chdir(const char* path) { return chdir(path); }
+static int stub_chdir(const char* path) {
+    if (chdir(path) == 0)
+        return 0;
+    if (path) {
+        std::string resolved;
+        if (resolvePathCaseInsensitive(path, resolved) && resolved != path)
+            return chdir(resolved.c_str());
+    }
+    return -1;
+}
 static int stub_isatty(int)             { return 0; }
 // Network stubs
 static int stub_setsockopt(int, int, int, const void*, unsigned) { errno = ENOTSUP; return -1; }
@@ -816,6 +825,9 @@ static std::string obbRemap(const char* path) {
     if (!path || g_obb_dir.empty()) return "";
     return obb::remapPath(path, g_obb_pkg, g_obb_dir);
 }
+
+// Declared before the file wrappers; implemented in the CryPak compatibility block below.
+static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
 
 // Far Cry's Android build expects english1.pak/english2.pak during
 // OpenLanguagePak(), but these auxiliary English archives are intentionally
@@ -2355,12 +2367,47 @@ static int stub_dup2(int, int)           { errno = ENOTSUP; return -1; }
 static int stub_ioctl(int, unsigned long, void*) { errno = ENOTSUP; return -1; }
 
 // ─── access stub (file existence check) ──────────────────────────────────────
-static int stub_access(const char*, int) { errno = ENOENT; return -1; }
+static int stub_stat(const char* p, struct stat* s) {
+    if (!p || !s) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (::stat(p, s) == 0)
+        return 0;
+
+    std::string resolved;
+    if (resolvePathCaseInsensitive(p, resolved) && resolved != p)
+        return ::stat(resolved.c_str(), s);
+    return -1;
+}
+
+static int stub_access(const char* path, int mode) {
+    if (!path) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (::access(path, mode) == 0)
+        return 0;
+
+    std::string resolved;
+    if (resolvePathCaseInsensitive(path, resolved) && resolved != path)
+        return ::access(resolved.c_str(), mode);
+
+    errno = ENOENT;
+    return -1;
+}
 
 // ─── chmod / fchmod / lstat ──────────────────────────────────────────────────
 static int stub_chmod(const char*, mode_t)   { return 0; }
 static int stub_fchmod(int, mode_t)          { return 0; }
-static int stub_lstat(const char* p, struct stat* s) { return stat(p, s); }
+static int stub_lstat(const char* p, struct stat* s) {
+    if (::lstat(p, s) == 0)
+        return 0;
+    std::string resolved;
+    if (resolvePathCaseInsensitive(p, resolved) && resolved != p)
+        return ::lstat(resolved.c_str(), s);
+    return -1;
+}
 
 // ─── pthread_setname_np / pthread_getname_np (thread naming, GNU ext) ────────
 static int stub_pthread_setname_np(void*, const char*) { return 0; }
@@ -2974,6 +3021,7 @@ static const ShimEntry g_shims[] = {
     {"vsprintf",    (void*)vsprintf},
     {"vsnprintf",   (void*)vsnprintf},
     {"fopen",       (void*)stub_fopen},
+    {"fopen64",     (void*)stub_fopen},
     {"fclose",      (void*)sh_fclose},
     {"fread",       (void*)sh_fread},
     {"fwrite",      (void*)sh_fwrite},
@@ -2997,7 +3045,8 @@ static const ShimEntry g_shims[] = {
     {"read",        (void*)sh_read},
     {"write",       (void*)sh_write},
     {"lseek",       (void*)lseek},
-    {"stat",        (void*)stat},
+    {"stat",        (void*)stub_stat},
+    {"stat64",       (void*)stub_stat},
     {"fstat",       (void*)fstat},
     {"mkdir",       (void*)mkdir},
     {"opendir",     (void*)stub_opendir},
