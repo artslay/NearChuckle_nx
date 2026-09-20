@@ -1775,7 +1775,7 @@ static bool isProtectedRootConfigPath(const char* path) {
         return false;
 
     const char* base = strrchr(path, '/');
-    const char* back = strrchr(path, '\\\\');
+    const char* back = strrchr(path, '\\');
     if (back && (!base || back > base))
         base = back;
     if (base)
