@@ -1707,6 +1707,30 @@ static int32_t sl_createEngine(void*, uint32_t, const void*, uint32_t,
     return 0x0000000C;   // SL_RESULT_FEATURE_UNSUPPORTED
 }
 
+// OpenAL Soft Android/Bionic imports that must resolve even though the
+// Android-only OpenSL backend is explicitly disabled on Switch.
+static int stub_sched_get_priority_min(int) { return 0; }
+static int stub_sched_get_priority_max(int) { return 0; }
+static int stub_pthread_setschedparam(void*, int, const void*) { return 0; }
+static int stub_pthread_rwlock_tryrdlock(void* m) { return pt_rwlock_rdlock(m); }
+static int stub_pthread_rwlock_trywrlock(void* m) { return pt_rwlock_wrlock(m); }
+
+static ssize_t stub___readlink_chk(const char* path, char* buf,
+                                   size_t bufsz, size_t) {
+    return stub_readlink(path, buf, bufsz);
+}
+
+static int stub___cxa_thread_atexit_impl(void (*)(void*), void*, void*) {
+    return 0;
+}
+
+// GNU C++ ABI TLS initialization hook emitted by OpenAL Soft for its
+// thread_local current-context pointer. Switch does not need Android's TLS
+// runtime here because the context pointer starts as zero.
+extern "C" void openal_tls_context_init(void)
+    __asm__("_ZTHN10ALCcontext13sLocalContextE");
+extern "C" void openal_tls_context_init(void) {}
+
 // ─── Assorted libc the 32-bit build reaches for ─────────────────────────────
 static long   stub_lround (double x)      { return (long)(x < 0 ? x - 0.5 : x + 0.5); }
 static long   stub_lroundf(float  x)      { return (long)(x < 0 ? x - 0.5f : x + 0.5f); }
@@ -2644,6 +2668,7 @@ static const ShimEntry g_shims[] = {
     {"__stack_chk_fail",   (void*)__stack_chk_fail},
     {"__cxa_atexit",       (void*)__cxa_atexit},
     {"__cxa_pure_virtual", (void*)__cxa_pure_virtual},
+    {"__cxa_thread_atexit_impl", (void*)stub___cxa_thread_atexit_impl},
 
     // ── libm passthrough ─────────────────────────────────────────────────────
     {"sin",   (void*)sin},   {"sinf",  (void*)sinf},
@@ -2713,6 +2738,9 @@ static const ShimEntry g_shims[] = {
     {"pthread_attr_setdetachstate",(void*)pt_attr_setdetachstate},
     {"pthread_attr_setstacksize", (void*)pt_attr_setstacksize},
     {"pthread_attr_getstacksize", (void*)pt_attr_getstacksize},
+    {"pthread_rwlock_tryrdlock", (void*)stub_pthread_rwlock_tryrdlock},
+    {"pthread_rwlock_trywrlock", (void*)stub_pthread_rwlock_trywrlock},
+    {"pthread_setschedparam", (void*)stub_pthread_setschedparam},
 
     // ── libdl ────────────────────────────────────────────────────────────────
     {"dlopen",  (void*)fake_dlopen},
@@ -3230,6 +3258,8 @@ static const ShimEntry g_shims[] = {
     {"SL_IID_PREFETCHSTATUS",           (void*)kSlIidStorage},
     {"SL_IID_METADATAEXTRACTION",       (void*)kSlIidStorage},
     {"SL_IID_ANDROIDSIMPLEBUFFERQUEUE", (void*)kSlIidStorage},
+    {"SL_IID_ANDROIDCONFIGURATION", (void*)kSlIidStorage},
+    {"SL_IID_RECORD",               (void*)kSlIidStorage},
 
     // ── assorted libc the 32-bit build reaches for ───────────────────────────
     {"lround",   (void*)stub_lround},   {"lroundf",  (void*)stub_lroundf},
@@ -3437,6 +3467,9 @@ static const ShimEntry g_shims[] = {
     {"wcsxfrm_l",       (void*)stub_wcsxfrm_l},
     // string extras that newlib provides but weren't forwarded
     {"strspn",          (void*)strspn},
+    {"sched_get_priority_min", (void*)stub_sched_get_priority_min},
+    {"sched_get_priority_max", (void*)stub_sched_get_priority_max},
+    {"__readlink_chk",         (void*)stub___readlink_chk},
 
     // sentinel
     // Desktop OpenGL 1.x/2.1 entry points used by Far Cry's XRenderOGL.
