@@ -18,6 +18,8 @@ extern void compatPrepareShaderDirectories(const char* dataRoot);
 
 extern void androidTlsInstall();
 extern void vnxSetGameSo(LoadedSo* so);
+extern void compatUiInit();
+extern void compatUiShutdown();
 
 struct SoFile {
     std::string path;
@@ -513,6 +515,11 @@ static int run_farcry(LoadedSo* game_so) {
 }
 
 int main(int, char**) {
+    // Keep visible startup diagnostics on the Switch while the guest runtime
+    // and CryEngine are starting. The console remains active through Far Cry
+    // initialization so black-screen shader failures are visible.
+    compatUiInit();
+
     if (read_config("/switch/NearChuckle_nx/config.txt") != 0)
         std::printf("NearChuckle: config.txt not found, using defaults\n");
 
@@ -598,5 +605,6 @@ int main(int, char**) {
     compatLogFlush();
 
     vnxSetGameSo(nullptr);
+    compatUiShutdown();
     return rc;
 }
