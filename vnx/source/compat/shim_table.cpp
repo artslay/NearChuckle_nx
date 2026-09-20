@@ -213,7 +213,7 @@ static char* stub_realpath(const char* p, char* out) {
         return nullptr;
     }
 
-    if (!::stat(p, &(struct stat){})) {
+    struct stat st = {};\n    if (::stat(p, &st) == 0) {
         if (p[0] == '/') {
             strncpy(out, p, PATH_MAX - 1);
             out[PATH_MAX - 1] = '\0';
