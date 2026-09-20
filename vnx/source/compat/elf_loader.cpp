@@ -8,7 +8,7 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <switch/arm/thread_context.h>
-#include <runtime/env.h>
+#include <switch/runtime/env.h>
 
 // Log helpers — declared before the exception handler so it can use them.
 extern void compatLog(const char* msg);
