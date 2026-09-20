@@ -656,6 +656,25 @@ static jfloat s_CallStaticFloatMethod(JNIEnv* env, jclass c, jmethodID m, ...) {
 static jboolean s_CallStaticBoolMethodV(JNIEnv*, jclass, jmethodID mid, va_list args) {
     MethodEntry* e = methodEntry(mid);
     if (e) {
+        // SDL3 Android callbacks: the Switch port is a landscape, non-TV,
+        // non-DeX, non-Chromebook environment. These values let SDL's Android
+        // core choose its normal path without depending on Java framework state.
+        if (strcmp(e->name, "getManifestEnvironmentVariables") == 0 ||
+            strcmp(e->name, "isAndroidTV") == 0 ||
+            strcmp(e->name, "isChromebook") == 0 ||
+            strcmp(e->name, "isDeXMode") == 0 ||
+            strcmp(e->name, "isTablet") == 0 ||
+            strcmp(e->name, "shouldMinimizeOnFocusLoss") == 0)
+            return JNI_FALSE;
+
+        if (strcmp(e->name, "setActivityTitle") == 0)
+            return JNI_TRUE;
+
+        if (strcmp(e->name, "setCustomCursor") == 0 ||
+            strcmp(e->name, "setRelativeMouseEnabled") == 0 ||
+            strcmp(e->name, "setSystemCursor") == 0)
+            return JNI_FALSE;
+
         // EULA/consent checks — return true so the game doesn't wait forever
         if (strcmp(e->name, "eulaHasBeenAccepted") == 0 ||
             strcmp(e->name, "hasUserConsented")      == 0) {
@@ -899,6 +918,23 @@ static void s_CallStaticVoidMethod(JNIEnv* env, jclass cls, jmethodID mid, ...) 
 static jobject s_CallStaticObjectMethodV(JNIEnv*, jclass, jmethodID mid, va_list args) {
     MethodEntry* e = methodEntry(mid);
     if (!e) { compatLog("JNI CallStaticObjectMethodV"); return (jobject)""; }
+
+    // SDL3's Android video/core code asks SDLActivity for its Context even
+    // though this Switch port has no Java Activity. Return our tagged Activity
+    // object so the existing instance-method compatibility layer can service
+    // getAssets/getFilesDir/getExternalFilesDir/getPackageResourcePath, etc.
+    if (strcmp(e->name, "getContext") == 0)
+        return jmake(JCls::Activity, dataDir());
+
+    // SDL only uses this to obtain an Android Surface before converting it to an
+    // ANativeWindow. The Switch ANativeWindow shim ignores the Java Surface
+    // payload, but it must still be non-null so SDL does not reject it first.
+    if (strcmp(e->name, "getNativeSurface") == 0)
+        return (jobject)&compatGet()->window;
+
+    if (strcmp(e->name, "getDeviceFormFactor") == 0 ||
+        strcmp(e->name, "getPreferredLocales") == 0)
+        return (jobject)"en";
 
     if (strcmp(e->name, "getStringForKey") == 0) {
         const char* key    = (const char*)va_arg(args, jstring);
