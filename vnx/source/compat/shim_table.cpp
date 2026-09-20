@@ -3043,12 +3043,20 @@ void compatPrepareShaderDirectories() {
         nullptr
     };
 
+    // First pull the critical system shader files from any loose Android asset
+    // tree or secondary APK/OBB/ZIP source. FCData/*.pak alone is not enough
+    // for this Far Cry build.
+    prepareShaderSourceFiles();
+
     for (size_t i = 0; dirs[i]; ++i) {
         if (tryMaterializePakDirectory(dirs[i]))
             compatLogFmt("pak DIR READY: %s", dirs[i]);
         logShaderScriptInventory(dirs[i]);
     }
 
+    // Run the FCData-only probe after the generalized scan. This tells us
+    // whether the source came from the ordinary CryPak set or from an Android
+    // package/asset container.
     probeShaderPakEntries();
 }
 
