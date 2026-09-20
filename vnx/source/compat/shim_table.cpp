@@ -1190,6 +1190,20 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         }
     }
 
+    if (!f && path && path[0] != '/' && path[0] != '\\' &&
+        std::strncasecmp(path, "FCData/", 7) != 0 &&
+        std::strncasecmp(path, "fcdata/", 7) != 0) {
+        const std::string virtualPath = std::string("FCData/") + path;
+        std::string resolved;
+        if (resolvePathCaseInsensitive(virtualPath.c_str(), resolved)) {
+            FILE* rf = fopen(resolved.c_str(), mode);
+            if (rf) {
+                compatLogFmt("fopen FCDATA: %s -> %s", path, resolved.c_str());
+                f = rf;
+            }
+        }
+    }
+
     if (!f) {
         FILE* pakFile = tryOpenFromLanguagePaks(path, mode);
         if (pakFile)
