@@ -1688,9 +1688,36 @@ static int w_SDL_GL_MakeCurrent(void* window, void* context) {
         compatLog("SDL: SDL_GL_MakeCurrent export not found");
         return 0;
     }
+
     bool ok = fn(window, context);
     compatLogFmt("SDL: SDL_GL_MakeCurrent(%p,%p) -> %d err=%s",
                  window, context, ok ? 1 : 0, sdl3_error());
+
+    if (ok) {
+        const GLubyte* version = glGetString(GL_VERSION);
+        const GLubyte* renderer = glGetString(GL_RENDERER);
+        const GLubyte* glsl = glGetString(GL_SHADING_LANGUAGE_VERSION);
+
+        compatLogFmt("GL context: version=%s renderer=%s glsl=%s",
+                     version ? reinterpret_cast<const char*>(version) : "?",
+                     renderer ? reinterpret_cast<const char*>(renderer) : "?",
+                     glsl ? reinterpret_cast<const char*>(glsl) : "?");
+
+        const char* probes[] = {
+            "glGenProgramsARB",
+            "glBindProgramARB",
+            "glProgramStringARB",
+            "glVertexAttribPointerARB",
+            "glProgramEnvParameter4fARB"
+        };
+
+        for (const char* name : probes) {
+            __eglMustCastToProperFunctionPointerType p = eglGetProcAddress(name);
+            compatLogFmt("GL proc probe: %s -> %p", name,
+                         reinterpret_cast<void*>(p));
+        }
+    }
+
     return ok ? 1 : 0;
 }
 
