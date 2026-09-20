@@ -812,6 +812,59 @@ static std::string obbRemap(const char* path) {
     return obb::remapPath(path, g_obb_pkg, g_obb_dir);
 }
 
+// Far Cry's Android build expects english1.pak/english2.pak during
+// OpenLanguagePak(), but these auxiliary English archives are intentionally
+// absent when a complete localization is supplied through english.pak (which
+// is also how common Far Cry Russian-localization installs are arranged).
+// The original CryPak treats a missing optional language archive as non-fatal,
+// while this Android build reaches ZipDir::CacheFactory3::New with the missing
+// file and lets the resulting exception escape. Give ZipDir a real, valid
+// zero-entry ZIP archive instead of NULL. Only do this after the real file open
+// failed, so an existing english1.pak/english2.pak is never shadowed.
+static bool isOptionalLanguagePak(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    const char* dir = std::strstr(path, "FCData/Localized/");
+    if (!dir)
+        return false;
+
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+
+    return std::strcmp(base, "english1.pak") == 0 ||
+           std::strcmp(base, "english2.pak") == 0;
+}
+
+static FILE* makeEmptyLanguagePak(const char* path) {
+    // Standard ZIP End Of Central Directory for an archive with zero entries.
+    // CryEngine's ZipDir reader accepts PAK files through this ZIP structure.
+    static const unsigned char empty_zip_eocd[] = {
+        0x50, 0x4B, 0x05, 0x06,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00
+    };
+
+    FILE* f = tmpfile();
+    if (!f)
+        return nullptr;
+
+    const size_t written = fwrite(empty_zip_eocd, 1, sizeof(empty_zip_eocd), f);
+    if (written != sizeof(empty_zip_eocd) ||
+        fflush(f) != 0 ||
+        fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return nullptr;
+    }
+
+    setvbuf(f, nullptr, _IOFBF, 16 * 1024);
+    compatLogFmt("fopen FALLBACK: %s -> empty optional language pak", path ? path : "?");
+    return f;
+}
+
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     if (std::string mapped = obbRemap(path); !mapped.empty()) {
@@ -824,6 +877,12 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     }
     FILE* f = fopen(path, mode);
     if (!f) {
+        if (mode && mode[0] == 'r' && isOptionalLanguagePak(path)) {
+            FILE* fallback = makeEmptyLanguagePak(path);
+            if (fallback)
+                return fallback;
+        }
+
         // Some files a game reads are written for it before it runs — by a
         // backend fetch, or by Java. Nothing here does that, so the read fails
         // on a file the game is entitled to assume exists. Only consulted after
