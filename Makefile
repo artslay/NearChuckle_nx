@@ -18,7 +18,7 @@ SOURCES     := source vnx/source/compat
 DATA        :=
 INCLUDES    := source vnx/include
 
-MESA_SDK    := $(CURDIR)/mesa-sdk/opt/devkitpro/portlibs/switch
+MESA_SDK    := $(TOPDIR)/mesa-sdk/opt/devkitpro/portlibs/switch
 LIBDIRS     := $(MESA_SDK) $(PORTLIBS) $(LIBNX)
 
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
@@ -46,7 +46,7 @@ ifneq ($(BUILD),$(notdir $(CURDIR)))
 
 export OUTPUT := $(CURDIR)/$(TARGET)
 export TOPDIR := $(CURDIR)
-export VPATH := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir))
+export VPATH := $(foreach dir,$(SOURCES),$(TOPDIR)/$(dir))
 export DEPSDIR := $(CURDIR)/$(BUILD)
 
 CFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
@@ -56,9 +56,9 @@ SFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 export LD := $(CXX)
 export OFILES := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
 
-export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
+export INCLUDE := $(foreach dir,$(INCLUDES),-I$(TOPDIR)/$(dir)) \
                  $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
-                 -I$(CURDIR)/$(BUILD)
+                 -I$(TOPDIR)/$(BUILD)
 
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
