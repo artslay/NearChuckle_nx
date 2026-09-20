@@ -111,6 +111,63 @@ static std::vector<SoFile> find_guest_libraries() {
     return result;
 }
 
+static void probe_engine_data_layout() {
+    const std::string roots[] = {
+        std::string(config.data_root) + "/FCData",
+        std::string(config.data_root) + "/fcdata",
+        std::string(config.data_root) + "/FCData/Localized",
+        std::string(config.data_root) + "/fcdata/localized"
+    };
+
+    for (const std::string& root : roots) {
+        DIR* d = opendir(root.c_str());
+        if (!d) {
+            compatLogFmt("data probe: %s -> MISSING", root.c_str());
+            continue;
+        }
+
+        int pak_count = 0;
+        std::string pak_names;
+        while (dirent* ent = readdir(d)) {
+            if (!ent->d_name || !*ent->d_name)
+                continue;
+
+            const size_t len = std::strlen(ent->d_name);
+            if (len >= 4 &&
+                std::tolower((unsigned char)ent->d_name[len - 4]) == '.' &&
+                std::tolower((unsigned char)ent->d_name[len - 3]) == 'p' &&
+                std::tolower((unsigned char)ent->d_name[len - 2]) == 'a' &&
+                std::tolower((unsigned char)ent->d_name[len - 1]) == 'k') {
+                if (pak_names.size() < 900) {
+                    if (!pak_names.empty())
+                        pak_names += ",";
+                    pak_names += ent->d_name;
+                }
+                ++pak_count;
+            }
+        }
+        closedir(d);
+
+        compatLogFmt("data probe: %s -> OK pak_count=%d pak=%s",
+                     root.c_str(), pak_count,
+                     pak_names.empty() ? "-" : pak_names.c_str());
+    }
+
+    const char* rel_paths[] = {
+        "languages/fonts/default.xml",
+        "FCData/languages/fonts/default.xml",
+        "fcdata/languages/fonts/default.xml"
+    };
+
+    for (const char* rel : rel_paths) {
+        const std::string p = std::string(config.data_root) + "/" + rel;
+        struct stat st = {};
+        const bool ok = (stat(p.c_str(), &st) == 0) && S_ISREG(st.st_mode);
+        compatLogFmt("data probe: %s -> %s",
+                     p.c_str(), ok ? "PRESENT" : "MISSING");
+    }
+}
+
 static void normalize_engine_data_dirs() {
     struct Pair {
         const char* from;
@@ -202,6 +259,7 @@ static void setup_environment() {
 
     chdir(config.data_root);
     normalize_engine_data_dirs();
+    probe_engine_data_layout();
 }
 
 static void log_system_resources(const char* stage) {
