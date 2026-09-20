@@ -482,6 +482,8 @@ static bool dispatchAchievement(const MethodEntry*, va_list&) {
     return false;
 }
 
+} // namespace
+
 // ─── Instance-method call stubs ───────────────────────────────────────────────
 static jobject s_CallObjectMethodV(JNIEnv*, jobject recv, jmethodID mid, va_list args) {
     // The *Immediate achievement calls hand back a Task, so they arrive here
