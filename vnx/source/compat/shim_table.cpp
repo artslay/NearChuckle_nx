@@ -31,7 +31,7 @@
 #include <locale.h>
 #include <setjmp.h>
 #include <semaphore.h>
-#include <zlib.h>
+// zlib API declarations. Some devkitA64 installations do not ship a zlib header,\n// while libz is still available for linking. Keep the ABI declarations local.\nextern "C" {\n    struct z_stream_s;\n    typedef struct z_stream_s z_stream;\n    typedef z_stream* z_streamp;\n\n    int inflate(z_streamp, int);\n    int inflateEnd(z_streamp);\n    int inflateInit_(z_streamp, const char*, int);\n    int inflateInit2_(z_streamp, int, const char*, int);\n    int inflateReset(z_streamp);\n    int deflate(z_streamp, int);\n    int deflateEnd(z_streamp);\n    int deflateInit_(z_streamp, int, const char*, int);\n    int deflateInit2_(z_streamp, int, int, int, int, int, const char*, int);\n    unsigned long crc32(unsigned long, const unsigned char*, unsigned int);\n    unsigned long adler32(unsigned long, const unsigned char*, unsigned int);\n    int uncompress(unsigned char*, unsigned long*, const unsigned char*, unsigned long);\n    int compress(unsigned char*, unsigned long*, const unsigned char*, unsigned long);\n}
 #include <fnmatch.h>
 #include <libgen.h>
 #include <sys/lock.h>
