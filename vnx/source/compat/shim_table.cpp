@@ -866,6 +866,35 @@ static std::string obbRemap(const char* path) {
     return obb::remapPath(path, g_obb_pkg, g_obb_dir);
 }
 
+static std::string cdataToFcdata(const char* path) {
+    if (!path || !*path)
+        return "";
+
+    std::string p = path;
+    for (char& c : p) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    std::string lower = asciiLower(p);
+
+    if (lower == "cdata")
+        return "FCData";
+    if (lower.rfind("cdata/", 0) == 0)
+        return "FCData/" + p.substr(6);
+
+    return "";
+}
+
+static bool cdataMappedPathExists(const char* path, std::string& mapped) {
+    mapped = cdataToFcdata(path);
+    if (mapped.empty())
+        return false;
+
+    struct stat st = {};
+    return ::stat(mapped.c_str(), &st) == 0;
+}
+
 // Far Cry's Android build expects english1.pak/english2.pak during
 // OpenLanguagePak(), but these auxiliary English archives are intentionally
 // absent when a complete localization is supplied through english.pak (which
@@ -1546,6 +1575,16 @@ static void startupShaderOverlay(const char* state, const char* path) {
 
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
+    std::string cdataPath;
+    if (cdataMappedPathExists(path, cdataPath)) {
+        FILE* mapped = fopen(cdataPath.c_str(), mode);
+        if (mapped) {
+            compatLogFmt("fopen CDATA->FCDATA: %s -> %s", path ? path : "?", cdataPath.c_str());
+            setvbuf(mapped, nullptr, _IOFBF, 64 * 1024);
+            return mapped;
+        }
+    }
+
     // Trace the guest call site for shader files. If this fires from a
     // CryEngine renderer function while directory enumeration stays silent,
     // we know the lookup reached the CRT path rather than our FindFirst shim.
@@ -1695,6 +1734,15 @@ static int stub_open(const char* path, int flags, ...) {
     auto doOpen = [&](const char* p) -> int {
         return (flags & O_CREAT) ? open(p, flags, mode) : open(p, flags);
     };
+
+    std::string cdataPath;
+    if (cdataMappedPathExists(path, cdataPath)) {
+        int cfd = doOpen(cdataPath.c_str());
+        compatLogFmt("open CDATA->FCDATA: %s -> %s (fd=%d)",
+                     path ? path : "?", cdataPath.c_str(), cfd);
+        if (cfd >= 0)
+            return cfd;
+    }
 
     if (std::string mapped = obbRemap(path); !mapped.empty()) {
         int mfd = doOpen(mapped.c_str());
@@ -3204,6 +3252,19 @@ static bool directoryHasVisibleEntries(const char* path) {
 }
 
 static DIR* stub_opendir(const char* path) {
+    // CryPak's Android build uses DATA_FOLDER="CData" while the Switch game
+    // stores the real archives under FCData. Present the latter as the former
+    // to the engine without copying or unpacking the archives.
+    std::string cdataPath;
+    if (cdataMappedPathExists(path, cdataPath)) {
+        DIR* mapped = opendir(cdataPath.c_str());
+        if (mapped) {
+            compatLogFmt("opendir CDATA->FCDATA: %s -> %s",
+                         path ? path : "?", cdataPath.c_str());
+            return mapped;
+        }
+    }
+
     // A critical Android/CryPak quirk: FindFirst/ScanFS can ask for a shader
     // directory that already exists but is empty. The old implementation
     // returned that empty DIR immediately, so the PAK materialization path was
@@ -3753,6 +3814,12 @@ static int stub_stat(const char* p, struct stat* s) {
         errno = EINVAL;
         return -1;
     }
+
+    std::string cdataPath;
+    if (cdataMappedPathExists(p, cdataPath) &&
+        ::stat(cdataPath.c_str(), s) == 0)
+        return 0;
+
     if (::stat(p, s) == 0)
         return 0;
 
@@ -3767,6 +3834,12 @@ static int stub_access(const char* path, int mode) {
         errno = EINVAL;
         return -1;
     }
+
+    std::string cdataPath;
+    if (cdataMappedPathExists(path, cdataPath) &&
+        ::access(cdataPath.c_str(), mode) == 0)
+        return 0;
+
     if (::access(path, mode) == 0)
         return 0;
 
@@ -3782,6 +3855,11 @@ static int stub_access(const char* path, int mode) {
 static int stub_chmod(const char*, mode_t)   { return 0; }
 static int stub_fchmod(int, mode_t)          { return 0; }
 static int stub_lstat(const char* p, struct stat* s) {
+    std::string cdataPath;
+    if (cdataMappedPathExists(p, cdataPath) &&
+        ::lstat(cdataPath.c_str(), s) == 0)
+        return 0;
+
     if (::lstat(p, s) == 0)
         return 0;
     std::string resolved;
