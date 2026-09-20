@@ -12,6 +12,50 @@ static Mutex g_log_lock;
 static FILE* g_log = nullptr;
 static LoadedSo* g_game_so = nullptr;
 
+static bool g_boot_console = false;
+static char g_ui_lines[18][128] = {};
+static int g_ui_line_count = 0;
+
+static bool bootUiInteresting(const char* msg) {
+    if (!msg || !*msg) return false;
+    static const char* const keys[] = {
+        "=== NearChuckle_nx start ===", "data_root=", "lib_dir=",
+        "mesa_driver=", "resolution=", "shader source", "PAK PROBE",
+        "pak DIR", "SHADER fopen CALL", "fopen FAIL: Shaders",
+        "bind: fopen", "bind: fopen64", "bind: opendir",
+        "bind: _findfirst64", "Starting Far Cry", "SDL:", "EGL:",
+        "GL context:", "ERROR:", "FATAL:", "UNRECOVERED FAULT"
+    };
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i)
+        if (std::strstr(msg, keys[i])) return true;
+    return false;
+}
+
+static void bootUiRender() {
+    if (!g_boot_console) return;
+    consoleClear();
+    std::printf("NearChuckle_nx | startup / shader diagnostics\n");
+    std::printf("------------------------------------------------------------\n");
+    for (int i = 0; i < g_ui_line_count; ++i)
+        std::printf("%s\n", g_ui_lines[i]);
+    consoleUpdate(nullptr);
+}
+
+void compatUiInit() {
+    if (g_boot_console) return;
+    consoleInit(nullptr);
+    g_boot_console = true;
+    g_ui_line_count = 0;
+    bootUiRender();
+}
+
+void compatUiShutdown() {
+    if (!g_boot_console) return;
+    consoleUpdate(nullptr);
+    consoleExit(nullptr);
+    g_boot_console = false;
+}
+
 static char g_android_tls[1024] __attribute__((aligned(16)));
 static char g_android_tls_sub[512] __attribute__((aligned(16)));
 
@@ -40,6 +84,22 @@ CompatLayer* compatGet() {
 void compatLog(const char* msg) {
     mutexLock(&g_log_lock);
     log_write(msg);
+
+    if (g_boot_console && bootUiInteresting(msg)) {
+        if (g_ui_line_count < 18) {
+            std::snprintf(g_ui_lines[g_ui_line_count],
+                          sizeof(g_ui_lines[g_ui_line_count]), "%s", msg ? msg : "");
+            ++g_ui_line_count;
+        } else {
+            for (int i = 1; i < 18; ++i)
+                std::memmove(g_ui_lines[i - 1], g_ui_lines[i],
+                             sizeof(g_ui_lines[i - 1]));
+            std::snprintf(g_ui_lines[17], sizeof(g_ui_lines[17]),
+                          "%s", msg ? msg : "");
+        }
+        bootUiRender();
+    }
+
     mutexUnlock(&g_log_lock);
 }
 
