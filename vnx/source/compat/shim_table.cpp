@@ -1624,6 +1624,152 @@ static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
     return nullptr;
 }
 
+
+// ─── Startup shader overlay ───────────────────────────────────────────────────
+// Show shader file lookups directly on the active Switch GL surface during
+// engine startup. This is limited to the first 64 shader-related fopen calls.
+static unsigned g_shader_overlay_events = 0;
+
+struct StartupGlyph { char c; uint8_t rows[7]; };
+
+static const StartupGlyph g_startup_font[] = {
+    {'A',{0x0E,0x11,0x11,0x1F,0x11,0x11,0x11}},
+    {'B',{0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E}},
+    {'C',{0x0F,0x10,0x10,0x10,0x10,0x10,0x0F}},
+    {'D',{0x1E,0x11,0x11,0x11,0x11,0x11,0x1E}},
+    {'E',{0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F}},
+    {'F',{0x1F,0x10,0x10,0x1E,0x10,0x10,0x10}},
+    {'G',{0x0F,0x10,0x10,0x17,0x11,0x11,0x0F}},
+    {'H',{0x11,0x11,0x11,0x1F,0x11,0x11,0x11}},
+    {'I',{0x1F,0x04,0x04,0x04,0x04,0x04,0x1F}},
+    {'J',{0x01,0x01,0x01,0x01,0x11,0x11,0x0E}},
+    {'K',{0x11,0x12,0x14,0x18,0x14,0x12,0x11}},
+    {'L',{0x10,0x10,0x10,0x10,0x10,0x10,0x1F}},
+    {'M',{0x11,0x1B,0x15,0x15,0x11,0x11,0x11}},
+    {'N',{0x11,0x19,0x15,0x13,0x11,0x11,0x11}},
+    {'O',{0x0E,0x11,0x11,0x11,0x11,0x11,0x0E}},
+    {'P',{0x1E,0x11,0x11,0x1E,0x10,0x10,0x10}},
+    {'Q',{0x0E,0x11,0x11,0x11,0x15,0x12,0x0D}},
+    {'R',{0x1E,0x11,0x11,0x1E,0x14,0x12,0x11}},
+    {'S',{0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E}},
+    {'T',{0x1F,0x04,0x04,0x04,0x04,0x04,0x04}},
+    {'U',{0x11,0x11,0x11,0x11,0x11,0x11,0x0E}},
+    {'V',{0x11,0x11,0x11,0x11,0x11,0x0A,0x04}},
+    {'W',{0x11,0x11,0x11,0x15,0x15,0x1B,0x11}},
+    {'X',{0x11,0x11,0x0A,0x04,0x0A,0x11,0x11}},
+    {'Y',{0x11,0x11,0x0A,0x04,0x04,0x04,0x04}},
+    {'Z',{0x1F,0x01,0x02,0x04,0x08,0x10,0x1F}},
+    {'0',{0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}},
+    {'1',{0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}},
+    {'2',{0x0E,0x11,0x01,0x02,0x04,0x08,0x1F}},
+    {'3',{0x1E,0x01,0x01,0x0E,0x01,0x01,0x1E}},
+    {'4',{0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}},
+    {'5',{0x1F,0x10,0x10,0x1E,0x01,0x01,0x1E}},
+    {'6',{0x0E,0x10,0x10,0x1E,0x11,0x11,0x0E}},
+    {'7',{0x1F,0x01,0x02,0x04,0x08,0x08,0x08}},
+    {'8',{0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}},
+    {'9',{0x0E,0x11,0x11,0x0F,0x01,0x01,0x0E}},
+    {' ',{0,0,0,0,0,0,0}},
+    {'/',{0x01,0x02,0x02,0x04,0x08,0x08,0x10}},
+    {'.',{0,0,0,0,0,0,0x04}},
+    {'_',{0,0,0,0,0,0,0x1F}},
+    {'-',{0,0,0,0x1F,0,0,0}},
+    {':',{0,0x04,0,0,0,0x04,0}},
+    {0,{0,0,0,0,0,0,0}}
+};
+
+static const StartupGlyph* startupGlyph(char c) {
+    const char up = (char)std::toupper((unsigned char)c);
+    for (const StartupGlyph* g = g_startup_font; g->c; ++g)
+        if (g->c == up) return g;
+    return &g_startup_font[36];
+}
+
+static void startupDrawText(float x, float y, float scale, const char* text) {
+    if (!text) return;
+    glBegin(GL_QUADS);
+    float pen = x;
+    for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
+        if (*p == '\n') { y += 9.0f * scale; pen = x; continue; }
+        const StartupGlyph* glyph = startupGlyph((char)*p);
+        for (int row = 0; row < 7; ++row) {
+            for (int col = 0; col < 5; ++col) {
+                if (!(glyph->rows[row] & (1u << (4 - col)))) continue;
+                const float x0 = pen + col * scale;
+                const float y0 = y + row * scale;
+                const float x1 = x0 + scale;
+                const float y1 = y0 + scale;
+                glVertex2f(x0, y0); glVertex2f(x1, y0);
+                glVertex2f(x1, y1); glVertex2f(x0, y1);
+            }
+        }
+        pen += 6.0f * scale;
+    }
+    glEnd();
+}
+
+static void startupShaderOverlay(const char* state, const char* path) {
+    if (!path || !*path || g_shader_overlay_events >= 64) return;
+    if (eglGetCurrentContext() == EGL_NO_CONTEXT ||
+        eglGetCurrentSurface(EGL_DRAW) == EGL_NO_SURFACE) return;
+
+    GLint vp[4] = {};
+    glGetIntegerv(GL_VIEWPORT, vp);
+    const int w = vp[2] > 0 ? vp[2] : 1280;
+    const int h = vp[3] > 0 ? vp[3] : 720;
+
+    char cleanPath[96];
+    std::snprintf(cleanPath, sizeof(cleanPath), "%s", path);
+    for (char* p = cleanPath; *p; ++p)
+        if (*p == '\\') *p = '/';
+
+    const size_t len = std::strlen(cleanPath);
+    if (len > 72) {
+        std::memmove(cleanPath, cleanPath + (len - 72), 72);
+        cleanPath[72] = '\0';
+    }
+
+    char line[110];
+    std::snprintf(line, sizeof(line), "%s %s", state ? state : "OPEN", cleanPath);
+
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0, w, h, 0, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_BLEND);
+
+    glColor3f(0.02f, 0.02f, 0.02f);
+    glBegin(GL_QUADS);
+    glVertex2f(0, 0); glVertex2f((float)w, 0);
+    glVertex2f((float)w, (float)h); glVertex2f(0, (float)h);
+    glEnd();
+
+    glColor3f(0.95f, 0.95f, 0.95f);
+    startupDrawText(28, 24, 3, "NEARCHUCKLE_NX");
+    glColor3f(0.55f, 0.80f, 1.0f);
+    startupDrawText(28, 52, 2, "CRYPAK SHADER LOOKUP");
+    glColor3f(1.0f, 1.0f, 1.0f);
+    startupDrawText(28, 84, 2, line);
+
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopAttrib();
+
+    ++g_shader_overlay_events;
+    eglSwapBuffers(eglGetCurrentDisplay(), eglGetCurrentSurface(EGL_DRAW));
+    svcSleepThread(20000000ULL);
+}
+
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     // Trace the guest call site for shader files. If this fires from a
@@ -1639,6 +1785,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         elfDescribePc((uint64_t)__builtin_return_address(0), caller, sizeof(caller));
         compatLogFmt("SHADER fopen CALL: %s mode=%s caller=%s",
                      path ? path : "?", mode ? mode : "?", caller);
+        startupShaderOverlay("OPEN", path);
     }
     if (std::string mapped = obbRemap(path); !mapped.empty()) {
         FILE* mf = fopen(mapped.c_str(), mode);
@@ -1677,8 +1824,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
 
     if (!f) {
         FILE* pakFile = tryOpenFromLanguagePaks(path, mode);
-        if (pakFile)
+        if (pakFile) {
+            if (shaderPath) startupShaderOverlay("PAK", path);
             return pakFile;
+        }
 
         if (mode && mode[0] == 'r' && isOptionalLanguagePak(path)) {
             FILE* fallback = makeEmptyLanguagePak(path, mode);
@@ -1686,9 +1835,12 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 return fallback;
         }
 
+        if (shaderPath) startupShaderOverlay("FAIL", path);
         compatLogFmt("fopen FAIL: %s (mode=%s)", path ? path : "?", mode ? mode : "?");
         return f;
     }
+
+    if (shaderPath) startupShaderOverlay("OK", path);
 
     if (apkcache::adopt(f, path)) {
         setvbuf(f, nullptr, _IOFBF, 16 * 1024);
