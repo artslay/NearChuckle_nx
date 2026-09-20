@@ -167,9 +167,6 @@ static int run_farcry(LoadedSo* game_so) {
 }
 
 int main(int, char**) {
-    consoleInit(nullptr);
-    romfsInit();
-
     if (read_config("/switch/NearChuckle_nx/config.txt") != 0)
         std::printf("NearChuckle: config.txt not found, using defaults\n");
 
@@ -191,8 +188,6 @@ int main(int, char**) {
     if (libs.empty()) {
         compatLog("ERROR: no Android ARM64 .so files found");
         compatLogFlush();
-        romfsExit();
-        consoleExit(nullptr);
         return 1;
     }
 
@@ -216,8 +211,6 @@ int main(int, char**) {
     if (!game_so) {
         compatLog("ERROR: libFarCry.so was not loaded");
         compatLogFlush();
-        romfsExit();
-        consoleExit(nullptr);
         return 1;
     }
 
@@ -244,7 +237,5 @@ int main(int, char**) {
     compatLogFlush();
 
     vnxSetGameSo(nullptr);
-    romfsExit();
-    consoleExit(nullptr);
     return rc;
 }

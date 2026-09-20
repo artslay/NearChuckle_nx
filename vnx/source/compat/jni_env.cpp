@@ -1,6 +1,5 @@
 #include "compat/loader.h"
 #include "compat/jni.h"
-#include "compat/games.h"
 #include <switch.h>
 #include <string.h>
 #include <cstring>
@@ -587,7 +586,7 @@ static jint s_CallStaticIntMethodV(JNIEnv*, jclass, jmethodID mid, va_list args)
     // value that keeps a given title's shop path sane is a per-game decision, so
     // it lives in that game's profile (source/compat/games/) rather than here.
     if (e && strcmp(e->name, "getMarketVariation") == 0) {
-        int v = gameMarketVariation(packageName().c_str());
+        int v = -1;
         if (v < 0) v = 1;   // no profile opinion → claim Google Play
         compatLogFmt("JNI getMarketVariation() → %d", v);
         return v;
