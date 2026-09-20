@@ -87,6 +87,34 @@ static std::string asciiLower(std::string value);
 // Case-insensitive filesystem resolver used by file wrappers below.
 static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
 
+// Normalize Switch virtual-device paths before they reach newlib's POSIX I/O.
+//
+// libnx normally accepts paths such as "sdmc:/switch/Foo". The guest Android
+// build can also hand CryPak an already-rooted path like:
+//   sdmc:/switch/Foo/sdmc:/switch/Foo/FCData/...
+// In the newlib file API, "sdmc:/..." is not an absolute POSIX path here, so
+// leaving it untouched makes the CWD get prepended and produces a duplicated
+// path. Collapse both forms to the real POSIX path rooted at "/".
+static std::string normalizeSwitchFsPath(const char* input) {
+    if (!input)
+        return std::string();
+
+    std::string path(input);
+    if (path.size() < 6 || path.compare(0, 6, "sdmc:/") != 0)
+        return path;
+
+    // If the path contains the virtual device prefix twice, the second prefix
+    // is the real root of the requested path. Keep only that second path.
+    const size_t second = path.find("sdmc:/", 6);
+    if (second != std::string::npos)
+        return path.substr(second + 5); // keep the leading '/'
+
+    // A normal sdmc:/ absolute path maps directly to the Switch POSIX root.
+    return path.substr(5); // "sdmc:" -> "/switch/..."
+}
+
+
+
 // pread is not exported by the devkitA64/newlib runtime used here.
 // The APK cache only needs positional reads, so emulate it with lseek/read
 // while preserving the caller's file position.
@@ -243,12 +271,15 @@ static int stub_readlink(const char*, char* buf, size_t sz) {
     errno = EINVAL; return -1;
 }
 static int stub_chdir(const char* path) {
-    if (chdir(path) == 0)
+    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
+
+    if (::chdir(ioPath) == 0)
         return 0;
-    if (path) {
+    if (ioPath) {
         std::string resolved;
-        if (resolvePathCaseInsensitive(path, resolved) && resolved != path)
-            return chdir(resolved.c_str());
+        if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
+            return ::chdir(resolved.c_str());
     }
     return -1;
 }
@@ -1646,109 +1677,63 @@ static void startupShaderOverlay(const char* state, const char* path) {
 
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
-    std::string cdataPath;
-    if (cdataMappedPathExists(path, cdataPath)) {
-        FILE* mapped = fopen(cdataPath.c_str(), mode);
-        if (mapped) {
-            compatLogFmt("fopen CDATA->FCDATA: %s -> %s", path ? path : "?", cdataPath.c_str());
-            setvbuf(mapped, nullptr, _IOFBF, 64 * 1024);
-            return mapped;
-        }
-    }
+    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
-    // Trace the guest call site for shader files. If this fires from a
-    // CryEngine renderer function while directory enumeration stays silent,
-    // we know the lookup reached the CRT path rather than our FindFirst shim.
-    const bool shaderPath = [&]() {
-        if (!path || !*path) return false;
-        std::string p = pakNormalizeName(path);
-        return p == "shaders" || p.rfind("shaders/", 0) == 0;
-    }();
-    if (shaderPath) {
-        char caller[256];
-        elfDescribePc((uint64_t)__builtin_return_address(0), caller, sizeof(caller));
-        compatLogFmt("SHADER fopen CALL: %s mode=%s caller=%s",
-                     path ? path : "?", mode ? mode : "?", caller);
-        startupShaderOverlay("OPEN", path);
-    }
-    if (std::string mapped = obbRemap(path); !mapped.empty()) {
+    if (path && ioPathStorage != path)
+        compatLogFmt("path NORMALIZE: fopen %s -> %s", path, ioPathStorage.c_str());
+
+    if (std::string mapped = obbRemap(ioPath); !mapped.empty()) {
         FILE* mf = fopen(mapped.c_str(), mode);
-        compatLogFmt("obb: fopen %s -> %s (%s)", path, mapped.c_str(),
-                     mf ? "ok" : "still not there");
+        compatLogFmt("obb: fopen %s -> %s (%s)", ioPath ? ioPath : "?",
+                     mapped.c_str(), mf ? "ok" : "still not there");
         if (mf) { setvbuf(mf, nullptr, _IOFBF, 64 * 1024); return mf; }
-        // Fall through: if the remap missed, the original path deserves its own
-        // failure line rather than being swallowed by ours.
     }
 
-    FILE* f = fopen(path, mode);
-    if (!f && path) {
+    FILE* f = fopen(ioPath, mode);
+    if (!f && ioPath) {
         std::string resolved;
-        if (resolvePathCaseInsensitive(path, resolved) && resolved != path) {
+        if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
-                compatLogFmt("fopen CASEFIX: %s -> %s", path, resolved.c_str());
+                compatLogFmt("fopen CASEFIX: %s -> %s", ioPath, resolved.c_str());
                 f = rf;
             }
         }
     }
 
-    if (!f && path && path[0] != '/' && path[0] != '\\' &&
-        strncasecmp(path, "FCData/", 7) != 0 &&
-        strncasecmp(path, "fcdata/", 7) != 0) {
-        const std::string virtualPath = std::string("FCData/") + path;
+    if (!f && ioPath && ioPath[0] != '/' && ioPath[0] != '\\' &&
+        strncasecmp(ioPath, "FCData/", 7) != 0 &&
+        strncasecmp(ioPath, "fcdata/", 7) != 0) {
+        const std::string virtualPath = std::string("FCData/") + ioPath;
         std::string resolved;
         if (resolvePathCaseInsensitive(virtualPath.c_str(), resolved)) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
-                compatLogFmt("fopen FCDATA: %s -> %s", path, resolved.c_str());
+                compatLogFmt("fopen FCDATA: %s -> %s", ioPath, resolved.c_str());
                 f = rf;
             }
         }
     }
 
     if (!f) {
-        FILE* pakFile = tryOpenFromLanguagePaks(path, mode);
-        if (pakFile) {
-            if (shaderPath) startupShaderOverlay("PAK", path);
+        FILE* pakFile = tryOpenFromLanguagePaks(ioPath, mode);
+        if (pakFile)
             return pakFile;
-        }
 
-        if (mode && mode[0] == 'r' && isOptionalLanguagePak(path)) {
-            FILE* fallback = makeEmptyLanguagePak(path, mode);
+        if (mode && mode[0] == 'r' && isOptionalLanguagePak(ioPath)) {
+            FILE* fallback = makeEmptyLanguagePak(ioPath, mode);
             if (fallback)
                 return fallback;
         }
 
-        // The Android CryEngine binary used by NearChuckle attempts to open
-        // CData/517.pak during CSystem::OpenBasicPaks(), but that archive does not
-        // exist in the original repositories, the shipped FCData archives, or the
-        // current Switch data tree. Treat this single Android packaging artifact as
-        // an empty valid ZIP so ZipDir can complete archive initialization instead
-        // of throwing ZipDir::Error. Do not redirect or synthesize any other CData
-        // files; later real content requests must still fail normally.
-        if (mode && mode[0] == 'r' && path) {
-            const std::string normalizedPath = pakNormalizeName(path);
-            if (normalizedPath == "cdata/517.pak") {
-                mkdir("CData", 0755);
-                FILE* fallback = makeEmptyLanguagePak(path, mode);
-                if (fallback) {
-                    compatLogFmt("fopen FALLBACK: %s -> empty ZIP for Android startup compatibility",
-                                 path);
-                    return fallback;
-                }
-            }
-        }
-
-        if (shaderPath) startupShaderOverlay("FAIL", path);
-        compatLogFmt("fopen FAIL: %s (mode=%s)", path ? path : "?", mode ? mode : "?");
+        compatLogFmt("fopen FAIL: %s (mode=%s)", ioPath ? ioPath : "?", mode ? mode : "?");
         return f;
     }
 
-    if (shaderPath) startupShaderOverlay("OK", path);
-
-    if (apkcache::adopt(f, path)) {
+    if (apkcache::adopt(f, ioPath)) {
         setvbuf(f, nullptr, _IOFBF, 16 * 1024);
-        compatLogFmt("apkcache: caching reads from %s", path);
+        compatLogFmt("apkcache: caching reads from %s", ioPath ? ioPath : "?");
         return f;
     }
     setvbuf(f, nullptr, _IOFBF, 64 * 1024);
@@ -1792,7 +1777,13 @@ static int sh_fclose(FILE* f) {
 
 // open() wrapper — logs every call so we can trace early constructor I/O
 static int stub_open(const char* path, int flags, ...) {
-    int vfd = devUrandomOpen(path);
+    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
+
+    if (path && ioPathStorage != path)
+        compatLogFmt("path NORMALIZE: open %s -> %s", path, ioPathStorage.c_str());
+
+    int vfd = devUrandomOpen(ioPath);
     if (vfd >= 0) return vfd;
 
     va_list va;
@@ -1806,35 +1797,27 @@ static int stub_open(const char* path, int flags, ...) {
         return (flags & O_CREAT) ? open(p, flags, mode) : open(p, flags);
     };
 
-    std::string cdataPath;
-    if (cdataMappedPathExists(path, cdataPath)) {
-        int cfd = doOpen(cdataPath.c_str());
-        compatLogFmt("open CDATA->FCDATA: %s -> %s (fd=%d)",
-                     path ? path : "?", cdataPath.c_str(), cfd);
-        if (cfd >= 0)
-            return cfd;
-    }
-
-    if (std::string mapped = obbRemap(path); !mapped.empty()) {
+    if (std::string mapped = obbRemap(ioPath); !mapped.empty()) {
         int mfd = doOpen(mapped.c_str());
-        compatLogFmt("obb: open %s -> %s (fd=%d)", path ? path : "?", mapped.c_str(), mfd);
+        compatLogFmt("obb: open %s -> %s (fd=%d)", ioPath ? ioPath : "?",
+                     mapped.c_str(), mfd);
         if (mfd >= 0) return mfd;
     }
 
-    int fd = doOpen(path);
-    if (fd < 0 && path) {
+    int fd = doOpen(ioPath);
+    if (fd < 0 && ioPath) {
         std::string resolved;
-        if (resolvePathCaseInsensitive(path, resolved) && resolved != path) {
+        if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath) {
             int rfd = doOpen(resolved.c_str());
             if (rfd >= 0) {
-                compatLogFmt("open CASEFIX: %s -> %s fd=%d", path, resolved.c_str(), rfd);
+                compatLogFmt("open CASEFIX: %s -> %s fd=%d", ioPath, resolved.c_str(), rfd);
                 return rfd;
             }
         }
     }
 
-    if (fd < 0) compatLogFmt("open FAIL: %s flags=0x%x", path ? path : "?", flags);
-    else        compatLogFmt("open OK:   %s flags=0x%x fd=%d", path ? path : "?", flags, fd);
+    if (fd < 0) compatLogFmt("open FAIL: %s flags=0x%x", ioPath ? ioPath : "?", flags);
+    else        compatLogFmt("open OK:   %s flags=0x%x fd=%d", ioPath ? ioPath : "?", flags);
     return fd;
 }
 
@@ -2667,6 +2650,9 @@ static long  stub_pathconf(const char*, int) { return -1; }
 // The *at() family, resolved against the process CWD — Switch has no directory
 // file descriptors, and every caller here passes AT_FDCWD anyway.
 static int stub_openat(int, const char* path, int flags, ...) {
+    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
+
     va_list va;
     va_start(va, flags);
     int mode = 0;
@@ -2678,10 +2664,10 @@ static int stub_openat(int, const char* path, int flags, ...) {
         return (flags & O_CREAT) ? open(p, flags, mode) : open(p, flags);
     };
 
-    int fd = doOpen(path);
-    if (fd < 0 && path) {
+    int fd = doOpen(ioPath);
+    if (fd < 0 && ioPath) {
         std::string resolved;
-        if (resolvePathCaseInsensitive(path, resolved) && resolved != path)
+        if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
             fd = doOpen(resolved.c_str());
     }
     return fd;
@@ -3323,61 +3309,40 @@ static bool directoryHasVisibleEntries(const char* path) {
 }
 
 static DIR* stub_opendir(const char* path) {
-    // CryPak's Android build uses DATA_FOLDER="CData" while the Switch game
-    // stores the real archives under FCData. Present the latter as the former
-    // to the engine without copying or unpacking the archives.
-    std::string cdataPath;
-    if (cdataMappedPathExists(path, cdataPath)) {
-        DIR* mapped = opendir(cdataPath.c_str());
-        if (mapped) {
-            compatLogFmt("opendir CDATA->FCDATA: %s -> %s",
-                         path ? path : "?", cdataPath.c_str());
-            return mapped;
-        }
-    }
+    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
-    // A critical Android/CryPak quirk: FindFirst/ScanFS can ask for a shader
-    // directory that already exists but is empty. The old implementation
-    // returned that empty DIR immediately, so the PAK materialization path was
-    // never reached. Only the known CryEngine shader directories get this
-    // empty-directory recovery; all other directories retain normal behavior.
-    if (path && isShaderEnumerationDirectory(path) &&
-        !directoryHasVisibleEntries(path)) {
-        if (tryMaterializePakDirectory(path)) {
-            compatLogFmt("opendir PAK MATERIALIZE: %s", path);
-        }
-    }
+    if (path && ioPathStorage != path)
+        compatLogFmt("path NORMALIZE: opendir %s -> %s", path, ioPathStorage.c_str());
 
-    DIR* d = opendir(path);
+    DIR* d = opendir(ioPath);
     if (d)
         return d;
 
     std::string resolved;
-    if (resolvePathCaseInsensitive(path, resolved)) {
+    if (resolvePathCaseInsensitive(ioPath, resolved)) {
         d = opendir(resolved.c_str());
         if (d) {
-            compatLogFmt("opendir CASEFIX: %s -> %s", path ? path : "?", resolved.c_str());
+            compatLogFmt("opendir CASEFIX: %s -> %s",
+                         ioPath ? ioPath : "?", resolved.c_str());
             return d;
         }
     }
 
-    // CryEngine enumerates shader script directories as real directories.
-    // On Android these files can live only inside Shaders.pak, so materialize
-    // the requested directory before giving up.
-    if (path && tryMaterializePakDirectory(path)) {
-        d = opendir(path);
+    if (ioPath && tryMaterializePakDirectory(ioPath)) {
+        d = opendir(ioPath);
         if (!d) {
             std::string dirResolved;
-            if (resolvePathCaseInsensitive(path, dirResolved))
+            if (resolvePathCaseInsensitive(ioPath, dirResolved))
                 d = opendir(dirResolved.c_str());
         }
         if (d) {
-            compatLogFmt("opendir PAK: %s", path);
+            compatLogFmt("opendir PAK: %s", ioPath);
             return d;
         }
     }
 
-    compatLogFmt("opendir FAIL: %s", path ? path : "?");
+    compatLogFmt("opendir FAIL: %s", ioPath ? ioPath : "?");
     return nullptr;
 }
 
@@ -3807,9 +3772,11 @@ static int     chk_vsprintf(char* d, int, size_t, const char* f, va_list v)  { r
 static int     chk_vsnprintf(char* d, size_t n, int, size_t, const char* f, va_list v) { return vsnprintf(d,n,f,v); }
 static ssize_t chk_read(int fd, void* b, size_t n, size_t)    { return sh_read(fd,b,n); }
 static int     chk_open2(const char* p, int fl) {
-    int vfd = devUrandomOpen(p);
+    const std::string ioPathStorage = normalizeSwitchFsPath(p);
+    const char* ioPath = p ? ioPathStorage.c_str() : nullptr;
+    int vfd = devUrandomOpen(ioPath);
     if (vfd >= 0) return vfd;
-    return open(p, fl, 0666);
+    return open(ioPath, fl, 0666);
 }
 
 // ─── pthread_mutexattr extras ─────────────────────────────────────────────────
@@ -3886,16 +3853,14 @@ static int stub_stat(const char* p, struct stat* s) {
         return -1;
     }
 
-    std::string cdataPath;
-    if (cdataMappedPathExists(p, cdataPath) &&
-        ::stat(cdataPath.c_str(), s) == 0)
-        return 0;
+    const std::string ioPathStorage = normalizeSwitchFsPath(p);
+    const char* ioPath = ioPathStorage.c_str();
 
-    if (::stat(p, s) == 0)
+    if (::stat(ioPath, s) == 0)
         return 0;
 
     std::string resolved;
-    if (resolvePathCaseInsensitive(p, resolved) && resolved != p)
+    if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
         return ::stat(resolved.c_str(), s);
     return -1;
 }
@@ -3906,16 +3871,14 @@ static int stub_access(const char* path, int mode) {
         return -1;
     }
 
-    std::string cdataPath;
-    if (cdataMappedPathExists(path, cdataPath) &&
-        ::access(cdataPath.c_str(), mode) == 0)
-        return 0;
+    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const char* ioPath = ioPathStorage.c_str();
 
-    if (::access(path, mode) == 0)
+    if (::access(ioPath, mode) == 0)
         return 0;
 
     std::string resolved;
-    if (resolvePathCaseInsensitive(path, resolved) && resolved != path)
+    if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
         return ::access(resolved.c_str(), mode);
 
     errno = ENOENT;
@@ -3926,15 +3889,18 @@ static int stub_access(const char* path, int mode) {
 static int stub_chmod(const char*, mode_t)   { return 0; }
 static int stub_fchmod(int, mode_t)          { return 0; }
 static int stub_lstat(const char* p, struct stat* s) {
-    std::string cdataPath;
-    if (cdataMappedPathExists(p, cdataPath) &&
-        ::lstat(cdataPath.c_str(), s) == 0)
-        return 0;
+    if (!p || !s) {
+        errno = EINVAL;
+        return -1;
+    }
 
-    if (::lstat(p, s) == 0)
+    const std::string ioPathStorage = normalizeSwitchFsPath(p);
+    const char* ioPath = ioPathStorage.c_str();
+
+    if (::lstat(ioPath, s) == 0)
         return 0;
     std::string resolved;
-    if (resolvePathCaseInsensitive(p, resolved) && resolved != p)
+    if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
         return ::lstat(resolved.c_str(), s);
     return -1;
 }
