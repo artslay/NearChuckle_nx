@@ -1910,7 +1910,7 @@ struct NearFind64State {
 static std::string findDirPart(const char* pattern, std::string& filePattern) {
     std::string p = pattern ? pattern : "";
     for (char& c : p) {
-        if (c == '\\')
+        if ((unsigned char)c == 92)
             c = '/';
     }
 
