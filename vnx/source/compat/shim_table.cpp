@@ -4737,9 +4737,18 @@ static const ShimEntry g_shims[] = {
     {"opendir",     (void*)stub_opendir},
     {"readdir",     (void*)readdir},
     {"closedir",    (void*)closedir},
-    {"_findfirst64",(void*)stub_findfirst64},
-    {"_findnext64", (void*)stub_findnext64},
-    {"_findclose",  (void*)stub_findclose64},
+    {"_findfirst64", (void*)stub_findfirst64},
+    {"_findnext64",  (void*)stub_findnext64},
+    {"_findclose",   (void*)stub_findclose64},
+    // Some Android/NDK CRT variants spell the 64-bit directory enumeration
+    // helpers with a double underscore or without the Windows-compatible
+    // leading underscore. Map those spellings to the same implementation.
+    {"__findfirst64", (void*)stub_findfirst64},
+    {"__findnext64",  (void*)stub_findnext64},
+    {"__findclose64", (void*)stub_findclose64},
+    {"findfirst64",   (void*)stub_findfirst64},
+    {"findnext64",    (void*)stub_findnext64},
+    {"findclose64",   (void*)stub_findclose64},
     {"abort",       (void*)sh_abort},
     {"exit",        (void*)sh_exit},
     {"qsort",       (void*)qsort},
