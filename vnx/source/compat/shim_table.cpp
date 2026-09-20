@@ -1183,8 +1183,23 @@ static int* bionic_errno(void) { return &errno; }
 // resolver, preserving the old behavior for games that dlsym without a handle.
 static void* fake_dlopen(const char* path, int) {
     if (!path) return nullptr;
+
+    const char* bn = strrchr(path, '/');
+    bn = bn ? bn + 1 : path;
+
+    // Mesa's EGL/GLES libraries are linked into the Switch executable through
+    // the Switch portlibs. They are not Android guest ELF files and therefore
+    // must not be searched for under game/lib. fake_dlsym() resolves their
+    // functions from the global Mesa-backed shim table.
+    if (!strcmp(bn, "libEGL.so") || !strcmp(bn, "libGLESv1_CM.so") ||
+        !strcmp(bn, "libGLESv2.so") || !strcmp(bn, "libGL.so")) {
+        compatLogFmt("dlopen: %s -> Mesa host shim handle", bn);
+        return (void*)0xDEAD;
+    }
+
     LoadedSo* so = elfDlopen(path);
     if (so) return (void*)so;
+
     // Unknown library: hand back a non-null sentinel so callers that only
     // null-check the handle still proceed, and route their dlsym through the
     // global resolver (old behavior) rather than hard-failing the load.
@@ -1216,8 +1231,16 @@ static const char* fake_dlerror(void) { return nullptr; }
 // unaffected (it renders through the Core's own EGL setup, made before any game
 // code runs, and doesn't call these).
 static EGLSurface w_eglCreateWindowSurface(EGLDisplay d, EGLConfig c, EGLNativeWindowType w, const EGLint* a) {
-    EGLSurface s = eglCreateWindowSurface(d, c, w, a);
-    compatLogFmt("EGL: eglCreateWindowSurface(win=%p) -> %p (err=0x%x)", (void*)w, (void*)s, eglGetError());
+    // SDL's Android backend hands us the fake ANativeWindow object. Switch Mesa's
+    // EGL backend expects the underlying libnx NWindow pointer instead.
+    EGLNativeWindowType mesa_w = w;
+    CompatLayer* cl = compatGet();
+    if (cl && w == reinterpret_cast<EGLNativeWindowType>(&cl->window) && cl->window.nwin)
+        mesa_w = reinterpret_cast<EGLNativeWindowType>(cl->window.nwin);
+
+    EGLSurface s = eglCreateWindowSurface(d, c, mesa_w, a);
+    compatLogFmt("EGL: eglCreateWindowSurface(win=%p -> %p) -> %p (err=0x%x)",
+                 (void*)w, (void*)mesa_w, (void*)s, eglGetError());
     return s;
 }
 static EGLContext w_eglCreateContext(EGLDisplay d, EGLConfig c, EGLContext share, const EGLint* a) {
