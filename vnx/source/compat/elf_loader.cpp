@@ -676,9 +676,23 @@ static bool isAllocSym(const char* n) {
            strcmp(n, "_Znam") == 0;
 }
 
+// Filesystem imports that are especially relevant to CryEngine/CryPak shader
+// lookup. These are diagnostic-only: enabling the trace must not alter binding.
+static bool isFsTraceSym(const char* n) {
+    if (!n || !*n) return false;
+    return strcmp(n, "fopen") == 0 || strcmp(n, "fopen64") == 0 ||
+           strcmp(n, "open") == 0 || strcmp(n, "opendir") == 0 ||
+           strcmp(n, "readdir") == 0 || strcmp(n, "closedir") == 0 ||
+           strcmp(n, "_findfirst64") == 0 || strcmp(n, "_findnext64") == 0 ||
+           strcmp(n, "_findclose") == 0 || strcmp(n, "stat") == 0 ||
+           strcmp(n, "stat64") == 0 || strcmp(n, "access") == 0 ||
+           strcmp(n, "fstat") == 0 || strcmp(n, "fstat64") == 0 ||
+           strcmp(n, "read") == 0 || strcmp(n, "lseek") == 0;
+}
+
 static void* resolveSymbol(const char* name) {
     if (!name || !name[0]) return nullptr;
-    const bool trace = isAllocSym(name);
+    const bool trace = isAllocSym(name) || isFsTraceSym(name);
 
     // Shim table takes priority — our implementations override any game-library
     // copies of pthread_*, libc functions, GLES, EGL, libandroid, etc.
