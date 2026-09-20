@@ -1727,6 +1727,38 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 return fallback;
         }
 
+        // Android Far Cry's OpenBasicPaks() probes one packaging artifact that
+        // is not part of the shipped Switch FCData set: CData/517.pak.
+        // The original port reached this filename and continued with an empty
+        // ZIP rather than requiring real content. In the Switch port CryPak can
+        // present the same request as an absolute FCData path after realpath/path
+        // normalization, so accept both spellings. Do not synthesize any other
+        // PAK files.
+        if (mode && mode[0] == 'r' && ioPath) {
+            const std::string normalizedPath = pakNormalizeName(ioPath);
+            const bool startupPak517 =
+                normalizedPath == "cdata/517.pak" ||
+                normalizedPath == "fcdata/517.pak" ||
+                (normalizedPath.size() > 14 &&
+                 (normalizedPath.compare(normalizedPath.size() - 14, 14,
+                                         "/cdata/517.pak") == 0 ||
+                  normalizedPath.compare(normalizedPath.size() - 14, 14,
+                                         "/fcdata/517.pak") == 0));
+
+            if (startupPak517) {
+                if (normalizedPath == "cdata/517.pak") {
+                    mkdir("CData", 0755);
+                }
+
+                FILE* fallback = makeEmptyLanguagePak(ioPath, mode);
+                if (fallback) {
+                    compatLogFmt("fopen FALLBACK: %s -> empty ZIP for Android startup compatibility",
+                                 ioPath);
+                    return fallback;
+                }
+            }
+        }
+
         compatLogFmt("fopen FAIL: %s (mode=%s)", ioPath ? ioPath : "?", mode ? mode : "?");
         return f;
     }
