@@ -200,25 +200,89 @@ static void setup_android_runtime() {
     compatSetObbDir(config.data_root, "com.nearchuckle.farcry");
 }
 
-static bool prepare_guest_sdl(LoadedSo* game_so) {
+static bool prepare_guest_sdl() {
     LoadedSo* sdl = elfFindLoaded("libSDL3.so");
     if (!sdl) {
         compatLog("SDL: libSDL3.so is not loaded");
         return false;
     }
 
-    void* sym = sdl->findSym("SDL_SetMainReady");
-    if (!sym) {
-        compatLog("SDL: SDL_SetMainReady export not found");
+    CompatLayer* cl = compatGet();
+    if (!cl || !cl->env_outer || !cl->vm_outer) {
+        compatLog("SDL: fake JNI environment/VM is not initialized");
         return false;
     }
 
-    using SetMainReadyFn = void (*)();
-    SetMainReadyFn set_main_ready =
-        reinterpret_cast<SetMainReadyFn>(sym);
-    set_main_ready();
+    JNIEnv* env = reinterpret_cast<JNIEnv*>(cl->env_outer);
+    JavaVM* vm = reinterpret_cast<JavaVM*>(cl->vm_outer);
+    jclass activity_class = reinterpret_cast<jclass>(0x1001);
 
-    compatLog("SDL: SDL_SetMainReady() called for direct guest SDL_main entry");
+    // Android normally invokes JNI_OnLoad automatically when System.loadLibrary()
+    // loads SDL3. We load ELF files ourselves, so reproduce that bootstrap here.
+    void* onload_sym = sdl->findSym("JNI_OnLoad");
+    if (onload_sym) {
+        using JNIOnLoadFn = jint (*)(JavaVM*, void*);
+        JNIOnLoadFn onload = reinterpret_cast<JNIOnLoadFn>(onload_sym);
+        jint version = onload(vm, nullptr);
+        compatLogFmt("SDL: JNI_OnLoad(vm=%p) -> 0x%x",
+                     static_cast<void*>(vm), static_cast<unsigned>(version));
+    } else {
+        compatLog("SDL: JNI_OnLoad export not found");
+    }
+
+    // SDLActivity normally calls these Java natives before SDL_main(). They
+    // initialize SDL's JavaVM/activity callback state and mark SDL as ready.
+    using SetupFn = void (*)(JNIEnv*, jclass);
+    using InitMainThreadFn = void (*)(JNIEnv*, jclass);
+
+    void* setup_sym =
+        sdl->findSym("Java_org_libsdl_app_SDLActivity_nativeSetupJNI");
+    if (!setup_sym) {
+        compatLog("SDL: SDLActivity.nativeSetupJNI export not found");
+        return false;
+    }
+
+    SetupFn setup = reinterpret_cast<SetupFn>(setup_sym);
+    setup(env, activity_class);
+    compatLog("SDL: SDLActivity.nativeSetupJNI() called");
+
+    void* audio_sym =
+        sdl->findSym("Java_org_libsdl_app_SDLAudioManager_nativeSetupJNI");
+    if (audio_sym) {
+        SetupFn audio_setup = reinterpret_cast<SetupFn>(audio_sym);
+        audio_setup(env, activity_class);
+        compatLog("SDL: SDLAudioManager.nativeSetupJNI() called");
+    }
+
+    void* controller_sym =
+        sdl->findSym("Java_org_libsdl_app_SDLControllerManager_nativeSetupJNI");
+    if (controller_sym) {
+        SetupFn controller_setup = reinterpret_cast<SetupFn>(controller_sym);
+        controller_setup(env, activity_class);
+        compatLog("SDL: SDLControllerManager.nativeSetupJNI() called");
+    }
+
+    void* main_thread_sym =
+        sdl->findSym("Java_org_libsdl_app_SDLActivity_nativeInitMainThread");
+    if (main_thread_sym) {
+        InitMainThreadFn init_main_thread =
+            reinterpret_cast<InitMainThreadFn>(main_thread_sym);
+        init_main_thread(env, activity_class);
+        compatLog("SDL: SDLActivity.nativeInitMainThread() called");
+    }
+
+    // Keep this explicit as a final guard: nativeSetupJNI normally reaches
+    // SDL_SetMainReady through checkJNIReady(), but direct entry should not
+    // depend on every optional Android manager being present.
+    void* ready_sym = sdl->findSym("SDL_SetMainReady");
+    if (ready_sym) {
+        using SetMainReadyFn = void (*)();
+        SetMainReadyFn set_main_ready =
+            reinterpret_cast<SetMainReadyFn>(ready_sym);
+        set_main_ready();
+    }
+
+    compatLog("SDL: Android JNI bootstrap complete for direct guest SDL_main");
     return true;
 }
 
@@ -344,7 +408,7 @@ int main(int, char**) {
     // through SDL's generated platform main. SDL3's Android build starts with
     // SDL_MainIsReady == false in that configuration, so SDL_Init() rejects
     // window/video initialization until SDL_SetMainReady() is called.
-    if (!prepare_guest_sdl(game_so)) {
+    if (!prepare_guest_sdl()) {
         compatLog("ERROR: could not prepare guest SDL3 main state");
         compatLogFlush();
         return 1;
