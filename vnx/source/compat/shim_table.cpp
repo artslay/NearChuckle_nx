@@ -2326,18 +2326,12 @@ static bool pakExtractPrefix(const std::string& pakPath,
         if (normalized.empty())
             continue;
 
-        // CryPak::AdjustFileName() lowercases the physical directory path on
-        // Linux before FindFirst().  Keep directory components lowercase so
-        // enumeration reaches the extracted tree, but preserve the original
-        // filename spelling for the entries returned by FindFirst().
-        std::string materialized = name;
-        for (size_t slash = materialized.find('/'); slash != std::string::npos;
-             slash = materialized.find('/', slash + 1)) {
-            for (size_t j = 0; j < slash; ++j)
-                materialized[j] = (char)std::tolower((unsigned char)materialized[j]);
-        }
-
-        if (!pakExtractEntry(pakPath, normalized, materialized))
+        // Materialize the archive entry using its original spelling.  CryPak's
+        // FindFirst() passes this logical path through its own Linux path
+        // normalizer, while FOpen() later uses the returned directory spelling.
+        // Keeping the real tree faithful to the PAK layout makes both paths
+        // usable on the Switch case-sensitive filesystem.
+        if (!pakExtractEntry(pakPath, normalized, name))
             continue;
 
         extractedAny = true;
