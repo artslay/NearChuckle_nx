@@ -1,0 +1,7 @@
+data_root /switch/NearChuckle_nx/game
+lib_dir /switch/NearChuckle_nx/game/lib
+screen_width 1280
+screen_height 720
+fov 90
+vsync 1
+mesa_driver zink

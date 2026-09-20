@@ -1,5 +1,4 @@
 #include "compat/loader.h"
-#include "compat/games.h"
 #include <switch.h>
 #include <cstring>
 #include <cstdio>
@@ -739,19 +738,13 @@ static void patchAdrpToDataJit(uint8_t* code_buf, size_t code_size,
 // out of the .so path (…/games/<pkg>/lib/<soname>) and forwards.
 static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
                                  size_t alloc_size, const char* path) {
-    const char* soname = strrchr(path, '/');
-    soname = soname ? soname + 1 : path;
-
-    char pkg[128] = {0};
-    const char* g = strstr(path, "/games/");
-    if (g) {
-        g += 7;                              // past "/games/"
-        const char* slash = strchr(g, '/');
-        size_t n = slash ? (size_t)(slash - g) : strlen(g);
-        if (n >= sizeof(pkg)) n = sizeof(pkg) - 1;
-        memcpy(pkg, g, n);
-    }
-    gameApplyQuirks(pkg, soname, stage_base, min_vaddr, alloc_size);
+    // NearChuckle_nx has no VNX game-specific binary patch profiles.
+    // Keep the hook as a no-op so the shared ELF loader stays independent
+    // from the original VNX game registry.
+    (void)stage_base;
+    (void)min_vaddr;
+    (void)alloc_size;
+    (void)path;
 }
 
 // ─── RELA relocation processing ───────────────────────────────────────────────

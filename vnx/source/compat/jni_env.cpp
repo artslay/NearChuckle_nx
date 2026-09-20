@@ -1,5 +1,4 @@
 #include "compat/loader.h"
-#include "compat/achievements.h"
 #include "compat/jni.h"
 #include "compat/games.h"
 #include <switch.h>
@@ -479,89 +478,10 @@ static jobject dispatchObjectMethod(jobject recv, MethodEntry* e, va_list args) 
     return (jobject)"";
 }
 
-// ─── Google Play Games achievements ─────────────────────────────────────────
-//
-// The game already decides when an achievement is earned; it just has nowhere
-// to send that decision on a console with no Play Services. These route it to
-// compat/achievements.cpp instead, which records it and puts it on screen.
-//
-// Matching on the method name alone would be wrong. "unlock" is an ordinary
-// word — Hill Climb Racing unlocks vehicles, stages and parts, and hijacking
-// its own unlock(String) would record a car as an achievement. So a call is
-// only taken as GPGS if its argument *is* a GPGS achievement id: Play issues
-// them as base64url starting "Cgk", and nothing in a game's own vocabulary
-// looks like that. If it does not match, the call falls through untouched.
-static bool looksLikeGpgsId(const char* s) {
-    if (!s || strncmp(s, "Cgk", 3) != 0) return false;
-    size_t n = 0;
-    for (const char* p = s; *p; p++, n++)
-        if (!isalnum((unsigned char)*p) && *p != '_' && *p != '-') return false;
-    return n >= 10 && n <= 64;
+// NearChuckle does not provide a Google Play Games compatibility layer.
+static bool dispatchAchievement(const MethodEntry*, va_list&) {
+    return false;
 }
-
-// Walk a JNI signature to the first String parameter, consuming the arguments
-// before it. Returns null unless every skipped parameter is an object — a
-// float or a long ahead of the string would need a differently-typed va_arg,
-// and guessing there would corrupt the list rather than miss a match.
-static const char* gpgsIdArg(const MethodEntry* e, va_list& args) {
-    const char* p = strchr(e->sig, '(');
-    if (!p) return nullptr;
-    for (p++; *p && *p != ')'; ) {
-        if (*p == '[') { p++; continue; }
-        if (*p == 'L') {
-            const char* semi = strchr(p, ';');
-            if (!semi) return nullptr;
-            const bool isString = strncmp(p, "Ljava/lang/String;", 18) == 0;
-            void* v = va_arg(args, void*);
-            if (isString) return (const char*)v;
-            p = semi + 1;
-            continue;
-        }
-        return nullptr;                       // a primitive before the id
-    }
-    return nullptr;
-}
-
-// True if the call was ours and has been handled.
-static bool dispatchAchievement(const MethodEntry* e, va_list& args) {
-    if (!e) return false;
-    const char* m = e->name;
-
-    const bool isUnlock = !strcmp(m, "unlock")    || !strcmp(m, "unlockImmediate");
-    const bool isInc    = !strcmp(m, "increment") || !strcmp(m, "incrementImmediate");
-    const bool isSet    = !strcmp(m, "setSteps")  || !strcmp(m, "setStepsImmediate");
-    const bool isReveal = !strcmp(m, "reveal")    || !strcmp(m, "revealImmediate");
-    if (!isUnlock && !isInc && !isSet && !isReveal) return false;
-
-    // The va_list is copied, because a non-match must leave the caller's own
-    // list untouched for whatever handles it next.
-    va_list probe;
-    va_copy(probe, args);
-    const char* id = gpgsIdArg(e, probe);
-    if (!looksLikeGpgsId(id)) { va_end(probe); return false; }
-
-    if      (isUnlock) achievements::unlock(id);
-    else if (isReveal) achievements::reveal(id);
-    else {
-        const int steps = va_arg(probe, int);
-        if (isInc) achievements::increment(id, steps);
-        else       achievements::setSteps(id, steps);
-    }
-    va_end(probe);
-    return true;
-}
-
-static jboolean dispatchBoolMethod(jobject recv, MethodEntry* e, va_list) {
-    if (!e) return JNI_FALSE;
-    const char* m = e->name;
-    JavaObj* self = jget(recv);
-    if (!strcmp(m, "hasNext") || !strcmp(m, "hasNextLine"))
-        return (self && self->cls == JCls::Scanner && self->pos < self->data.size())
-               ? JNI_TRUE : JNI_FALSE;
-    // containsKey/getBoolean on our empty Bundles → false (Unity uses defaults).
-    return JNI_FALSE;
-}
-} // namespace
 
 // ─── Instance-method call stubs ───────────────────────────────────────────────
 static jobject s_CallObjectMethodV(JNIEnv*, jobject recv, jmethodID mid, va_list args) {

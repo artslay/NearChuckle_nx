@@ -3,11 +3,12 @@
 #include "compat/android.h"
 #include "compat/sensors.h"
 #include "compat/obb.h"
-#include "compat/games.h"
 #include "compat/apkcache.h"
 #include <switch.h>
 #include <GLES2/gl2.h>
 #include <GLES3/gl3.h>
+#include <GL/gl.h>
+#include <GL/glext.h>
 #include <EGL/egl.h>
 #include <sys/statvfs.h>
 #include <cinttypes>
@@ -3157,6 +3158,78 @@ static const ShimEntry g_shims[] = {
     {"strspn",          (void*)strspn},
 
     // sentinel
+    // Desktop OpenGL 1.x/2.1 entry points used by Far Cry's XRenderOGL.
+    {"glActiveStencilFaceEXT", (void*)glActiveStencilFaceEXT},
+    {"glAlphaFunc", (void*)glAlphaFunc},
+    {"glAreTexturesResident", (void*)glAreTexturesResident},
+    {"glBegin", (void*)glBegin},
+    {"glBindBufferARB", (void*)glBindBufferARB},
+    {"glBufferDataARB", (void*)glBufferDataARB},
+    {"glBufferSubDataARB", (void*)glBufferSubDataARB},
+    {"glClearDepth", (void*)glClearDepth},
+    {"glClipPlane", (void*)glClipPlane},
+    {"glColor3f", (void*)glColor3f},
+    {"glColor3fv", (void*)glColor3fv},
+    {"glColor4f", (void*)glColor4f},
+    {"glColor4fv", (void*)glColor4fv},
+    {"glColorPointer", (void*)glColorPointer},
+    {"glColorTableEXT", (void*)glColorTableEXT},
+    {"glCompressedTexImage2DARB", (void*)glCompressedTexImage2DARB},
+    {"glCompressedTexSubImage2DARB", (void*)glCompressedTexSubImage2DARB},
+    {"glDepthRange", (void*)glDepthRange},
+    {"glDisableClientState", (void*)glDisableClientState},
+    {"glDrawBuffer", (void*)glDrawBuffer},
+    {"glEnableClientState", (void*)glEnableClientState},
+    {"glEnd", (void*)glEnd},
+    {"glFinishFenceNV", (void*)glFinishFenceNV},
+    {"glFogf", (void*)glFogf},
+    {"glFogfv", (void*)glFogfv},
+    {"glFogi", (void*)glFogi},
+    {"glGenBuffersARB", (void*)glGenBuffersARB},
+    {"glGenFencesNV", (void*)glGenFencesNV},
+    {"glGetCompressedTexImageARB", (void*)glGetCompressedTexImageARB},
+    {"glGetDoublev", (void*)glGetDoublev},
+    {"glGetTexImage", (void*)glGetTexImage},
+    {"glGetTexLevelParameteriv", (void*)glGetTexLevelParameteriv},
+    {"glLightModelfv", (void*)glLightModelfv},
+    {"glLightModeli", (void*)glLightModeli},
+    {"glLightf", (void*)glLightf},
+    {"glLightfv", (void*)glLightfv},
+    {"glLoadIdentity", (void*)glLoadIdentity},
+    {"glLoadMatrixf", (void*)glLoadMatrixf},
+    {"glMaterialf", (void*)glMaterialf},
+    {"glMaterialfv", (void*)glMaterialfv},
+    {"glMatrixMode", (void*)glMatrixMode},
+    {"glMultMatrixf", (void*)glMultMatrixf},
+    {"glNormalPointer", (void*)glNormalPointer},
+    {"glOrtho", (void*)glOrtho},
+    {"glPointSize", (void*)glPointSize},
+    {"glPolygonMode", (void*)glPolygonMode},
+    {"glPopMatrix", (void*)glPopMatrix},
+    {"glPushMatrix", (void*)glPushMatrix},
+    {"glRotatef", (void*)glRotatef},
+    {"glScalef", (void*)glScalef},
+    {"glSetFenceNV", (void*)glSetFenceNV},
+    {"glShadeModel", (void*)glShadeModel},
+    {"glStencilFuncSeparateATI", (void*)glStencilFuncSeparateATI},
+    {"glStencilOpSeparateATI", (void*)glStencilOpSeparateATI},
+    {"glTestFenceNV", (void*)glTestFenceNV},
+    {"glTexCoord2f", (void*)glTexCoord2f},
+    {"glTexCoord3f", (void*)glTexCoord3f},
+    {"glTexCoordPointer", (void*)glTexCoordPointer},
+    {"glTexEnvf", (void*)glTexEnvf},
+    {"glTexEnvfv", (void*)glTexEnvfv},
+    {"glTexEnvi", (void*)glTexEnvi},
+    {"glTexGenf", (void*)glTexGenf},
+    {"glTexGenfv", (void*)glTexGenfv},
+    {"glTexGeni", (void*)glTexGeni},
+    {"glTexImage3DEXT", (void*)glTexImage3DEXT},
+    {"glTranslatef", (void*)glTranslatef},
+    {"glVertex2f", (void*)glVertex2f},
+    {"glVertex2i", (void*)glVertex2i},
+    {"glVertex3f", (void*)glVertex3f},
+    {"glVertex3fv", (void*)glVertex3fv},
+    {"glVertexPointer", (void*)glVertexPointer},
     {nullptr, nullptr}
 };
 
