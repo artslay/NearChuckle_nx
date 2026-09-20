@@ -1001,7 +1001,6 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
 
     uint8_t* code_exec = (uint8_t*)va;
     uint8_t* data_exec = data_off_pg ? code_exec + data_off_pg : nullptr;
-    uint8_t* code_write = backing;
     // ── Heap staging buffer ───────────────────────────────────────────────────
     elfHeapCanaryArm();                 // bracket the biggest allocation we make
     // One staging buffer for the whole process, grown as needed and never
