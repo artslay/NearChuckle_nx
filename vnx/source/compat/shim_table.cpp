@@ -1109,6 +1109,441 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     return wrote;
 }
 
+
+// ─── Shader source discovery outside FCData/*.pak ────────────────────────────
+//
+// Android packages commonly keep game data below assets/ or inside a secondary
+// ZIP/OBB container. The CryPak archives we have under FCData are not sufficient
+// for the renderer's system shader files, so search the complete game tree for
+// loose files and Android-style archives as well.
+
+static bool copyFileBinary(const std::string& srcPath, const std::string& dstPath) {
+    FILE* src = fopen(srcPath.c_str(), "rb");
+    if (!src)
+        return false;
+
+    FILE* dst = fopen(dstPath.c_str(), "wb");
+    if (!dst) {
+        fclose(src);
+        return false;
+    }
+
+    unsigned char buf[64 * 1024];
+    bool ok = true;
+    for (;;) {
+        const size_t got = fread(buf, 1, sizeof(buf), src);
+        if (got) {
+            if (fwrite(buf, 1, got, dst) != got) {
+                ok = false;
+                break;
+            }
+        }
+        if (got < sizeof(buf)) {
+            if (ferror(src))
+                ok = false;
+            break;
+        }
+    }
+
+    fclose(dst);
+    fclose(src);
+    return ok;
+}
+
+static bool ensureParentDirectories(const std::string& path) {
+    const size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos)
+        return true;
+
+    const std::string dir = path.substr(0, slash);
+    if (dir.empty())
+        return true;
+
+    std::string cur;
+    size_t pos = 0;
+    while (pos <= dir.size()) {
+        size_t end = dir.find('/', pos);
+        std::string part = dir.substr(
+            pos, end == std::string::npos ? dir.size() - pos : end - pos);
+
+        if (!part.empty()) {
+            if (!cur.empty())
+                cur += "/";
+            cur += part;
+            mkdir(cur.c_str(), 0755);
+        }
+
+        if (end == std::string::npos)
+            break;
+        pos = end + 1;
+    }
+
+    return true;
+}
+
+static bool pathEndsWithShaderName(const std::string& path,
+                                   const std::string& wanted) {
+    const std::string p = pakNormalizeName(path.c_str());
+    const std::string w = pakNormalizeName(wanted.c_str());
+    if (p == w)
+        return true;
+    if (p.size() <= w.size())
+        return false;
+
+    const size_t off = p.size() - w.size();
+    return p[off - 1] == '/' && p.compare(off, w.size(), w) == 0;
+}
+
+static bool findLooseShaderSourceRecursive(const std::string& directory,
+                                           const std::string& wanted,
+                                           std::string& result,
+                                           int depth,
+                                           int& visited) {
+    if (depth > 12 || visited > 12000)
+        return false;
+
+    DIR* d = opendir(directory.c_str());
+    if (!d)
+        return false;
+
+    while (dirent* ent = readdir(d)) {
+        const char* name = ent->d_name;
+        if (!name || !*name || !std::strcmp(name, ".") || !std::strcmp(name, ".."))
+            continue;
+
+        ++visited;
+
+        std::string full = directory;
+        if (full.empty() || full == ".")
+            full = name;
+        else if (full == "/")
+            full += name;
+        else {
+            full += "/";
+            full += name;
+        }
+
+        struct stat st = {};
+        if (stat(full.c_str(), &st) != 0)
+            continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            const std::string lower = asciiLower(name);
+            if (lower == "_pakcache" || lower == "shadercache" ||
+                lower == "profiles")
+                continue;
+
+            if (findLooseShaderSourceRecursive(full, wanted, result,
+                                               depth + 1, visited)) {
+                closedir(d);
+                return true;
+            }
+            continue;
+        }
+
+        if (S_ISREG(st.st_mode) && pathEndsWithShaderName(full, wanted)) {
+            result = full;
+            closedir(d);
+            return true;
+        }
+    }
+
+    closedir(d);
+    return false;
+}
+
+static bool isAndroidArchiveName(const char* name) {
+    if (!name)
+        return false;
+
+    const char* dot = strrchr(name, '.');
+    if (!dot || !dot[1])
+        return false;
+
+    const std::string ext = asciiLower(dot + 1);
+    return ext == "pak" || ext == "zip" || ext == "apk" ||
+           ext == "obb" || ext == "aar" || ext == "jar";
+}
+
+static void collectAndroidArchivesRecursive(const std::string& directory,
+                                            std::vector<std::string>& archives,
+                                            int depth,
+                                            int& visited) {
+    if (depth > 10 || visited > 16000 || archives.size() >= 256)
+        return;
+
+    DIR* d = opendir(directory.c_str());
+    if (!d)
+        return;
+
+    while (dirent* ent = readdir(d)) {
+        const char* name = ent->d_name;
+        if (!name || !*name || !std::strcmp(name, ".") || !std::strcmp(name, ".."))
+            continue;
+
+        ++visited;
+
+        std::string full = directory;
+        if (full.empty() || full == ".")
+            full = name;
+        else if (full == "/")
+            full += name;
+        else {
+            full += "/";
+            full += name;
+        }
+
+        struct stat st = {};
+        if (stat(full.c_str(), &st) != 0)
+            continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            const std::string lower = asciiLower(name);
+            if (lower == "_pakcache" || lower == "shadercache")
+                continue;
+            collectAndroidArchivesRecursive(full, archives, depth + 1, visited);
+            if (archives.size() >= 256)
+                break;
+            continue;
+        }
+
+        if (S_ISREG(st.st_mode) && isAndroidArchiveName(name))
+            archives.push_back(full);
+    }
+
+    closedir(d);
+}
+
+static bool pakFindEntrySuffix(FILE* pak, const std::string& wanted,
+                               uint32_t& localOffset, uint32_t& compressedSize,
+                               uint32_t& uncompressedSize, uint16_t& method,
+                               std::string& matchedName) {
+    if (!pak || fseek(pak, 0, SEEK_END) != 0)
+        return false;
+
+    const long fileSize = ftell(pak);
+    if (fileSize < 22)
+        return false;
+
+    const size_t tailSize = (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
+    std::vector<unsigned char> tail(tailSize);
+    if (fseek(pak, fileSize - (long)tailSize, SEEK_SET) != 0 ||
+        !pakReadExact(pak, tail.data(), tail.size()))
+        return false;
+
+    size_t eocd = tail.size();
+    while (eocd >= 22) {
+        --eocd;
+        if (eocd + 4 <= tail.size() &&
+            pakRd32(tail.data() + eocd) == 0x06054b50u)
+            break;
+    }
+    if (eocd + 22 > tail.size())
+        return false;
+
+    const uint16_t entries = pakRd16(tail.data() + eocd + 10);
+    const uint32_t cdSize = pakRd32(tail.data() + eocd + 12);
+    const uint32_t cdOffset = pakRd32(tail.data() + eocd + 16);
+
+    if (!entries || !cdSize || cdSize > 128 * 1024 * 1024u)
+        return false;
+
+    std::vector<unsigned char> cd(cdSize);
+    if (fseek(pak, (long)cdOffset, SEEK_SET) != 0 ||
+        !pakReadExact(pak, cd.data(), cd.size()))
+        return false;
+
+    const std::string normalizedWanted = pakNormalizeName(wanted.c_str());
+
+    size_t pos = 0;
+    for (uint16_t i = 0; i < entries && pos + 46 <= cd.size(); ++i) {
+        const unsigned char* h = cd.data() + pos;
+        if (pakRd32(h) != 0x02014b50u)
+            break;
+
+        const uint16_t nameLen = pakRd16(h + 28);
+        const uint16_t extraLen = pakRd16(h + 30);
+        const uint16_t commentLen = pakRd16(h + 32);
+        const size_t recordSize = 46u + nameLen + extraLen + commentLen;
+        if (pos + recordSize > cd.size())
+            break;
+
+        const std::string name((const char*)h + 46, nameLen);
+        const std::string normalized = pakNormalizeName(name.c_str());
+
+        if (pathEndsWithShaderName(normalized, normalizedWanted)) {
+            method = pakRd16(h + 10);
+            compressedSize = pakRd32(h + 20);
+            uncompressedSize = pakRd32(h + 24);
+            localOffset = pakRd32(h + 42);
+            matchedName = normalized;
+            return true;
+        }
+
+        pos += recordSize;
+    }
+
+    return false;
+}
+
+static bool pakExtractEntrySuffix(const std::string& pakPath,
+                                  const std::string& wanted,
+                                  const std::string& outPath) {
+    FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak)
+        return false;
+
+    uint32_t localOffset = 0, compressedSize = 0, uncompressedSize = 0;
+    uint16_t method = 0;
+    std::string matchedName;
+
+    if (!pakFindEntrySuffix(pak, wanted, localOffset, compressedSize,
+                            uncompressedSize, method, matchedName)) {
+        fclose(pak);
+        return false;
+    }
+
+    if (!compressedSize || !uncompressedSize ||
+        compressedSize > 128 * 1024 * 1024u ||
+        uncompressedSize > 128 * 1024 * 1024u) {
+        fclose(pak);
+        return false;
+    }
+
+    unsigned char local[30];
+    if (fseek(pak, (long)localOffset, SEEK_SET) != 0 ||
+        !pakReadExact(pak, local, sizeof(local)) ||
+        pakRd32(local) != 0x04034b50u) {
+        fclose(pak);
+        return false;
+    }
+
+    const uint16_t nameLen = pakRd16(local + 26);
+    const uint16_t extraLen = pakRd16(local + 28);
+    const long dataOffset = (long)localOffset + 30L + nameLen + extraLen;
+
+    if (fseek(pak, dataOffset, SEEK_SET) != 0) {
+        fclose(pak);
+        return false;
+    }
+
+    std::vector<unsigned char> compressed(compressedSize);
+    std::vector<unsigned char> plain(uncompressedSize);
+
+    const bool readOk = pakReadExact(pak, compressed.data(), compressed.size());
+    fclose(pak);
+    if (!readOk)
+        return false;
+
+    bool ok = false;
+    if (method == 0 && compressedSize == uncompressedSize) {
+        memcpy(plain.data(), compressed.data(), uncompressedSize);
+        ok = true;
+    } else if (method == 8) {
+        ok = pakInflateRaw(compressed.data(), compressed.size(),
+                           plain.data(), plain.size());
+    }
+
+    if (!ok)
+        return false;
+
+    if (!ensureParentDirectories(outPath))
+        return false;
+
+    FILE* out = fopen(outPath.c_str(), "wb");
+    if (!out)
+        return false;
+
+    const bool wrote = fwrite(plain.data(), 1, plain.size(), out) == plain.size();
+    fclose(out);
+
+    if (wrote) {
+        compatLogFmt("shader source: %s <- %s :: %s",
+                     wanted.c_str(), pakPath.c_str(), matchedName.c_str());
+    }
+
+    return wrote;
+}
+
+static void prepareShaderSourceFiles() {
+    const char* wanted[] = {
+        "Shaders/statenocull.ext",
+        "Shaders/hdrprocess.ext",
+        "Shaders/sunflares.ext",
+        "Shaders/lightstyles.ext",
+        "Shaders/glare.ext",
+        "Shaders/cgvprogramms.ext",
+        "Shaders/cgpshaders.ext",
+        "Shaders/templfog.ext",
+        "Shaders/templvfog.ext",
+        "Shaders/templfog_fp.ext",
+        "Shaders/templfogcaustics.ext",
+        "Shaders/templvfogcaustics.ext",
+        "Shaders/templfogcaustics_fp.ext",
+        "Shaders/white.ext",
+        "Shaders/whiteshadow.ext",
+        "Shaders/templdecal.ext",
+        "Shaders/templheatvis_sources.ext",
+        "Shaders/templinvlight.ext",
+        "Shaders/templdof.ext",
+        "Shaders/Scripts/CommonSubroutines.csl",
+        "Shaders/Scripts/CommonSubroutines.csi",
+        "Shaders/HWScripts/CommonSubroutines.csl",
+        "Shaders/HWScripts/CommonSubroutines.csi",
+        nullptr
+    };
+
+    std::vector<std::string> archives;
+    int visited = 0;
+    collectAndroidArchivesRecursive(config.data_root, archives, 0, visited);
+
+    int looseVisited = 0;
+    int foundCount = 0;
+
+    for (size_t i = 0; wanted[i]; ++i) {
+        const std::string target = wanted[i];
+
+        std::string existing;
+        if (resolvePathCaseInsensitive(target.c_str(), existing)) {
+            struct stat st = {};
+            if (stat(existing.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+                ++foundCount;
+                compatLogFmt("shader source: %s <- loose %s",
+                             target.c_str(), existing.c_str());
+                continue;
+            }
+        }
+
+        std::string loose;
+        if (findLooseShaderSourceRecursive(config.data_root, target, loose,
+                                           0, looseVisited)) {
+            ensureParentDirectories(target);
+            if (copyFileBinary(loose, target)) {
+                ++foundCount;
+                compatLogFmt("shader source: %s <- loose %s",
+                             target.c_str(), loose.c_str());
+                continue;
+            }
+        }
+
+        bool extracted = false;
+        for (const std::string& archive : archives) {
+            if (pakExtractEntrySuffix(archive, target, target)) {
+                ++foundCount;
+                extracted = true;
+                break;
+            }
+        }
+
+        if (!extracted)
+            compatLogFmt("shader source: %s -> NOT FOUND in loose/Android archives",
+                         target.c_str());
+    }
+
+    compatLogFmt("shader source scan: found=%d/%d archives=%u visited=%d",
+                 foundCount, 24u, (unsigned)archives.size(), visited);
+}
+
 static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
     if (!requested || !mode || mode[0] != 'r')
         return nullptr;
