@@ -2341,7 +2341,6 @@ static bool pakExtractPrefix(const std::string& pakPath,
             continue;
 
         extractedAny = true;
-        compatLogFmt("pak DIR EXTRACT: %s <- %s", materialized.c_str(), pakPath.c_str());
     }
 
     return true;
@@ -2385,6 +2384,19 @@ static bool tryMaterializePakDirectory(const char* path) {
     }
 
     return false;
+}
+
+void compatPrepareShaderDirectories() {
+    const char* dirs[] = {
+        "Shaders/Scripts",
+        "Shaders/HWScripts",
+        nullptr
+    };
+
+    for (size_t i = 0; dirs[i]; ++i) {
+        if (tryMaterializePakDirectory(dirs[i]))
+            compatLogFmt("pak DIR READY: %s", dirs[i]);
+    }
 }
 
 static DIR* stub_opendir(const char* path) {
