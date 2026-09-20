@@ -2368,31 +2368,46 @@ static bool tryMaterializePakDirectory(const char* path) {
     if (wanted.empty())
         return false;
 
-    const char* pakCandidates[] = {
-        "FCData/Shaders.pak",
-        "fcdata/Shaders.pak",
-        "FCData/shaders.pak",
-        "fcdata/shaders.pak",
-        nullptr
-    };
+    // CryPak::ScanZips() checks every opened archive whose bind root matches
+    // the requested directory. Do the same here: shader scripts are not
+    // guaranteed to live in Shaders.pak specifically; they may be packed into
+    // another FCData archive such as Scripts.pak.
+    std::string resolvedRoot;
+    if (!resolvePathCaseInsensitive("FCData", resolvedRoot))
+        return false;
 
-    for (size_t i = 0; pakCandidates[i]; ++i) {
-        std::string resolvedPak;
-        if (!resolvePathCaseInsensitive(pakCandidates[i], resolvedPak))
+    DIR* root = opendir(resolvedRoot.c_str());
+    if (!root)
+        return false;
+
+    bool extractedAny = false;
+    int pakCount = 0;
+    for (struct dirent* ent = readdir(root); ent; ent = readdir(root)) {
+        const char* name = ent->d_name;
+        const size_t len = std::strlen(name);
+        if (len < 4 ||
+            std::tolower((unsigned char)name[len - 4]) != '.' ||
+            std::tolower((unsigned char)name[len - 3]) != 'p' ||
+            std::tolower((unsigned char)name[len - 2]) != 'a' ||
+            std::tolower((unsigned char)name[len - 1]) != 'k')
             continue;
 
+        std::string pakPath = resolvedRoot + "/" + name;
         struct stat st = {};
-        if (::stat(resolvedPak.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+        if (::stat(pakPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
             continue;
 
-        bool extractedAny = false;
-        if (pakExtractPrefix(resolvedPak, wanted, extractedAny) && extractedAny)
-            return true;
+        ++pakCount;
+        bool thisPak = false;
+        if (pakExtractPrefix(pakPath, wanted, thisPak) && thisPak)
+            extractedAny = true;
     }
+    closedir(root);
 
-    return false;
+    if (extractedAny)
+        compatLogFmt("pak DIR READY: %s (scanned %d FCData paks)", path, pakCount);
+    return extractedAny;
 }
-
 void compatPrepareShaderDirectories() {
     const char* dirs[] = {
         "Shaders/Scripts",
