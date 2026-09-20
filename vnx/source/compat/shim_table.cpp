@@ -2517,7 +2517,14 @@ static int stub_futimens(int, const void*)          { return 0; }   // timestamp
 
 struct ShimEntry { const char* name; void* ptr; };
 
+extern "C" void near_openal_tls_local_context_init();
+extern "C" int near_openal_cxa_thread_atexit(void (*dtor)(void*), void* obj, void* dso);
+
+
 static const ShimEntry g_shims[] = {
+    // ── OpenAL Soft Android TLS ABI fallbacks ─────────────────────────────
+    {"_ZTHN10ALCcontext13sLocalContextE", (void*)near_openal_tls_local_context_init},
+    {"__cxa_thread_atexit_impl", (void*)near_openal_cxa_thread_atexit},
     // ── zlib (linked; games decompress their own assets with it) ───────────
     {"inflate",         (void*)inflate},
     {"inflateEnd",      (void*)inflateEnd},
