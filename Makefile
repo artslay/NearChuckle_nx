@@ -40,7 +40,7 @@ LIBS := -pthread \
         -l:libGL.a -l:libGLESv1_CM.a -l:libGLESv2.a -l:libEGL.a -l:libvulkan.a \
         -l:libglapi.a -l:libcompiler.a -l:libmesa_util_c11.a -l:libblake3.a \
         -l:libmesa_util.a -l:libmesa_util_simd.a -l:libxmlconfig.a \
-        -lelf -lexpat -lzstd -lz \
+        -lexpat -lz \
         -lnx -lstdc++ -lm \
         -Wl,--end-group
 
