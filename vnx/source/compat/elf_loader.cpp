@@ -768,14 +768,124 @@ LoadedSo* elfDlopen(const char* name) {
 // out of the .so path (…/games/<pkg>/lib/<soname>) and forwards.
 static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
                                  size_t alloc_size, const char* path) {
-    // NearChuckle_nx has no VNX game-specific binary patch profiles.
-    // Keep the hook as a no-op so the shared ELF loader stays independent
-    // from the original VNX game registry.
-    (void)stage_base;
-    (void)min_vaddr;
-    (void)alloc_size;
-    (void)path;
+    // The Android CryEngine build carries its own Linux/Win32 compatibility
+    // implementation of _findfirst64/_findnext64/_findclose inside the guest
+    // module. Those calls are therefore direct local calls and never reach our
+    // dynamic shim table. CCryPakFindData::ScanFS uses them to enumerate shader
+    // files from the real filesystem, so the PAK materialization can succeed
+    // while CryPak still reports zero shader scripts.
+    //
+    // Redirect the three entry points in libXRenderOGL.so to the Switch-native
+    // implementations from shim_table.cpp. The first 296 bytes of the original
+    // guest __finddata64_t are exactly the public fields we fill here; its
+    // private bookkeeping remains untouched and is not used by ScanFS.
+    if (!path || !strstr(path, "libXRenderOGL.so"))
+        return;
+
+    struct PatchTarget {
+        const char* name;
+        const char* shim_name;
+    };
+    const PatchTarget targets[] = {
+        {"_findfirst64", "_findfirst64"},
+        {"_findnext64",  "_findnext64"},
+        {"_findclose",   "_findclose"},
+    };
+
+    // LoadedSo is already built at this point. Reconstruct the symbol table
+    // from the staged image so local/hidden symbols are patchable as well.
+    // This helper is deliberately kept local to avoid changing the public
+    // LoadedSo interface just for a game-specific quirk.
+    //
+    // The symbol table is immediately before the string table in these Android
+    // ELF files, and elfLoad has already computed the symbol count before this
+    // hook runs. Since this hook has no LoadedSo parameter, recover names from
+    // the dynamic table's own SYMTAB/DT_STRTAB entries in the staged image.
+    uint64_t strtab_vaddr = 0, symtab_vaddr = 0, syment = sizeof(Elf64_Sym);
+    uint64_t strsz = 0;
+    // Find PT_DYNAMIC through the staged ELF image's program headers. The ELF
+    // header lives at stage_base + min_vaddr, which is valid because the loader
+    // uses one contiguous bias for the whole image.
+    const Elf64_Ehdr* ehdr = reinterpret_cast<const Elf64_Ehdr*>(stage_base + min_vaddr);
+    if (ehdr->e_phoff == 0 || ehdr->e_phnum == 0)
+        return;
+    const Elf64_Phdr* phdrs = reinterpret_cast<const Elf64_Phdr*>(
+        reinterpret_cast<const uint8_t*>(ehdr) + ehdr->e_phoff);
+    for (int i = 0; i < ehdr->e_phnum; ++i) {
+        if (phdrs[i].p_type != PT_DYNAMIC)
+            continue;
+        const Elf64_Dyn* dyn = reinterpret_cast<const Elf64_Dyn*>(stage_base + phdrs[i].p_vaddr);
+        for (int d = 0; d < 4096 && dyn[d].d_tag != DT_NULL; ++d) {
+            switch (dyn[d].d_tag) {
+                case DT_STRTAB: strtab_vaddr = dyn[d].d_un.d_ptr; break;
+                case DT_SYMTAB: symtab_vaddr = dyn[d].d_un.d_ptr; break;
+                case DT_STRSZ:  strsz = dyn[d].d_un.d_val; break;
+                case DT_SYMENT: syment = dyn[d].d_un.d_val; break;
+            }
+        }
+        break;
+    }
+    if (!strtab_vaddr || !symtab_vaddr || !syment || syment != sizeof(Elf64_Sym) ||
+        strtab_vaddr < min_vaddr || symtab_vaddr < min_vaddr ||
+        strtab_vaddr >= min_vaddr + alloc_size || symtab_vaddr >= min_vaddr + alloc_size)
+        return;
+
+    const char* strtab = reinterpret_cast<const char*>(stage_base + strtab_vaddr);
+    const Elf64_Sym* symtab = reinterpret_cast<const Elf64_Sym*>(stage_base + symtab_vaddr);
+    const uint64_t maxSymBytes = strtab_vaddr - symtab_vaddr;
+    const uint32_t symCount = (uint32_t)(maxSymBytes / syment);
+    if (!symCount || symCount > 200000)
+        return;
+
+    auto findGuestSymbol = [&](const char* wanted) -> const Elf64_Sym* {
+        for (uint32_t i = 0; i < symCount; ++i) {
+            const Elf64_Sym& sym = symtab[i];
+            if (sym.st_name >= strsz || !sym.st_value)
+                continue;
+            if (strcmp(strtab + sym.st_name, wanted) == 0)
+                return &sym;
+        }
+        return nullptr;
+    };
+
+    for (const PatchTarget& t : targets) {
+        const Elf64_Sym* sym = findGuestSymbol(t.name);
+        if (!sym)
+            continue;
+
+        void* target = shimResolve(t.shim_name);
+        if (!target)
+            continue;
+
+        if (sym->st_value < min_vaddr) {
+            compatLogFmt("ELF: patch %s: symbol vaddr 0x%llx below min_vaddr 0x%llx",
+                         t.name, (unsigned long long)sym->st_value,
+                         (unsigned long long)min_vaddr);
+            continue;
+        }
+        const uint64_t rel = sym->st_value - min_vaddr;
+        if (rel + 16 > alloc_size) {
+            compatLogFmt("ELF: patch %s: symbol offset 0x%llx outside image size 0x%zx",
+                         t.name, (unsigned long long)rel, alloc_size);
+            continue;
+        }
+        if (sym->st_size && sym->st_size < 16) {
+            compatLogFmt("ELF: patch %s: symbol too small (%llu bytes)",
+                         t.name, (unsigned long long)sym->st_size);
+            continue;
+        }
+
+        uint8_t* code = stage_base + sym->st_value;
+        uint32_t insn[2] = { 0x58000050u, 0xD61F0200u };
+        const uint64_t target_addr = (uint64_t)(uintptr_t)target;
+        memcpy(code, insn, sizeof(insn));
+        memcpy(code + sizeof(insn), &target_addr, sizeof(target_addr));
+
+        compatLogFmt("ELF: patch libXRenderOGL.so %s @+0x%llx -> %s %p",
+                     t.name, (unsigned long long)rel, t.shim_name, target);
+    }
 }
+
 
 // ─── RELA relocation processing ───────────────────────────────────────────────
 // write_base: where to write relocation results (RW mapping)
