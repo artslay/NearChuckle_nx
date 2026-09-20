@@ -60,6 +60,8 @@ extern "C" {
 #include <poll.h>
 #include <sys/socket.h>
 #include <utime.h>
+#include <cstdint>
+#include <cstddef>
 #include <vector>
 #include <string>
 #include <algorithm>
