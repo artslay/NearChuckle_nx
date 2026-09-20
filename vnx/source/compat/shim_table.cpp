@@ -1164,6 +1164,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     }
 
     if (!f) {
+        FILE* pakFile = tryOpenFromLanguagePaks(path, mode);
+        if (pakFile)
+            return pakFile;
+
         if (mode && mode[0] == 'r' && isOptionalLanguagePak(path)) {
             FILE* fallback = makeEmptyLanguagePak(path, mode);
             if (fallback)
