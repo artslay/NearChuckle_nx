@@ -905,6 +905,114 @@ static FILE* makeEmptyLanguagePak(const char* path, const char* mode) {
     return f;
 }
 
+static std::string pakNormalizeName(const char* name) {
+    std::string out = name ? name : "";
+    for (char& c : out) {
+        if ((unsigned char)c == 92) c = '/';
+        else c = (char)std::tolower((unsigned char)c);
+    }
+    while (out.size() >= 2 && out[0] == '.' && out[1] == '/')
+        out.erase(0, 2);
+    return out;
+}
+
+static uint16_t pakRd16(const unsigned char* p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t pakRd32(const unsigned char* p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static bool pakReadExact(FILE* f, void* dst, size_t n) {
+    return n == 0 || fread(dst, 1, n, f) == n;
+}
+
+static bool pakInflateRaw(const unsigned char* src, size_t srcSize,
+                          unsigned char* dst, size_t dstSize) {
+    if (!src || !dst || srcSize > 0xffffffffu || dstSize > 0xffffffffu)
+        return false;
+
+    z_stream zs = {};
+    zs.next_in = const_cast<unsigned char*>(src);
+    zs.avail_in = (unsigned int)srcSize;
+    zs.next_out = dst;
+    zs.avail_out = (unsigned int)dstSize;
+
+    const char* version = zlibVersion();
+    if (!version || inflateInit2_(&zs, -15, version, (int)sizeof(z_stream)) != 0)
+        return false;
+
+    const int rc = inflate(&zs, 4);
+    inflateEnd(&zs);
+    return rc == 1 && zs.total_out == dstSize;
+}
+
+static bool pakFindEntry(FILE* pak, const std::string& wanted,
+                         uint32_t& localOffset, uint32_t& compressedSize,
+                         uint32_t& uncompressedSize, uint16_t& method) {
+    if (!pak || fseek(pak, 0, SEEK_END) != 0)
+        return false;
+
+    const long fileSize = ftell(pak);
+    if (fileSize < 22)
+        return false;
+
+    const size_t tailSize = (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
+    std::vector<unsigned char> tail(tailSize);
+    if (fseek(pak, fileSize - (long)tailSize, SEEK_SET) != 0 ||
+        !pakReadExact(pak, tail.data(), tail.size()))
+        return false;
+
+    size_t eocd = tail.size();
+    while (eocd >= 22) {
+        --eocd;
+        if (eocd + 4 <= tail.size() &&
+            pakRd32(tail.data() + eocd) == 0x06054b50u)
+            break;
+    }
+    if (eocd + 22 > tail.size())
+        return false;
+
+    const uint16_t entries = pakRd16(tail.data() + eocd + 10);
+    const uint32_t cdSize = pakRd32(tail.data() + eocd + 12);
+    const uint32_t cdOffset = pakRd32(tail.data() + eocd + 16);
+
+    if (!entries || !cdSize || cdSize > 128 * 1024 * 1024u)
+        return false;
+
+    std::vector<unsigned char> cd(cdSize);
+    if (fseek(pak, (long)cdOffset, SEEK_SET) != 0 ||
+        !pakReadExact(pak, cd.data(), cd.size()))
+        return false;
+
+    size_t pos = 0;
+    for (uint16_t i = 0; i < entries && pos + 46 <= cd.size(); ++i) {
+        const unsigned char* h = cd.data() + pos;
+        if (pakRd32(h) != 0x02014b50u)
+            break;
+
+        const uint16_t nameLen = pakRd16(h + 28);
+        const uint16_t extraLen = pakRd16(h + 30);
+        const uint16_t commentLen = pakRd16(h + 32);
+        const size_t recordSize = 46u + nameLen + extraLen + commentLen;
+        if (pos + recordSize > cd.size())
+            break;
+
+        std::string name((const char*)h + 46, nameLen);
+        if (pakNormalizeName(name.c_str()) == wanted) {
+            method = pakRd16(h + 10);
+            compressedSize = pakRd32(h + 20);
+            uncompressedSize = pakRd32(h + 24);
+            localOffset = pakRd32(h + 42);
+            return true;
+        }
+        pos += recordSize;
+    }
+    return false;
+}
+
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     if (std::string mapped = obbRemap(path); !mapped.empty()) {
