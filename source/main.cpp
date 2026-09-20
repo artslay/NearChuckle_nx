@@ -200,6 +200,28 @@ static void setup_android_runtime() {
     compatSetObbDir(config.data_root, "com.nearchuckle.farcry");
 }
 
+static bool prepare_guest_sdl(LoadedSo* game_so) {
+    LoadedSo* sdl = elfFindLoaded("libSDL3.so");
+    if (!sdl) {
+        compatLog("SDL: libSDL3.so is not loaded");
+        return false;
+    }
+
+    void* sym = sdl->findSym("SDL_SetMainReady");
+    if (!sym) {
+        compatLog("SDL: SDL_SetMainReady export not found");
+        return false;
+    }
+
+    using SetMainReadyFn = void (*)();
+    SetMainReadyFn set_main_ready =
+        reinterpret_cast<SetMainReadyFn>(sym);
+    set_main_ready();
+
+    compatLog("SDL: SDL_SetMainReady() called for direct guest SDL_main entry");
+    return true;
+}
+
 static int run_farcry(LoadedSo* game_so) {
     if (!game_so)
         return -1;
@@ -317,6 +339,16 @@ int main(int, char**) {
 
     compatLog("ELF constructors complete");
     compatLogFlush();
+
+    // We invoke the guest Android SDL_main symbol directly instead of entering
+    // through SDL's generated platform main. SDL3's Android build starts with
+    // SDL_MainIsReady == false in that configuration, so SDL_Init() rejects
+    // window/video initialization until SDL_SetMainReady() is called.
+    if (!prepare_guest_sdl(game_so)) {
+        compatLog("ERROR: could not prepare guest SDL3 main state");
+        compatLogFlush();
+        return 1;
+    }
 
     int rc = run_farcry(game_so);
 
