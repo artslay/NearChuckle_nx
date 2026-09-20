@@ -836,7 +836,7 @@ static bool isOptionalLanguagePak(const char* path) {
            std::strcmp(base, "english2.pak") == 0;
 }
 
-static FILE* makeEmptyLanguagePak(const char* path) {
+static FILE* makeEmptyLanguagePak(const char* path, const char* mode) {
     // Standard ZIP End Of Central Directory for an archive with zero entries.
     // CryEngine's ZipDir reader accepts PAK files through this ZIP structure.
     static const unsigned char empty_zip_eocd[] = {
@@ -848,20 +848,28 @@ static FILE* makeEmptyLanguagePak(const char* path) {
         0x00, 0x00
     };
 
-    FILE* f = tmpfile();
+    if (!path || !mode)
+        return nullptr;
+
+    // tmpfile() is not reliable on the Switch/newlib runtime used by this
+    // project. Create the missing archive at the exact path the game requested,
+    // then reopen it normally so ZipDir sees an ordinary file with a stable
+    // pathname and descriptor.
+    FILE* out = fopen(path, "wb");
+    if (!out)
+        return nullptr;
+
+    const size_t written = fwrite(empty_zip_eocd, 1, sizeof(empty_zip_eocd), out);
+    const int close_rc = fclose(out);
+    if (written != sizeof(empty_zip_eocd) || close_rc != 0)
+        return nullptr;
+
+    FILE* f = fopen(path, mode);
     if (!f)
         return nullptr;
 
-    const size_t written = fwrite(empty_zip_eocd, 1, sizeof(empty_zip_eocd), f);
-    if (written != sizeof(empty_zip_eocd) ||
-        fflush(f) != 0 ||
-        fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return nullptr;
-    }
-
     setvbuf(f, nullptr, _IOFBF, 16 * 1024);
-    compatLogFmt("fopen FALLBACK: %s -> empty optional language pak", path ? path : "?");
+    compatLogFmt("fopen FALLBACK: %s -> created empty optional language pak", path);
     return f;
 }
 
@@ -878,7 +886,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     FILE* f = fopen(path, mode);
     if (!f) {
         if (mode && mode[0] == 'r' && isOptionalLanguagePak(path)) {
-            FILE* fallback = makeEmptyLanguagePak(path);
+            FILE* fallback = makeEmptyLanguagePak(path, mode);
             if (fallback)
                 return fallback;
         }
