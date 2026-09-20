@@ -324,8 +324,6 @@ static jfieldID s_GetStaticFieldID(JNIEnv*, jclass, const char* n, const char* s
 // Return-type stubs (generic, for slots that don't need per-call logging)
 static jobject  s_RetObj(JNIEnv*, ...)   { return nullptr; }
 static jobject  s_RetObjV(JNIEnv*, jobject, jmethodID, va_list) { return nullptr; }
-static jboolean s_RetBool(JNIEnv*, ...)  { return JNI_FALSE; }
-static jboolean s_RetBoolV(JNIEnv*, jobject, jmethodID, va_list) { return JNI_FALSE; }
 static jint     s_RetInt(JNIEnv*, ...)   { return 0; }
 static jint     s_RetIntV(JNIEnv*, jobject, jmethodID, va_list) { return 0; }
 static jlong    s_RetLong(JNIEnv*, ...)  { return 0LL; }
@@ -335,7 +333,6 @@ static jfloat   s_RetFloatV(JNIEnv*, jobject, jmethodID, va_list) { return 0.0f;
 static jdouble  s_RetDouble(JNIEnv*, ...) { return 0.0; }
 static jdouble  s_RetDoubleV(JNIEnv*, jobject, jmethodID, va_list) { return 0.0; }
 static void     s_RetVoid(JNIEnv*, ...)   {}
-static void     s_RetVoidV(JNIEnv*, jobject, jmethodID, va_list) {}
 
 // ─── Static-method dispatching stubs ─────────────────────────────────────────
 // Helper: resolve a jmethodID to its MethodEntry (guards against DUMMY_METHOD)
@@ -1036,7 +1033,6 @@ static void     s_SetField(JNIEnv*, jobject, jfieldID, ...) {}
 
 static jobject  s_GetStaticObjField(JNIEnv*, jclass, jfieldID) { return nullptr; }
 static jint     s_GetStaticIntField(JNIEnv*, jclass, jfieldID)  { return 0; }
-static jlong    s_GetStaticLongField(JNIEnv*, jclass, jfieldID) { return 0LL; }
 static void     s_SetStaticField(JNIEnv*, jclass, jfieldID, ...) {}
 
 // Strings
@@ -1068,7 +1064,8 @@ static void    s_ReleaseStringChars(JNIEnv*, jstring, const jchar*) {}
 static void    s_GetStringRegion(JNIEnv*, jstring, jsize, jsize, jchar*) {}
 static void    s_GetStringUTFRegion(JNIEnv*, jstring, jsize, jsize, char*) {}
 static const jchar* s_GetStringCritical(JNIEnv*, jstring, jboolean* cp) {
-    if (cp) *cp = JNI_FALSE; return nullptr;
+    if (cp) *cp = JNI_FALSE;
+    return nullptr;
 }
 static void    s_ReleaseStringCritical(JNIEnv*, jstring, const jchar*) {}
 
@@ -1177,7 +1174,8 @@ static jint vm_GetEnv(JavaVM*, void** e, jint) {
     return JNI_OK;
 }
 static jint vm_AttachDaemon(JavaVM*, JNIEnv** e, void*) {
-    if (e) *e = (JNIEnv*)g_jni_outer; return JNI_OK;
+    if (e) *e = (JNIEnv*)g_jni_outer;
+    return JNI_OK;
 }
 
 // ─── jniSetup ─────────────────────────────────────────────────────────────────
