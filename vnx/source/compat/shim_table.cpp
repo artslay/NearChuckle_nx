@@ -60,6 +60,9 @@ extern "C" {
 #include <poll.h>
 #include <sys/socket.h>
 #include <utime.h>
+#include <vector>
+#include <string>
+#include <algorithm>
 
 // pread is not exported by the devkitA64/newlib runtime used here.
 // The APK cache only needs positional reads, so emulate it with lseek/read
@@ -832,8 +835,7 @@ static bool isOptionalLanguagePak(const char* path) {
     const char* base = std::strrchr(path, '/');
     base = base ? base + 1 : path;
 
-    return std::strcmp(base, "english1.pak") == 0 ||
-           std::strcmp(base, "english2.pak") == 0;
+    return std::strcmp(base, "english1.pak") == 0;
 }
 
 static FILE* makeEmptyLanguagePak(const char* path, const char* mode) {
@@ -1764,6 +1766,289 @@ static int stub_openat(int, const char* path, int flags, ...) {
     va_list va; va_start(va, flags); int mode = va_arg(va, int); va_end(va);
     return open(path, flags, mode);
 }
+
+// ─── Case-insensitive directory/file enumeration for CryPak ─────────────────
+//
+// The original Far Cry CryPak normalizes paths to lower-case before calling
+// _findfirst64(). The Switch filesystem is case-sensitive, while shipped game
+// trees commonly still use names such as FCData/ and Shaders/. Let directory
+// enumeration recover the real on-disk spelling, so CryPak can actually find
+// its *.pak archives instead of silently treating the directory as empty.
+
+static std::string asciiLower(std::string value) {
+    for (char& c : value)
+        c = (char)std::tolower((unsigned char)c);
+    return value;
+}
+
+static bool sameNameNoCase(const char* a, const char* b) {
+    return a && b && asciiLower(a) == asciiLower(b);
+}
+
+// Resolve a path component-by-component without changing the path returned to
+// callers. This is only used after the normal direct lookup fails.
+static bool resolvePathCaseInsensitive(const char* input, std::string& resolved) {
+    if (!input || !*input)
+        return false;
+
+    std::string path(input);
+    for (char& c : path) {
+        if (c == '\')
+            c = '/';
+    }
+
+    const bool absolute = !path.empty() && path[0] == '/';
+    std::string current = absolute ? "/" : ".";
+
+    size_t pos = absolute ? 1 : 0;
+    while (pos <= path.size()) {
+        size_t end = path.find('/', pos);
+        if (end == std::string::npos)
+            end = path.size();
+
+        const std::string part = path.substr(pos, end - pos);
+        pos = end + 1;
+
+        if (part.empty() || part == ".")
+            continue;
+        if (part == "..") {
+            size_t slash = current.find_last_of('/');
+            if (slash == std::string::npos)
+                current = ".";
+            else if (slash == 0)
+                current = "/";
+            else
+                current.erase(slash);
+            continue;
+        }
+
+        std::string direct = current;
+        if (direct.empty() || direct == ".") {
+            direct = part;
+        } else if (direct == "/") {
+            direct += part;
+        } else {
+            direct += "/";
+            direct += part;
+        }
+
+        struct stat st = {};
+        if (stat(direct.c_str(), &st) == 0) {
+            current = direct;
+            continue;
+        }
+
+        std::string parent = current.empty() ? "." : current;
+        DIR* d = opendir(parent.c_str());
+        if (!d)
+            return false;
+
+        std::string actual;
+        while (struct dirent* ent = readdir(d)) {
+            if (sameNameNoCase(ent->d_name, part.c_str())) {
+                actual = ent->d_name;
+                break;
+            }
+        }
+        closedir(d);
+
+        if (actual.empty())
+            return false;
+
+        if (parent == "/" || parent.empty())
+            current = "/" + actual;
+        else if (parent == ".")
+            current = actual;
+        else
+            current = parent + "/" + actual;
+    }
+
+    resolved = current.empty() ? (absolute ? "/" : ".") : current;
+    return true;
+}
+
+static DIR* stub_opendir(const char* path) {
+    DIR* d = opendir(path);
+    if (d)
+        return d;
+
+    std::string resolved;
+    if (resolvePathCaseInsensitive(path, resolved)) {
+        d = opendir(resolved.c_str());
+        if (d) {
+            compatLogFmt("opendir CASEFIX: %s -> %s", path ? path : "?", resolved.c_str());
+            return d;
+        }
+    }
+
+    compatLogFmt("opendir FAIL: %s", path ? path : "?");
+    return nullptr;
+}
+
+struct NearFindData64 {
+    uint32_t attrib;
+    uint32_t reserved;
+    int64_t  time_create;
+    int64_t  time_access;
+    int64_t  time_write;
+    int64_t  size;
+    char     name[256];
+};
+
+static_assert(offsetof(NearFindData64, time_create) == 8, "NearFindData64 layout");
+static_assert(offsetof(NearFindData64, name) == 40, "NearFindData64 layout");
+static_assert(sizeof(NearFindData64) == 296, "NearFindData64 layout");
+
+struct NearFind64State {
+    DIR* dir;
+    std::string directory;
+    std::string pattern;
+};
+
+static std::string findDirPart(const char* pattern, std::string& filePattern) {
+    std::string p = pattern ? pattern : "";
+    for (char& c : p) {
+        if (c == '\')
+            c = '/';
+    }
+
+    const size_t slash = p.find_last_of('/');
+    if (slash == std::string::npos) {
+        filePattern = p.empty() ? "*" : p;
+        return ".";
+    }
+
+    filePattern = p.substr(slash + 1);
+    std::string dir = p.substr(0, slash);
+    if (dir.empty())
+        dir = "/";
+    return dir;
+}
+
+static bool findPatternMatches(const std::string& pattern, const char* name) {
+    const std::string pat = asciiLower(pattern.empty() ? "*" : pattern);
+    const std::string item = asciiLower(name ? name : "");
+    return fnmatch(pat.c_str(), item.c_str(), 0) == 0;
+}
+
+static bool fillFindData64(NearFindData64* out,
+                           const std::string& directory,
+                           const char* name) {
+    if (!out || !name)
+        return false;
+
+    std::string full = directory;
+    if (full.empty() || full == ".")
+        full = name;
+    else if (full == "/")
+        full += name;
+    else {
+        full += "/";
+        full += name;
+    }
+
+    struct stat st = {};
+    if (stat(full.c_str(), &st) != 0)
+        return false;
+
+    memset(out, 0, sizeof(*out));
+    if (S_ISDIR(st.st_mode))
+        out->attrib |= 0x10; // _A_SUBDIR
+    if (!(st.st_mode & S_IWUSR))
+        out->attrib |= 0x01; // _A_RDONLY
+
+    out->time_create = (int64_t)st.st_mtime;
+    out->time_access = (int64_t)st.st_atime;
+    out->time_write  = (int64_t)st.st_mtime;
+    out->size        = (int64_t)st.st_size;
+    strncpy(out->name, name, sizeof(out->name) - 1);
+    out->name[sizeof(out->name) - 1] = '\0';
+    return true;
+}
+
+static bool findNextMatch(NearFind64State* state, NearFindData64* out) {
+    if (!state || !state->dir || !out)
+        return false;
+
+    while (struct dirent* ent = readdir(state->dir)) {
+        if (!findPatternMatches(state->pattern, ent->d_name))
+            continue;
+        if (!fillFindData64(out, state->directory, ent->d_name))
+            continue;
+        return true;
+    }
+
+    return false;
+}
+
+static intptr_t stub_findfirst64(const char* pattern, NearFindData64* out) {
+    if (!pattern || !out) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    std::string filePattern;
+    std::string directory = findDirPart(pattern, filePattern);
+
+    DIR* d = opendir(directory.c_str());
+    std::string resolvedDirectory = directory;
+    if (!d && resolvePathCaseInsensitive(directory.c_str(), resolvedDirectory))
+        d = opendir(resolvedDirectory.c_str());
+
+    if (!d) {
+        compatLogFmt("findfirst64 FAIL: %s (dir=%s pattern=%s)",
+                     pattern, directory.c_str(), filePattern.c_str());
+        errno = ENOENT;
+        return -1;
+    }
+
+    NearFind64State* state = new NearFind64State;
+    state->dir = d;
+    state->directory = resolvedDirectory;
+    state->pattern = filePattern;
+
+    compatLogFmt("findfirst64: %s -> dir=%s pattern=%s",
+                 pattern, state->directory.c_str(), state->pattern.c_str());
+
+    if (!findNextMatch(state, out)) {
+        closedir(state->dir);
+        delete state;
+        errno = ENOENT;
+        compatLogFmt("findfirst64: no match for %s", pattern);
+        return -1;
+    }
+
+    compatLogFmt("findfirst64 MATCH: %s -> %s",
+                 pattern, out->name);
+    return (intptr_t)state;
+}
+
+static int stub_findnext64(intptr_t handle, NearFindData64* out) {
+    NearFind64State* state = reinterpret_cast<NearFind64State*>(handle);
+    if (!state || !out) {
+        errno = EBADF;
+        return -1;
+    }
+
+    if (findNextMatch(state, out))
+        return 0;
+
+    compatLogFmt("findnext64: end dir=%s pattern=%s",
+                 state->directory.c_str(), state->pattern.c_str());
+    return -1;
+}
+
+static int stub_findclose64(intptr_t handle) {
+    NearFind64State* state = reinterpret_cast<NearFind64State*>(handle);
+    if (!state)
+        return -1;
+
+    if (state->dir)
+        closedir(state->dir);
+    delete state;
+    return 0;
+}
+
 // The original Android game can ask the C runtime to remove configuration
 // files while resetting profiles. Never let a guest-side cleanup operation
 // delete the root configs that control the Switch launch.
@@ -2713,9 +2998,12 @@ static const ShimEntry g_shims[] = {
     {"stat",        (void*)stat},
     {"fstat",       (void*)fstat},
     {"mkdir",       (void*)mkdir},
-    {"opendir",     (void*)opendir},
+    {"opendir",     (void*)stub_opendir},
     {"readdir",     (void*)readdir},
     {"closedir",    (void*)closedir},
+    {"_findfirst64",(void*)stub_findfirst64},
+    {"_findnext64", (void*)stub_findnext64},
+    {"_findclose",  (void*)stub_findclose64},
     {"abort",       (void*)sh_abort},
     {"exit",        (void*)sh_exit},
     {"qsort",       (void*)qsort},
