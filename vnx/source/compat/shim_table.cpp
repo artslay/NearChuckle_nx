@@ -31,7 +31,27 @@
 #include <locale.h>
 #include <setjmp.h>
 #include <semaphore.h>
-// zlib API declarations. Some devkitA64 installations do not ship a zlib header,\n// while libz is still available for linking. Keep the ABI declarations local.\nextern "C" {\n    struct z_stream_s;\n    typedef struct z_stream_s z_stream;\n    typedef z_stream* z_streamp;\n\n    int inflate(z_streamp, int);\n    int inflateEnd(z_streamp);\n    int inflateInit_(z_streamp, const char*, int);\n    int inflateInit2_(z_streamp, int, const char*, int);\n    int inflateReset(z_streamp);\n    int deflate(z_streamp, int);\n    int deflateEnd(z_streamp);\n    int deflateInit_(z_streamp, int, const char*, int);\n    int deflateInit2_(z_streamp, int, int, int, int, int, const char*, int);\n    unsigned long crc32(unsigned long, const unsigned char*, unsigned int);\n    unsigned long adler32(unsigned long, const unsigned char*, unsigned int);\n    int uncompress(unsigned char*, unsigned long*, const unsigned char*, unsigned long);\n    int compress(unsigned char*, unsigned long*, const unsigned char*, unsigned long);\n}
+// zlib API declarations. Some devkitA64 installations do not ship a zlib header,
+// while libz is still available for linking. Keep the ABI declarations local.
+extern "C" {
+    struct z_stream_s;
+    typedef struct z_stream_s z_stream;
+    typedef z_stream* z_streamp;
+
+    int inflate(z_streamp, int);
+    int inflateEnd(z_streamp);
+    int inflateInit_(z_streamp, const char*, int);
+    int inflateInit2_(z_streamp, int, const char*, int);
+    int inflateReset(z_streamp);
+    int deflate(z_streamp, int);
+    int deflateEnd(z_streamp);
+    int deflateInit_(z_streamp, int, const char*, int);
+    int deflateInit2_(z_streamp, int, int, int, int, int, const char*, int);
+    unsigned long crc32(unsigned long, const unsigned char*, unsigned int);
+    unsigned long adler32(unsigned long, const unsigned char*, unsigned int);
+    int uncompress(unsigned char*, unsigned long*, const unsigned char*, unsigned long);
+    int compress(unsigned char*, unsigned long*, const unsigned char*, unsigned long);
+}
 #include <fnmatch.h>
 #include <libgen.h>
 #include <sys/lock.h>
@@ -794,16 +814,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         // backend fetch, or by Java. Nothing here does that, so the read fails
         // on a file the game is entitled to assume exists. Only consulted after
         // a real open has already failed, so nothing real is ever shadowed.
-        if (path && mode && mode[0] == 'r') {
-            if (const char* content = gameMissingFileContent(g_obb_pkg.c_str(), path)) {
-                if (FILE* nf = fopen(path, "w+")) {
-                    fputs(content, nf);
-                    rewind(nf);
-                    compatLogFmt("synthesized missing file %s (%s)", path, content);
-                    return nf;
-                }
-            }
-        }
         compatLogFmt("fopen FAIL: %s (mode=%s)", path ? path : "?", mode ? mode : "?");
         return f;
     }
@@ -1804,11 +1814,14 @@ static int stub_lstat(const char* p, struct stat* s) { return stat(p, s); }
 // ─── pthread_setname_np / pthread_getname_np (thread naming, GNU ext) ────────
 static int stub_pthread_setname_np(void*, const char*) { return 0; }
 static int stub_pthread_getname_np(void*, char* buf, size_t sz) {
-    if (buf && sz > 0) buf[0] = '\0'; return 0;
+    if (buf && sz > 0) buf[0] = '\0';
+    return 0;
 }
 static int stub_pthread_attr_setstack(void*, void*, size_t) { return 0; }
 static int stub_pthread_attr_getstack(const void*, void** s, size_t* z) {
-    if (s) *s = nullptr; if (z) *z = 65536; return 0;
+    if (s) *s = nullptr;
+    if (z) *z = 65536;
+    return 0;
 }
 static int stub_pthread_attr_setschedpolicy(void*, int) { return 0; }
 static int stub_pthread_attr_setschedparam(void*, const void*) { return 0; }
@@ -1816,6 +1829,53 @@ static int stub_pthread_attr_getschedparam(const void*, void*) { return 0; }
 static int stub_pthread_barrier_init(void*, const void*, unsigned) { return 0; }
 static int stub_pthread_barrier_wait(void*) { return 0; }
 static int stub_pthread_barrier_destroy(void*) { return 0; }
+// OpenGL extension entry points that are not declared by the Switch Mesa
+// compatibility headers. Map ABI-compatible variants to core functions and
+// keep unsupported NVIDIA/ATI fence operations harmless.
+static void shim_glActiveStencilFaceEXT(GLenum) {}
+static void shim_glBindBufferARB(GLenum target, GLuint buffer) { glBindBuffer(target, buffer); }
+static void shim_glBufferDataARB(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
+    glBufferData(target, size, data, usage);
+}
+static void shim_glBufferSubDataARB(GLenum target, GLintptr offset, GLsizeiptr size, const void* data) {
+    glBufferSubData(target, offset, size, data);
+}
+static void shim_glColorTableEXT(GLenum target, GLenum internalformat, GLsizei width,
+                                 GLenum format, GLenum type, const void* table) {
+    glColorTable(target, internalformat, width, format, type, table);
+}
+static void shim_glCompressedTexImage2DARB(GLenum target, GLint level, GLenum internalformat,
+                                           GLsizei width, GLsizei height, GLint border,
+                                           GLsizei imageSize, const void* data) {
+    glCompressedTexImage2D(target, level, internalformat, width, height, border, imageSize, data);
+}
+static void shim_glCompressedTexSubImage2DARB(GLenum target, GLint level, GLint xoffset, GLint yoffset,
+                                              GLsizei width, GLsizei height, GLenum format,
+                                              GLsizei imageSize, const void* data) {
+    glCompressedTexSubImage2D(target, level, xoffset, yoffset, width, height, format, imageSize, data);
+}
+static void shim_glFinishFenceNV(GLuint) {}
+static void shim_glGenFencesNV(GLsizei n, GLuint* fences) {
+    if (fences && n > 0)
+        memset(fences, 0, sizeof(GLuint) * (size_t)n);
+}
+static void shim_glGetCompressedTexImageARB(GLenum target, GLint level, void* img) {
+    glGetCompressedTexImage(target, level, img);
+}
+static void shim_glSetFenceNV(GLuint, GLenum) {}
+static GLboolean shim_glTestFenceNV(GLuint) { return GL_TRUE; }
+static void shim_glStencilFuncSeparateATI(GLenum face, GLenum func, GLint ref, GLuint mask) {
+    glStencilFuncSeparate(face, func, ref, mask);
+}
+static void shim_glStencilOpSeparateATI(GLenum face, GLenum sfail, GLenum dpfail, GLenum dppass) {
+    glStencilOpSeparate(face, sfail, dpfail, dppass);
+}
+static void shim_glTexImage3DEXT(GLenum target, GLint level, GLenum internalformat,
+                                 GLsizei width, GLsizei height, GLsizei depth, GLint border,
+                                 GLenum format, GLenum type, const void* pixels) {
+    glTexImage3D(target, level, internalformat, width, height, depth, border, format, type, pixels);
+}
+
 
 // ─── getauxval (Android uses AT_HWCAP for NEON detection) ───────────────────
 static unsigned long stub_getauxval(unsigned long type) {
@@ -3159,13 +3219,13 @@ static const ShimEntry g_shims[] = {
 
     // sentinel
     // Desktop OpenGL 1.x/2.1 entry points used by Far Cry's XRenderOGL.
-    {"glActiveStencilFaceEXT", (void*)glActiveStencilFaceEXT},
+    {"glActiveStencilFaceEXT", (void*)shim_glActiveStencilFaceEXT},
     {"glAlphaFunc", (void*)glAlphaFunc},
     {"glAreTexturesResident", (void*)glAreTexturesResident},
     {"glBegin", (void*)glBegin},
-    {"glBindBufferARB", (void*)glBindBufferARB},
-    {"glBufferDataARB", (void*)glBufferDataARB},
-    {"glBufferSubDataARB", (void*)glBufferSubDataARB},
+    {"glBindBufferARB", (void*)shim_glBindBufferARB},
+    {"glBufferDataARB", (void*)shim_glBufferDataARB},
+    {"glBufferSubDataARB", (void*)shim_glBufferSubDataARB},
     {"glClearDepth", (void*)glClearDepth},
     {"glClipPlane", (void*)glClipPlane},
     {"glColor3f", (void*)glColor3f},
@@ -3173,21 +3233,21 @@ static const ShimEntry g_shims[] = {
     {"glColor4f", (void*)glColor4f},
     {"glColor4fv", (void*)glColor4fv},
     {"glColorPointer", (void*)glColorPointer},
-    {"glColorTableEXT", (void*)glColorTableEXT},
-    {"glCompressedTexImage2DARB", (void*)glCompressedTexImage2DARB},
-    {"glCompressedTexSubImage2DARB", (void*)glCompressedTexSubImage2DARB},
+    {"glColorTableEXT", (void*)shim_glColorTableEXT},
+    {"glCompressedTexImage2DARB", (void*)shim_glCompressedTexImage2DARB},
+    {"glCompressedTexSubImage2DARB", (void*)shim_glCompressedTexSubImage2DARB},
     {"glDepthRange", (void*)glDepthRange},
     {"glDisableClientState", (void*)glDisableClientState},
     {"glDrawBuffer", (void*)glDrawBuffer},
     {"glEnableClientState", (void*)glEnableClientState},
     {"glEnd", (void*)glEnd},
-    {"glFinishFenceNV", (void*)glFinishFenceNV},
+    {"glFinishFenceNV", (void*)shim_glFinishFenceNV},
     {"glFogf", (void*)glFogf},
     {"glFogfv", (void*)glFogfv},
     {"glFogi", (void*)glFogi},
     {"glGenBuffersARB", (void*)glGenBuffersARB},
-    {"glGenFencesNV", (void*)glGenFencesNV},
-    {"glGetCompressedTexImageARB", (void*)glGetCompressedTexImageARB},
+    {"glGenFencesNV", (void*)shim_glGenFencesNV},
+    {"glGetCompressedTexImageARB", (void*)shim_glGetCompressedTexImageARB},
     {"glGetDoublev", (void*)glGetDoublev},
     {"glGetTexImage", (void*)glGetTexImage},
     {"glGetTexLevelParameteriv", (void*)glGetTexLevelParameteriv},
@@ -3209,11 +3269,11 @@ static const ShimEntry g_shims[] = {
     {"glPushMatrix", (void*)glPushMatrix},
     {"glRotatef", (void*)glRotatef},
     {"glScalef", (void*)glScalef},
-    {"glSetFenceNV", (void*)glSetFenceNV},
+    {"glSetFenceNV", (void*)shim_glSetFenceNV},
     {"glShadeModel", (void*)glShadeModel},
-    {"glStencilFuncSeparateATI", (void*)glStencilFuncSeparateATI},
-    {"glStencilOpSeparateATI", (void*)glStencilOpSeparateATI},
-    {"glTestFenceNV", (void*)glTestFenceNV},
+    {"glStencilFuncSeparateATI", (void*)shim_glStencilFuncSeparateATI},
+    {"glStencilOpSeparateATI", (void*)shim_glStencilOpSeparateATI},
+    {"glTestFenceNV", (void*)shim_glTestFenceNV},
     {"glTexCoord2f", (void*)glTexCoord2f},
     {"glTexCoord3f", (void*)glTexCoord3f},
     {"glTexCoordPointer", (void*)glTexCoordPointer},
@@ -3223,7 +3283,7 @@ static const ShimEntry g_shims[] = {
     {"glTexGenf", (void*)glTexGenf},
     {"glTexGenfv", (void*)glTexGenfv},
     {"glTexGeni", (void*)glTexGeni},
-    {"glTexImage3DEXT", (void*)glTexImage3DEXT},
+    {"glTexImage3DEXT", (void*)shim_glTexImage3DEXT},
     {"glTranslatef", (void*)glTranslatef},
     {"glVertex2f", (void*)glVertex2f},
     {"glVertex2i", (void*)glVertex2i},
