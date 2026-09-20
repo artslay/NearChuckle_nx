@@ -3230,93 +3230,157 @@ static void shim_glTexImage3DEXT(GLenum target, GLint level, GLenum internalform
 }
 
 // ARB vertex/fragment program entry points used by Far Cry's OpenGL renderer.
-// The active Switch Mesa context reports these extensions, and Mesa's desktop
-// GL library provides the corresponding functions. The Android renderer asks
-// for them through dlsym(libGL), which is handled by fake_dlsym() below.
+//
+// The Switch Mesa headers intentionally expose the modern/core API, but do not
+// declare the legacy ARB program entry points as direct C functions. Resolve
+// the extension functions from the active EGL context instead. This also keeps
+// the compatibility layer independent from Mesa's private symbol exports.
+template <typename T>
+static T resolveGLProc(const char* name) {
+    return reinterpret_cast<T>(eglGetProcAddress(name));
+}
+
+using PFN_glBindProgramARB = void (*)(GLenum, GLuint);
+using PFN_glDeleteProgramsARB = void (*)(GLsizei, const GLuint*);
+using PFN_glGenProgramsARB = void (*)(GLsizei, GLuint*);
+using PFN_glIsProgramARB = GLboolean (*)(GLuint);
+using PFN_glProgramStringARB = void (*)(GLenum, GLenum, GLsizei, const void*);
+using PFN_glProgramEnvParameter4fARB = void (*)(GLenum, GLuint, GLfloat, GLfloat, GLfloat, GLfloat);
+using PFN_glProgramEnvParameter4fvARB = void (*)(GLenum, GLuint, const GLfloat*);
+using PFN_glProgramEnvParameter4dARB = void (*)(GLenum, GLuint, GLdouble, GLdouble, GLdouble, GLdouble);
+using PFN_glProgramEnvParameter4dvARB = void (*)(GLenum, GLuint, const GLdouble*);
+using PFN_glProgramLocalParameter4fARB = void (*)(GLenum, GLuint, GLfloat, GLfloat, GLfloat, GLfloat);
+using PFN_glProgramLocalParameter4fvARB = void (*)(GLenum, GLuint, const GLfloat*);
+using PFN_glProgramLocalParameter4dARB = void (*)(GLenum, GLuint, GLdouble, GLdouble, GLdouble, GLdouble);
+using PFN_glProgramLocalParameter4dvARB = void (*)(GLenum, GLuint, const GLdouble*);
+using PFN_glGetProgramivARB = void (*)(GLenum, GLenum, GLint*);
+using PFN_glGetProgramStringARB = void (*)(GLenum, GLenum, void*);
+using PFN_glGetProgramEnvParameterfvARB = void (*)(GLenum, GLuint, GLfloat*);
+using PFN_glGetProgramEnvParameterdvARB = void (*)(GLenum, GLuint, GLdouble*);
+using PFN_glGetProgramLocalParameterfvARB = void (*)(GLenum, GLuint, GLfloat*);
+using PFN_glGetProgramLocalParameterdvARB = void (*)(GLenum, GLuint, GLdouble*);
+
 static void shim_glBindProgramARB(GLenum target, GLuint program) {
-    glBindProgramARB(target, program);
+    static PFN_glBindProgramARB fn = resolveGLProc<PFN_glBindProgramARB>("glBindProgramARB");
+    if (fn) fn(target, program);
 }
 static void shim_glDeleteProgramsARB(GLsizei n, const GLuint* programs) {
-    glDeleteProgramsARB(n, programs);
+    static PFN_glDeleteProgramsARB fn = resolveGLProc<PFN_glDeleteProgramsARB>("glDeleteProgramsARB");
+    if (fn) fn(n, programs);
 }
 static void shim_glGenProgramsARB(GLsizei n, GLuint* programs) {
-    glGenProgramsARB(n, programs);
+    static PFN_glGenProgramsARB fn = resolveGLProc<PFN_glGenProgramsARB>("glGenProgramsARB");
+    if (fn) fn(n, programs);
+    else if (programs && n > 0) memset(programs, 0, sizeof(GLuint) * (size_t)n);
 }
 static GLboolean shim_glIsProgramARB(GLuint program) {
-    return glIsProgramARB(program);
+    static PFN_glIsProgramARB fn = resolveGLProc<PFN_glIsProgramARB>("glIsProgramARB");
+    return fn ? fn(program) : GL_FALSE;
 }
 static void shim_glProgramStringARB(GLenum target, GLenum format,
                                     GLsizei len, const void* string) {
-    glProgramStringARB(target, format, len, string);
+    static PFN_glProgramStringARB fn = resolveGLProc<PFN_glProgramStringARB>("glProgramStringARB");
+    if (fn) fn(target, format, len, string);
 }
 static void shim_glProgramEnvParameter4fARB(GLenum target, GLuint index,
                                             GLfloat x, GLfloat y,
                                             GLfloat z, GLfloat w) {
-    glProgramEnvParameter4fARB(target, index, x, y, z, w);
+    static PFN_glProgramEnvParameter4fARB fn =
+        resolveGLProc<PFN_glProgramEnvParameter4fARB>("glProgramEnvParameter4fARB");
+    if (fn) fn(target, index, x, y, z, w);
 }
 static void shim_glProgramEnvParameter4fvARB(GLenum target, GLuint index,
                                              const GLfloat* params) {
-    glProgramEnvParameter4fvARB(target, index, params);
+    static PFN_glProgramEnvParameter4fvARB fn =
+        resolveGLProc<PFN_glProgramEnvParameter4fvARB>("glProgramEnvParameter4fvARB");
+    if (fn) fn(target, index, params);
 }
 static void shim_glProgramEnvParameter4dARB(GLenum target, GLuint index,
                                             GLdouble x, GLdouble y,
                                             GLdouble z, GLdouble w) {
-    glProgramEnvParameter4dARB(target, index, x, y, z, w);
+    static PFN_glProgramEnvParameter4dARB fn =
+        resolveGLProc<PFN_glProgramEnvParameter4dARB>("glProgramEnvParameter4dARB");
+    if (fn) fn(target, index, x, y, z, w);
 }
 static void shim_glProgramEnvParameter4dvARB(GLenum target, GLuint index,
                                              const GLdouble* params) {
-    glProgramEnvParameter4dvARB(target, index, params);
+    static PFN_glProgramEnvParameter4dvARB fn =
+        resolveGLProc<PFN_glProgramEnvParameter4dvARB>("glProgramEnvParameter4dvARB");
+    if (fn) fn(target, index, params);
 }
 static void shim_glProgramLocalParameter4fARB(GLenum target, GLuint index,
                                               GLfloat x, GLfloat y,
                                               GLfloat z, GLfloat w) {
-    glProgramLocalParameter4fARB(target, index, x, y, z, w);
+    static PFN_glProgramLocalParameter4fARB fn =
+        resolveGLProc<PFN_glProgramLocalParameter4fARB>("glProgramLocalParameter4fARB");
+    if (fn) fn(target, index, x, y, z, w);
 }
 static void shim_glProgramLocalParameter4fvARB(GLenum target, GLuint index,
                                                const GLfloat* params) {
-    glProgramLocalParameter4fvARB(target, index, params);
+    static PFN_glProgramLocalParameter4fvARB fn =
+        resolveGLProc<PFN_glProgramLocalParameter4fvARB>("glProgramLocalParameter4fvARB");
+    if (fn) fn(target, index, params);
 }
 static void shim_glProgramLocalParameter4dARB(GLenum target, GLuint index,
                                               GLdouble x, GLdouble y,
                                               GLdouble z, GLdouble w) {
-    glProgramLocalParameter4dARB(target, index, x, y, z, w);
+    static PFN_glProgramLocalParameter4dARB fn =
+        resolveGLProc<PFN_glProgramLocalParameter4dARB>("glProgramLocalParameter4dARB");
+    if (fn) fn(target, index, x, y, z, w);
 }
 static void shim_glProgramLocalParameter4dvARB(GLenum target, GLuint index,
                                                const GLdouble* params) {
-    glProgramLocalParameter4dvARB(target, index, params);
+    static PFN_glProgramLocalParameter4dvARB fn =
+        resolveGLProc<PFN_glProgramLocalParameter4dvARB>("glProgramLocalParameter4dvARB");
+    if (fn) fn(target, index, params);
 }
 static void shim_glGetProgramivARB(GLenum target, GLenum pname, GLint* params) {
-    glGetProgramivARB(target, pname, params);
+    static PFN_glGetProgramivARB fn =
+        resolveGLProc<PFN_glGetProgramivARB>("glGetProgramivARB");
+    if (fn) fn(target, pname, params);
 }
 static void shim_glGetProgramStringARB(GLenum target, GLenum pname, void* string) {
-    glGetProgramStringARB(target, pname, string);
+    static PFN_glGetProgramStringARB fn =
+        resolveGLProc<PFN_glGetProgramStringARB>("glGetProgramStringARB");
+    if (fn) fn(target, pname, string);
 }
 static void shim_glGetProgramEnvParameterfvARB(GLenum target, GLuint index,
                                                GLfloat* params) {
-    glGetProgramEnvParameterfvARB(target, index, params);
+    static PFN_glGetProgramEnvParameterfvARB fn =
+        resolveGLProc<PFN_glGetProgramEnvParameterfvARB>("glGetProgramEnvParameterfvARB");
+    if (fn) fn(target, index, params);
 }
 static void shim_glGetProgramEnvParameterdvARB(GLenum target, GLuint index,
                                                GLdouble* params) {
-    glGetProgramEnvParameterdvARB(target, index, params);
+    static PFN_glGetProgramEnvParameterdvARB fn =
+        resolveGLProc<PFN_glGetProgramEnvParameterdvARB>("glGetProgramEnvParameterdvARB");
+    if (fn) fn(target, index, params);
 }
 static void shim_glGetProgramLocalParameterfvARB(GLenum target, GLuint index,
                                                  GLfloat* params) {
-    glGetProgramLocalParameterfvARB(target, index, params);
+    static PFN_glGetProgramLocalParameterfvARB fn =
+        resolveGLProc<PFN_glGetProgramLocalParameterfvARB>("glGetProgramLocalParameterfvARB");
+    if (fn) fn(target, index, params);
 }
 static void shim_glGetProgramLocalParameterdvARB(GLenum target, GLuint index,
                                                  GLdouble* params) {
-    glGetProgramLocalParameterdvARB(target, index, params);
+    static PFN_glGetProgramLocalParameterdvARB fn =
+        resolveGLProc<PFN_glGetProgramLocalParameterdvARB>("glGetProgramLocalParameterdvARB");
+    if (fn) fn(target, index, params);
 }
+
+// These ARB vertex-attrib names are ABI-compatible aliases of the core entry
+// points exposed by the Switch headers, so no extension lookup is necessary.
 static void shim_glVertexAttribPointerARB(GLuint index, GLint size, GLenum type,
                                           GLboolean normalized, GLsizei stride,
                                           const void* pointer) {
-    glVertexAttribPointerARB(index, size, type, normalized, stride, pointer);
+    glVertexAttribPointer(index, size, type, normalized, stride, pointer);
 }
 static void shim_glEnableVertexAttribArrayARB(GLuint index) {
-    glEnableVertexAttribArrayARB(index);
+    glEnableVertexAttribArray(index);
 }
 static void shim_glDisableVertexAttribArrayARB(GLuint index) {
-    glDisableVertexAttribArrayARB(index);
+    glDisableVertexAttribArray(index);
 }
 
 
