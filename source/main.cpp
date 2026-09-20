@@ -283,8 +283,10 @@ static void setup_environment() {
 
     setenv("MESA_GL_VERSION_OVERRIDE", "2.1COMPAT", 1);
     setenv("MESA_GLSL_VERSION_OVERRIDE", "140", 1);
-    setenv("MESA_EXTENSION_OVERRIDE",
-           "+GL_ARB_vertex_program +GL_ARB_fragment_program", 1);
+    // Do not advertise legacy ARB program extensions manually.
+    // CryEngine/XRenderOGL resolves the actual entry points at runtime, and
+    // forcing the extensions on without providing every function leaves the
+    // renderer with null GL function pointers.
 
     chdir(config.data_root);
     compatPrepareShaderDirectories();
