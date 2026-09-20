@@ -289,8 +289,13 @@ static void setup_environment() {
     // renderer with null GL function pointers.
 
     chdir(config.data_root);
-    compatPrepareShaderDirectories();
+
+    // Normalize the existing data tree first, then materialize the shader
+    // directories with their original CryEngine spelling (Shaders/...).
+    // Keeping the real directory name avoids relying on a case-fix wrapper
+    // for CryEngine's internal shader-directory scan.
     normalize_engine_data_dirs();
+    compatPrepareShaderDirectories();
     probe_engine_data_layout();
 }
 
