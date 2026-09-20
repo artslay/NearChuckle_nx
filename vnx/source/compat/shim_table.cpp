@@ -66,6 +66,9 @@ extern "C" {
 #include <string>
 #include <algorithm>
 
+// Case-insensitive filesystem resolver used by file wrappers below.
+static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
+
 // pread is not exported by the devkitA64/newlib runtime used here.
 // The APK cache only needs positional reads, so emulate it with lseek/read
 // while preserving the caller's file position.
@@ -825,9 +828,6 @@ static std::string obbRemap(const char* path) {
     if (!path || g_obb_dir.empty()) return "";
     return obb::remapPath(path, g_obb_pkg, g_obb_dir);
 }
-
-// Declared before the file wrappers; implemented in the CryPak compatibility block below.
-static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
 
 // Far Cry's Android build expects english1.pak/english2.pak during
 // OpenLanguagePak(), but these auxiliary English archives are intentionally
