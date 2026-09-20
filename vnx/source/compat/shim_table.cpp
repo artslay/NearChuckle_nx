@@ -2234,6 +2234,148 @@ static bool resolvePathCaseInsensitive(const char* input, std::string& resolved)
     return true;
 }
 
+
+static bool pakExtractPrefix(const std::string& pakPath,
+                             const std::string& prefix,
+                             bool& extractedAny) {
+    extractedAny = false;
+
+    FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak)
+        return false;
+
+    if (fseek(pak, 0, SEEK_END) != 0) {
+        fclose(pak);
+        return false;
+    }
+
+    const long fileSize = ftell(pak);
+    if (fileSize < 22) {
+        fclose(pak);
+        return false;
+    }
+
+    const size_t tailSize = (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
+    std::vector<unsigned char> tail(tailSize);
+    if (fseek(pak, fileSize - (long)tailSize, SEEK_SET) != 0 ||
+        !pakReadExact(pak, tail.data(), tail.size())) {
+        fclose(pak);
+        return false;
+    }
+
+    size_t eocd = tail.size();
+    while (eocd >= 22) {
+        --eocd;
+        if (eocd + 4 <= tail.size() &&
+            pakRd32(tail.data() + eocd) == 0x06054b50u)
+            break;
+    }
+    if (eocd + 22 > tail.size()) {
+        fclose(pak);
+        return false;
+    }
+
+    const uint16_t entries = pakRd16(tail.data() + eocd + 10);
+    const uint32_t cdSize = pakRd32(tail.data() + eocd + 12);
+    const uint32_t cdOffset = pakRd32(tail.data() + eocd + 16);
+    if (!entries || !cdSize || cdSize > 128 * 1024 * 1024u) {
+        fclose(pak);
+        return false;
+    }
+
+    std::vector<unsigned char> cd(cdSize);
+    if (fseek(pak, (long)cdOffset, SEEK_SET) != 0 ||
+        !pakReadExact(pak, cd.data(), cd.size())) {
+        fclose(pak);
+        return false;
+    }
+
+    std::vector<std::string> names;
+    size_t pos = 0;
+    for (uint16_t i = 0; i < entries && pos + 46 <= cd.size(); ++i) {
+        const unsigned char* h = cd.data() + pos;
+        if (pakRd32(h) != 0x02014b50u)
+            break;
+
+        const uint16_t nameLen = pakRd16(h + 28);
+        const uint16_t extraLen = pakRd16(h + 30);
+        const uint16_t commentLen = pakRd16(h + 32);
+        const size_t recordSize = 46u + nameLen + extraLen + commentLen;
+        if (pos + recordSize > cd.size())
+            break;
+
+        std::string name((const char*)h + 46, nameLen);
+        const std::string normalized = pakNormalizeName(name.c_str());
+
+        std::string wantedPrefix = pakNormalizeName(prefix.c_str());
+        if (!wantedPrefix.empty() && wantedPrefix.back() != '/')
+            wantedPrefix.push_back('/');
+
+        if (normalized.size() > wantedPrefix.size() &&
+            normalized.compare(0, wantedPrefix.size(), wantedPrefix) == 0) {
+            names.push_back(name);
+        }
+
+        pos += recordSize;
+    }
+
+    fclose(pak);
+
+    for (const std::string& name : names) {
+        const std::string normalized = pakNormalizeName(name.c_str());
+        if (normalized.empty())
+            continue;
+
+        if (!pakExtractEntry(pakPath, normalized, normalized))
+            continue;
+
+        extractedAny = true;
+        compatLogFmt("pak DIR EXTRACT: %s <- %s", normalized.c_str(), pakPath.c_str());
+    }
+
+    return true;
+}
+
+static bool tryMaterializePakDirectory(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string wanted = path;
+    for (char& c : wanted) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+    while (!wanted.empty() && wanted.back() == '/')
+        wanted.pop_back();
+
+    if (wanted.empty())
+        return false;
+
+    const char* pakCandidates[] = {
+        "FCData/Shaders.pak",
+        "fcdata/Shaders.pak",
+        "FCData/shaders.pak",
+        "fcdata/shaders.pak",
+        nullptr
+    };
+
+    for (size_t i = 0; pakCandidates[i]; ++i) {
+        std::string resolvedPak;
+        if (!resolvePathCaseInsensitive(pakCandidates[i], resolvedPak))
+            continue;
+
+        struct stat st = {};
+        if (::stat(resolvedPak.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+            continue;
+
+        bool extractedAny = false;
+        if (pakExtractPrefix(resolvedPak, wanted, extractedAny) && extractedAny)
+            return true;
+    }
+
+    return false;
+}
+
 static DIR* stub_opendir(const char* path) {
     DIR* d = opendir(path);
     if (d)
@@ -2244,6 +2386,22 @@ static DIR* stub_opendir(const char* path) {
         d = opendir(resolved.c_str());
         if (d) {
             compatLogFmt("opendir CASEFIX: %s -> %s", path ? path : "?", resolved.c_str());
+            return d;
+        }
+    }
+
+    // CryEngine enumerates shader script directories as real directories.
+    // On Android these files can live only inside Shaders.pak, so materialize
+    // the requested directory before giving up.
+    if (path && tryMaterializePakDirectory(path)) {
+        d = opendir(path);
+        if (!d) {
+            std::string dirResolved;
+            if (resolvePathCaseInsensitive(path, dirResolved))
+                d = opendir(dirResolved.c_str());
+        }
+        if (d) {
+            compatLogFmt("opendir PAK: %s", path);
             return d;
         }
     }
