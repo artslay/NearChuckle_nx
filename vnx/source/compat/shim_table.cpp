@@ -34,10 +34,26 @@
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
 extern "C" {
-    struct z_stream_s;
+    struct z_stream_s {
+        unsigned char* next_in;
+        unsigned int avail_in;
+        unsigned long total_in;
+        unsigned char* next_out;
+        unsigned int avail_out;
+        unsigned long total_out;
+        const char* msg;
+        void* state;
+        void* zalloc;
+        void* zfree;
+        void* opaque;
+        int data_type;
+        unsigned long adler;
+        unsigned long reserved;
+    };
     typedef struct z_stream_s z_stream;
     typedef z_stream* z_streamp;
 
+    const char* zlibVersion(void);
     int inflate(z_streamp, int);
     int inflateEnd(z_streamp);
     int inflateInit_(z_streamp, const char*, int);
