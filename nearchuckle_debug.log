@@ -1,7 +1,9 @@
 pak DIR READY: Shaders/Scripts (scanned 13 FCData paks)
 pak DIR READY: Shaders/Scripts
+pak DIR CONTENT: Shaders/Scripts csl=7 csi=0
 pak DIR READY: Shaders/HWScripts (scanned 13 FCData paks)
 pak DIR READY: Shaders/HWScripts
+pak DIR CONTENT: Shaders/HWScripts csl=32 csi=123
 data dir: FCData=present fcdata=present
 data dir: Shaders=present shaders=present
 data dir: FCData/Localized=present FCData/localized=present
@@ -35,24 +37,24 @@ ELF: dyn: strtab=0x1852c/115723 symtab=0x388 syment=24 rela=0x34938/78264 jmprel
 ELF: so built sym_count=4113 strsz=115723
 ELF: registered
 ELF: rela 3261 entries
-bind: free -> shim 0x235c28300
+bind: free -> shim 0x3bd41300
 RELA: all 3261 entries processed
 ELF: rela done
 ELF: jmprel 486 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
-bind: calloc -> shim 0x235c28190
-bind: realloc -> shim 0x235c28100
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
+bind: calloc -> shim 0x3bd41190
+bind: realloc -> shim 0x3bd41100
 JMPREL: all 486 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0xf2000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0xf2000 size=0xa000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0xfc000 size=0x8000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0xcdf43d000 backing=0x4835f0000 size=0x104000
+ProcessMap: mapped image base=0xcf6c20000 backing=0x721df0000 size=0x104000
 ELF: process-code copy complete
-ELF: 2 constructors deferred (arr=0xcdf536ce0)
-ELF: loaded OK code_exec=0xcdf43d000 data_exec=0xcdf52f000 sym_count=4113 unresolved=0
+ELF: 2 constructors deferred (arr=0xcf6d19ce0)
+ELF: loaded OK code_exec=0xcf6c20000 data_exec=0xcf6d12000 sym_count=4113 unresolved=0
 resources[libc++_shared.so]: system=0/0 KiB
 resources[libc++_shared.so]: memory=3359888/3363840 KiB
 ELF load: libogg.so (30360 bytes)
@@ -71,17 +73,17 @@ ELF: rela 5 entries
 RELA: all 5 entries processed
 ELF: rela done
 ELF: jmprel 14 entries
-bind: malloc -> shim 0x235c28310
-bind: free -> shim 0x235c28300
-bind: realloc -> shim 0x235c28100
+bind: malloc -> shim 0x3bd41310
+bind: free -> shim 0x3bd41300
+bind: realloc -> shim 0x3bd41100
 JMPREL: all 14 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x7000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x7000 size=0x2000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x6a4b71000 backing=0x4834fd000 size=0x9000
+ProcessMap: mapped image base=0xff5db5000 backing=0x721cfd000 size=0x9000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0x6a4b71000 data_exec=0x6a4b78000 sym_count=111 unresolved=0
+ELF: loaded OK code_exec=0xff5db5000 data_exec=0xff5dbc000 sym_count=111 unresolved=0
 resources[libogg.so]: system=0/0 KiB
 resources[libogg.so]: memory=3359888/3363840 KiB
 ELF load: libvorbis.so (189128 bytes)
@@ -100,18 +102,18 @@ ELF: rela 61 entries
 RELA: all 61 entries processed
 ELF: rela done
 ELF: jmprel 90 entries
-bind: malloc -> shim 0x235c28310
-bind: free -> shim 0x235c28300
-bind: calloc -> shim 0x235c28190
-bind: realloc -> shim 0x235c28100
+bind: malloc -> shim 0x3bd41310
+bind: free -> shim 0x3bd41300
+bind: calloc -> shim 0x3bd41190
+bind: realloc -> shim 0x3bd41100
 JMPREL: all 90 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x2e000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x2e000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0xe1769b000 backing=0x483536000 size=0x2f000
+ProcessMap: mapped image base=0x4e3a63000 backing=0x721d36000 size=0x2f000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0xe1769b000 data_exec=0xe176c9000 sym_count=205 unresolved=0
+ELF: loaded OK code_exec=0x4e3a63000 data_exec=0x4e3a91000 sym_count=205 unresolved=0
 resources[libvorbis.so]: system=0/0 KiB
 resources[libvorbis.so]: memory=3359888/3363840 KiB
 ELF load: libvorbisenc.so (654000 bytes)
@@ -132,17 +134,17 @@ ELF: rela 3273 entries
 RELA: all 3273 entries processed
 ELF: rela done
 ELF: jmprel 10 entries
-bind: calloc -> shim 0x235c28190
-bind: malloc -> shim 0x235c28310
+bind: calloc -> shim 0x3bd41190
+bind: malloc -> shim 0x3bd41310
 JMPREL: all 10 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x8a000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x8a000 size=0x17000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0xa1000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0xe0a1b2000 backing=0x4838cd000 size=0xa2000
+ProcessMap: mapped image base=0x56e36f000 backing=0x7220cd000 size=0xa2000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0xe0a1b2000 data_exec=0xe0a23c000 sym_count=19 unresolved=0
+ELF: loaded OK code_exec=0x56e36f000 data_exec=0x56e3f9000 sym_count=19 unresolved=0
 resources[libvorbisenc.so]: system=0/0 KiB
 resources[libvorbisenc.so]: memory=3359888/3363840 KiB
 ELF load: libvorbisfile.so (32752 bytes)
@@ -161,18 +163,18 @@ ELF: rela 12 entries
 RELA: all 12 entries processed
 ELF: rela done
 ELF: jmprel 62 entries
-bind: free -> shim 0x235c28300
-bind: calloc -> shim 0x235c28190
-bind: malloc -> shim 0x235c28310
-bind: realloc -> shim 0x235c28100
+bind: free -> shim 0x3bd41300
+bind: calloc -> shim 0x3bd41190
+bind: malloc -> shim 0x3bd41310
+bind: realloc -> shim 0x3bd41100
 JMPREL: all 62 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x8000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x8000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x94c950000 backing=0x483508000 size=0x9000
+ProcessMap: mapped image base=0x5cf48e000 backing=0x721d08000 size=0x9000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0x94c950000 data_exec=0x94c958000 sym_count=113 unresolved=0
+ELF: loaded OK code_exec=0x5cf48e000 data_exec=0x5cf496000 sym_count=113 unresolved=0
 resources[libvorbisfile.so]: system=0/0 KiB
 resources[libvorbisfile.so]: memory=3359888/3363840 KiB
 ELF load: libopenal.so (1261160 bytes)
@@ -190,23 +192,23 @@ ELF: dyn: strtab=0x2a48/4718 symtab=0x2f8 syment=24 rela=0x3cb8/84336 jmprel=0x1
 ELF: so built sym_count=419 strsz=4718
 ELF: registered
 ELF: rela 3514 entries
-bind: free -> shim 0x235c28300
+bind: free -> shim 0x3bd41300
 RELA: all 3514 entries processed
 ELF: rela done
 ELF: jmprel 144 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
-bind: realloc -> shim 0x235c28100
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
+bind: realloc -> shim 0x3bd41100
 JMPREL: all 144 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x12b000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x12b000 size=0xa000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x135000 size=0x7c000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x168e68000 backing=0x483aa3000 size=0x1b1000
+ProcessMap: mapped image base=0xcf824a000 backing=0x7222a3000 size=0x1b1000
 ELF: process-code copy complete
-ELF: 11 constructors deferred (arr=0x168f9b7f8)
-ELF: loaded OK code_exec=0x168e68000 data_exec=0x168f93000 sym_count=419 unresolved=0
+ELF: 11 constructors deferred (arr=0xcf837d7f8)
+ELF: loaded OK code_exec=0xcf824a000 data_exec=0xcf8375000 sym_count=419 unresolved=0
 resources[libopenal.so]: system=0/0 KiB
 resources[libopenal.so]: memory=3359888/3363840 KiB
 ELF load: libSDL3.so (2380768 bytes)
@@ -242,10 +244,10 @@ ELF: unresolved: fesetenv
 ELF: unresolved: fdatasync
 ELF: unresolved: fseeko64
 ELF: unresolved: ftello64
-bind: malloc -> shim 0x235c28310
-bind: calloc -> shim 0x235c28190
-bind: realloc -> shim 0x235c28100
-bind: free -> shim 0x235c28300
+bind: malloc -> shim 0x3bd41310
+bind: calloc -> shim 0x3bd41190
+bind: realloc -> shim 0x3bd41100
+bind: free -> shim 0x3bd41300
 ELF: unresolved: scalbnf
 ELF: unresolved: wcsnlen
 ELF: unresolved: wcslcpy
@@ -258,10 +260,10 @@ ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x235000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x235000 size=0xa000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x23f000 size=0xb000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x2e87d0000 backing=0x48404b000 size=0x24a000
+ProcessMap: mapped image base=0xe9433b000 backing=0x72284b000 size=0x24a000
 ELF: process-code copy complete
-ELF: 2 constructors deferred (arr=0x2e8a0cc00)
-ELF: loaded OK code_exec=0x2e87d0000 data_exec=0x2e8a05000 sym_count=2112 unresolved=21
+ELF: 2 constructors deferred (arr=0xe94577c00)
+ELF: loaded OK code_exec=0xe9433b000 data_exec=0xe94570000 sym_count=2112 unresolved=21
 resources[libSDL3.so]: system=0/0 KiB
 resources[libSDL3.so]: memory=3359888/3363840 KiB
 ELF load: libCryInput.so (112952 bytes)
@@ -282,8 +284,8 @@ ELF: rela 205 entries
 RELA: all 205 entries processed
 ELF: rela done
 ELF: jmprel 125 entries
-bind: malloc -> shim 0x235c28310
-bind: free -> shim 0x235c28300
+bind: malloc -> shim 0x3bd41310
+bind: free -> shim 0x3bd41300
 ELF: unresolved: mbstowcs
 JMPREL: all 125 entries processed
 ELF: jmprel done
@@ -291,9 +293,9 @@ ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x1b000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x1b000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x1c000 size=0x2000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x90b660000 backing=0x483583000 size=0x1e000
+ProcessMap: mapped image base=0xf8c2f6000 backing=0x721d83000 size=0x1e000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0x90b660000 data_exec=0x90b67b000 sym_count=411 unresolved=22
+ELF: loaded OK code_exec=0xf8c2f6000 data_exec=0xf8c311000 sym_count=411 unresolved=22
 resources[libCryInput.so]: system=0/0 KiB
 resources[libCryInput.so]: memory=3359888/3363840 KiB
 ELF load: libCryScriptSystem.so (282840 bytes)
@@ -314,18 +316,18 @@ ELF: rela 537 entries
 RELA: all 537 entries processed
 ELF: rela done
 ELF: jmprel 339 entries
-bind: free -> shim 0x235c28300
-bind: realloc -> shim 0x235c28100
-bind: malloc -> shim 0x235c28310
+bind: free -> shim 0x3bd41300
+bind: realloc -> shim 0x3bd41100
+bind: malloc -> shim 0x3bd41310
 JMPREL: all 339 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x43000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x43000 size=0x3000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x46000 size=0x2000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0xadb13f000 backing=0x48382d000 size=0x48000
+ProcessMap: mapped image base=0x40b7b6000 backing=0x72202d000 size=0x48000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0xadb13f000 data_exec=0xadb182000 sym_count=794 unresolved=22
+ELF: loaded OK code_exec=0x40b7b6000 data_exec=0x40b7f9000 sym_count=794 unresolved=22
 resources[libCryScriptSystem.so]: system=0/0 KiB
 resources[libCryScriptSystem.so]: memory=3359888/3363840 KiB
 ELF load: libCryEntitySystem.so (296384 bytes)
@@ -346,19 +348,19 @@ ELF: rela 438 entries
 RELA: all 438 entries processed
 ELF: rela done
 ELF: jmprel 214 entries
-bind: malloc -> shim 0x235c28310
-bind: free -> shim 0x235c28300
-bind: calloc -> shim 0x235c28190
-bind: realloc -> shim 0x235c28100
+bind: malloc -> shim 0x3bd41310
+bind: free -> shim 0x3bd41300
+bind: calloc -> shim 0x3bd41190
+bind: realloc -> shim 0x3bd41100
 JMPREL: all 214 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x47000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x47000 size=0x2000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x49000 size=0x9000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0xd95b08000 backing=0x4836f5000 size=0x52000
+ProcessMap: mapped image base=0xeee0ac000 backing=0x721ef5000 size=0x52000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0xd95b08000 data_exec=0xd95b4f000 sym_count=828 unresolved=22
+ELF: loaded OK code_exec=0xeee0ac000 data_exec=0xeee0f3000 sym_count=828 unresolved=22
 resources[libCryEntitySystem.so]: system=0/0 KiB
 resources[libCryEntitySystem.so]: memory=3359888/3363840 KiB
 ELF load: libCryNetwork.so (296904 bytes)
@@ -379,17 +381,17 @@ ELF: rela 823 entries
 RELA: all 823 entries processed
 ELF: rela done
 ELF: jmprel 295 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
 JMPREL: all 295 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x46000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x46000 size=0x3000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x49000 size=0x5000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0xd990d5000 backing=0x48379b000 size=0x4e000
+ProcessMap: mapped image base=0xa348ad000 backing=0x721f9b000 size=0x4e000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0xd990d5000 data_exec=0xd9911b000 sym_count=1304 unresolved=22
+ELF: loaded OK code_exec=0xa348ad000 data_exec=0xa348f3000 sym_count=1304 unresolved=22
 resources[libCryNetwork.so]: system=0/0 KiB
 resources[libCryNetwork.so]: memory=3359888/3363840 KiB
 ELF load: libCrySoundSystem.so (332704 bytes)
@@ -410,13 +412,13 @@ ELF: rela 460 entries
 RELA: all 460 entries processed
 ELF: rela done
 ELF: jmprel 319 entries
-bind: _ZdlPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf503828
-bind: _Znwm -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf503754
-bind: _Znam -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf5037f0
-bind: free -> shim 0x235c28300
-bind: _ZdaPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf503840
-bind: malloc -> shim 0x235c28310
-bind: realloc -> shim 0x235c28100
+bind: _ZdlPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce6828
+bind: _Znwm -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce6754
+bind: _Znam -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce67f0
+bind: free -> shim 0x3bd41300
+bind: _ZdaPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce6840
+bind: malloc -> shim 0x3bd41310
+bind: realloc -> shim 0x3bd41100
 ELF: unresolved: __fread_chk
 JMPREL: all 319 entries processed
 ELF: jmprel done
@@ -424,10 +426,10 @@ ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x50000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x50000 size=0x2000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x52000 size=0x6000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0xad5847000 backing=0x4839c1000 size=0x58000
+ProcessMap: mapped image base=0x51b0e1000 backing=0x7221c1000 size=0x58000
 ELF: process-code copy complete
-ELF: 1 constructors deferred (arr=0xad5897eb0)
-ELF: loaded OK code_exec=0xad5847000 data_exec=0xad5897000 sym_count=1102 unresolved=23
+ELF: 1 constructors deferred (arr=0x51b131eb0)
+ELF: loaded OK code_exec=0x51b0e1000 data_exec=0x51b131000 sym_count=1102 unresolved=23
 resources[libCrySoundSystem.so]: system=0/0 KiB
 resources[libCrySoundSystem.so]: memory=3359888/3363840 KiB
 ELF load: libCryMovie.so (366728 bytes)
@@ -448,18 +450,18 @@ ELF: rela 1322 entries
 RELA: all 1322 entries processed
 ELF: rela done
 ELF: jmprel 157 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
 JMPREL: all 157 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x56000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x56000 size=0x5000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x5b000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0xeda363000 backing=0x483c55000 size=0x5c000
+ProcessMap: mapped image base=0x3aad2e000 backing=0x722455000 size=0x5c000
 ELF: process-code copy complete
-ELF: 4 constructors deferred (arr=0xeda3bc8e0)
-ELF: loaded OK code_exec=0xeda363000 data_exec=0xeda3b9000 sym_count=1247 unresolved=23
+ELF: 4 constructors deferred (arr=0x3aad878e0)
+ELF: loaded OK code_exec=0x3aad2e000 data_exec=0x3aad84000 sym_count=1247 unresolved=23
 resources[libCryMovie.so]: system=0/0 KiB
 resources[libCryMovie.so]: memory=3359888/3363840 KiB
 ELF load: libCryAISystem.so (473168 bytes)
@@ -480,17 +482,17 @@ ELF: rela 716 entries
 RELA: all 716 entries processed
 ELF: rela done
 ELF: jmprel 378 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
 JMPREL: all 378 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x71000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x71000 size=0x4000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x75000 size=0x4000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x2a0721000 backing=0x483d36000 size=0x79000
+ProcessMap: mapped image base=0x389611000 backing=0x722536000 size=0x79000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0x2a0721000 data_exec=0x2a0792000 sym_count=1222 unresolved=23
+ELF: loaded OK code_exec=0x389611000 data_exec=0x389682000 sym_count=1222 unresolved=23
 resources[libCryAISystem.so]: system=0/0 KiB
 resources[libCryAISystem.so]: memory=3359888/3363840 KiB
 ELF load: libCryFont.so (511232 bytes)
@@ -511,18 +513,18 @@ ELF: rela 4688 entries
 RELA: all 4688 entries processed
 ELF: rela done
 ELF: jmprel 214 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
-bind: realloc -> shim 0x235c28100
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
+bind: realloc -> shim 0x3bd41100
 JMPREL: all 214 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x73000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x73000 size=0xb000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x7e000 size=0x3000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x27dc4e000 backing=0x483e3d000 size=0x81000
+ProcessMap: mapped image base=0xa08591000 backing=0x72263d000 size=0x81000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0x27dc4e000 data_exec=0x27dcc1000 sym_count=643 unresolved=23
+ELF: loaded OK code_exec=0xa08591000 data_exec=0xa08604000 sym_count=643 unresolved=23
 resources[libCryFont.so]: system=0/0 KiB
 resources[libCryFont.so]: memory=3359888/3363840 KiB
 ELF load: libCryAnimation.so (863504 bytes)
@@ -543,20 +545,20 @@ ELF: rela 1086 entries
 RELA: all 1086 entries processed
 ELF: rela done
 ELF: jmprel 948 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
-bind: calloc -> shim 0x235c28190
-bind: realloc -> shim 0x235c28100
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
+bind: calloc -> shim 0x3bd41190
+bind: realloc -> shim 0x3bd41100
 JMPREL: all 948 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0xcf000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0xcf000 size=0x5000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0xd4000 size=0x8000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x3104bc000 backing=0x4844e0000 size=0xdc000
+ProcessMap: mapped image base=0xfcbff0000 backing=0x722ce0000 size=0xdc000
 ELF: process-code copy complete
-ELF: 3 constructors deferred (arr=0x31058cf98)
-ELF: loaded OK code_exec=0x3104bc000 data_exec=0x31058b000 sym_count=2659 unresolved=23
+ELF: 3 constructors deferred (arr=0xfcc0c0f98)
+ELF: loaded OK code_exec=0xfcbff0000 data_exec=0xfcc0bf000 sym_count=2659 unresolved=23
 resources[libCryAnimation.so]: system=0/0 KiB
 resources[libCryAnimation.so]: memory=3359888/3363840 KiB
 ELF load: libCry3DEngine.so (960880 bytes)
@@ -577,21 +579,21 @@ ELF: rela 875 entries
 RELA: all 875 entries processed
 ELF: rela done
 ELF: jmprel 684 entries
-bind: malloc -> shim 0x235c28310
-bind: free -> shim 0x235c28300
-bind: realloc -> shim 0x235c28100
+bind: malloc -> shim 0x3bd41310
+bind: free -> shim 0x3bd41300
+bind: realloc -> shim 0x3bd41100
 ELF: unresolved: __strncat_chk
-bind: calloc -> shim 0x235c28190
+bind: calloc -> shim 0x3bd41190
 JMPREL: all 684 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0xe7000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0xe7000 size=0x4000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0xeb000 size=0xf000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x3a4419000 backing=0x4845bd000 size=0xfa000
+ProcessMap: mapped image base=0x3e33cd000 backing=0x722dbd000 size=0xfa000
 ELF: process-code copy complete
-ELF: 1 constructors deferred (arr=0x3a4502570)
-ELF: loaded OK code_exec=0x3a4419000 data_exec=0x3a4500000 sym_count=2163 unresolved=24
+ELF: 1 constructors deferred (arr=0x3e34b6570)
+ELF: loaded OK code_exec=0x3e33cd000 data_exec=0x3e34b4000 sym_count=2163 unresolved=24
 resources[libCry3DEngine.so]: system=0/0 KiB
 resources[libCry3DEngine.so]: memory=3359888/3363840 KiB
 ELF load: libCryPhysics.so (1065016 bytes)
@@ -612,18 +614,18 @@ ELF: rela 1579 entries
 RELA: all 1579 entries processed
 ELF: rela done
 ELF: jmprel 336 entries
-bind: malloc -> shim 0x235c28310
-bind: free -> shim 0x235c28300
+bind: malloc -> shim 0x3bd41310
+bind: free -> shim 0x3bd41300
 JMPREL: all 336 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x100000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x100000 size=0x4000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x104000 size=0x22b000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x28d982000 backing=0x4846b8000 size=0x32f000
+ProcessMap: mapped image base=0x1d989a000 backing=0x722eb8000 size=0x32f000
 ELF: process-code copy complete
-ELF: 2 constructors deferred (arr=0x28da84c38)
-ELF: loaded OK code_exec=0x28d982000 data_exec=0x28da82000 sym_count=1593 unresolved=24
+ELF: 2 constructors deferred (arr=0x1d999cc38)
+ELF: loaded OK code_exec=0x1d989a000 data_exec=0x1d999a000 sym_count=1593 unresolved=24
 resources[libCryPhysics.so]: system=0/0 KiB
 resources[libCryPhysics.so]: memory=3359888/3363840 KiB
 ELF load: libCrySystem.so (1082552 bytes)
@@ -641,16 +643,16 @@ ELF: dyn: strtab=0x10cb0/92776 symtab=0x2f8 syment=24 rela=0x27718/38064 jmprel=
 ELF: so built sym_count=2834 strsz=92776
 ELF: registered
 ELF: rela 1586 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
-bind: realloc -> shim 0x235c28100
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
+bind: realloc -> shim 0x3bd41100
 RELA: all 1586 entries processed
 ELF: rela done
 ELF: jmprel 699 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
 ELF: unresolved: ldiv
-bind: calloc -> shim 0x235c28190
+bind: calloc -> shim 0x3bd41190
 ELF: unresolved: __strncat_chk
 JMPREL: all 699 entries processed
 ELF: jmprel done
@@ -658,10 +660,10 @@ ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x103000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x103000 size=0x6000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x109000 size=0x9000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0xd10104000 backing=0x484296000 size=0x112000
+ProcessMap: mapped image base=0xf77565000 backing=0x722a96000 size=0x112000
 ELF: process-code copy complete
-ELF: 8 constructors deferred (arr=0xd1020a498)
-ELF: loaded OK code_exec=0xd10104000 data_exec=0xd10207000 sym_count=2834 unresolved=26
+ELF: 8 constructors deferred (arr=0xf7766b498)
+ELF: loaded OK code_exec=0xf77565000 data_exec=0xf77668000 sym_count=2834 unresolved=26
 resources[libCrySystem.so]: system=0/0 KiB
 resources[libCrySystem.so]: memory=3359888/3363840 KiB
 ELF load: libCryGame.so (2333760 bytes)
@@ -682,26 +684,26 @@ ELF: rela 3469 entries
 RELA: all 3469 entries processed
 ELF: rela done
 ELF: jmprel 1624 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
-bind: calloc -> shim 0x235c28190
-bind: realloc -> shim 0x235c28100
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
+bind: calloc -> shim 0x3bd41190
+bind: realloc -> shim 0x3bd41100
 ELF: unresolved: mbstowcs
 ELF: unresolved: __fread_chk
-bind: _ZdlPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf503828
-bind: _Znwm -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf503754
-bind: _Znam -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf5037f0
-bind: _ZdaPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf503840
+bind: _ZdlPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce6828
+bind: _Znwm -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce6754
+bind: _Znam -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce67f0
+bind: _ZdaPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce6840
 JMPREL: all 1624 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x22f000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x22f000 size=0xc000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x23b000 size=0x97000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x285797000 backing=0x484f50000 size=0x2d2000
+ProcessMap: mapped image base=0xbcf392000 backing=0x723750000 size=0x2d2000
 ELF: process-code copy complete
-ELF: 32 constructors deferred (arr=0x2859cb960)
-ELF: loaded OK code_exec=0x285797000 data_exec=0x2859c6000 sym_count=5967 unresolved=28
+ELF: 32 constructors deferred (arr=0xbcf5c6960)
+ELF: loaded OK code_exec=0xbcf392000 data_exec=0xbcf5c1000 sym_count=5967 unresolved=28
 resources[libCryGame.so]: system=0/0 KiB
 resources[libCryGame.so]: memory=3359888/3363840 KiB
 ELF load: libXRenderOGL.so (2409464 bytes)
@@ -722,14 +724,14 @@ ELF: rela 6331 entries
 RELA: all 6331 entries processed
 ELF: rela done
 ELF: jmprel 1012 entries
-bind: free -> shim 0x235c28300
-bind: realloc -> shim 0x235c28100
-bind: malloc -> shim 0x235c28310
-bind: calloc -> shim 0x235c28190
-bind: _Znam -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf5037f0
-bind: _ZdlPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf503828
-bind: _ZdaPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf503840
-bind: _Znwm -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcdf503754
+bind: free -> shim 0x3bd41300
+bind: realloc -> shim 0x3bd41100
+bind: malloc -> shim 0x3bd41310
+bind: calloc -> shim 0x3bd41190
+bind: _Znam -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce67f0
+bind: _ZdlPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce6828
+bind: _ZdaPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce6840
+bind: _Znwm -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0xcf6ce6754
 ELF: unresolved: __strncat_chk
 JMPREL: all 1012 entries processed
 ELF: jmprel done
@@ -737,10 +739,10 @@ ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x23a000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x23a000 size=0xf000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0x249000 size=0xf2000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x3437d6000 backing=0x48546f000 size=0x33b000
+ProcessMap: mapped image base=0x42b4f3000 backing=0x723c6f000 size=0x33b000
 ELF: process-code copy complete
-ELF: 19 constructors deferred (arr=0x343a170d0)
-ELF: loaded OK code_exec=0x3437d6000 data_exec=0x343a10000 sym_count=7243 unresolved=29
+ELF: 19 constructors deferred (arr=0x42b7340d0)
+ELF: loaded OK code_exec=0x42b4f3000 data_exec=0x42b72d000 sym_count=7243 unresolved=29
 resources[libXRenderOGL.so]: system=0/0 KiB
 resources[libXRenderOGL.so]: memory=3359888/3363840 KiB
 ELF load: libFarCry.so (36256 bytes)
@@ -761,27 +763,27 @@ ELF: rela 25 entries
 RELA: all 25 entries processed
 ELF: rela done
 ELF: jmprel 46 entries
-bind: free -> shim 0x235c28300
-bind: malloc -> shim 0x235c28310
+bind: free -> shim 0x3bd41300
+bind: malloc -> shim 0x3bd41310
 JMPREL: all 46 entries processed
 ELF: jmprel done
 ELF: strtab/symtab copied
 ProcessMap: PT_LOAD[1] rel=0x0 size=0x9000 flags=0x5 perm=Rx rc=0x00000000
 ProcessMap: PT_LOAD[2] rel=0x9000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
 ProcessMap: PT_LOAD[3] rel=0xa000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
-ProcessMap: mapped image base=0x9c8cdd000 backing=0x4839a3000 size=0xb000
+ProcessMap: mapped image base=0x688cb2000 backing=0x7221a3000 size=0xb000
 ELF: process-code copy complete
-ELF: loaded OK code_exec=0x9c8cdd000 data_exec=0x9c8ce6000 sym_count=71 unresolved=29
+ELF: loaded OK code_exec=0x688cb2000 data_exec=0x688cbb000 sym_count=71 unresolved=29
 resources[libFarCry.so]: system=0/0 KiB
 resources[libFarCry.so]: memory=3359888/3363840 KiB
 Loaded Android ARM64 libraries. unresolved=29
 ELF ctors: libc++_shared.so
 ELF: libc++_shared.so: running 2 constructors
-ELF: init_arr[0]=0xcdf4d2ab0
-ELF: init_arr[1]=0xcdf52bc64
-ELF: ctor[1/2] @0xcdf4d2ab0
+ELF: init_arr[0]=0xcf6cb5ab0
+ELF: init_arr[1]=0xcf6d0ec64
+ELF: ctor[1/2] @0xcf6cb5ab0
 ELF: ctor[1/2] OK
-ELF: ctor[2/2] @0xcdf52bc64
+ELF: ctor[2/2] @0xcf6d0ec64
 ELF: ctor[2/2] OK
 ELF: libc++_shared.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libc++_shared.so: ctors done ok=2 failed=0 skipped=0
@@ -791,41 +793,41 @@ ELF ctors: libvorbisenc.so
 ELF ctors: libvorbisfile.so
 ELF ctors: libopenal.so
 ELF: libopenal.so: running 11 constructors
-ELF: init_arr[0]=0x168eec55c
-ELF: init_arr[1]=0x168f12e40
-ELF: init_arr[2]=0x168f1829c
-ELF: init_arr[3]=0x168f1c56c
-ELF: ctor[1/11] @0x168eec55c
+ELF: init_arr[0]=0xcf82ce55c
+ELF: init_arr[1]=0xcf82f4e40
+ELF: init_arr[2]=0xcf82fa29c
+ELF: init_arr[3]=0xcf82fe56c
+ELF: ctor[1/11] @0xcf82ce55c
 ELF: ctor[1/11] OK
-ELF: ctor[2/11] @0x168f12e40
+ELF: ctor[2/11] @0xcf82f4e40
 ELF: ctor[2/11] OK
-ELF: ctor[3/11] @0x168f1829c
+ELF: ctor[3/11] @0xcf82fa29c
 ELF: ctor[3/11] OK
-ELF: ctor[4/11] @0x168f1c56c
+ELF: ctor[4/11] @0xcf82fe56c
 ELF: ctor[4/11] OK
-ELF: ctor[5/11] @0x168f2475c
+ELF: ctor[5/11] @0xcf830675c
 ELF: ctor[5/11] OK
-ELF: ctor[6/11] @0x168f25a90
+ELF: ctor[6/11] @0xcf8307a90
 ELF: ctor[6/11] OK
-ELF: ctor[7/11] @0x168f374c8
+ELF: ctor[7/11] @0xcf83194c8
 ELF: ctor[7/11] OK
-ELF: ctor[8/11] @0x168f39308
+ELF: ctor[8/11] @0xcf831b308
 ELF: ctor[8/11] OK
-ELF: ctor[9/11] @0x168f46e60
+ELF: ctor[9/11] @0xcf8328e60
 ELF: ctor[9/11] OK
-ELF: ctor[10/11] @0x168f4e668
+ELF: ctor[10/11] @0xcf8330668
 ELF: ctor[10/11] OK
-ELF: ctor[11/11] @0x168f8dff4
+ELF: ctor[11/11] @0xcf836fff4
 ELF: ctor[11/11] OK
 ELF: libopenal.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libopenal.so: ctors done ok=11 failed=0 skipped=0
 ELF ctors: libSDL3.so
 ELF: libSDL3.so: running 2 constructors
-ELF: init_arr[0]=0x2e89950b0
-ELF: init_arr[1]=0x2e89fda94
-ELF: ctor[1/2] @0x2e89950b0
+ELF: init_arr[0]=0xe945000b0
+ELF: init_arr[1]=0xe94568a94
+ELF: ctor[1/2] @0xe945000b0
 ELF: ctor[1/2] OK
-ELF: ctor[2/2] @0x2e89fda94
+ELF: ctor[2/2] @0xe94568a94
 ELF: ctor[2/2] OK
 ELF: libSDL3.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libSDL3.so: ctors done ok=2 failed=0 skipped=0
@@ -835,24 +837,24 @@ ELF ctors: libCryEntitySystem.so
 ELF ctors: libCryNetwork.so
 ELF ctors: libCrySoundSystem.so
 ELF: libCrySoundSystem.so: running 1 constructors
-ELF: init_arr[0]=0xad58910f0
-ELF: ctor[1/1] @0xad58910f0
+ELF: init_arr[0]=0x51b12b0f0
+ELF: ctor[1/1] @0x51b12b0f0
 ELF: ctor[1/1] OK
 ELF: libCrySoundSystem.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libCrySoundSystem.so: ctors done ok=1 failed=0 skipped=0
 ELF ctors: libCryMovie.so
 ELF: libCryMovie.so: running 4 constructors
-ELF: init_arr[0]=0xeda3865b0
-ELF: init_arr[1]=0xeda39e7e4
-ELF: init_arr[2]=0xeda3a5984
-ELF: init_arr[3]=0xeda3ad478
-ELF: ctor[1/4] @0xeda3865b0
+ELF: init_arr[0]=0x3aad515b0
+ELF: init_arr[1]=0x3aad697e4
+ELF: init_arr[2]=0x3aad70984
+ELF: init_arr[3]=0x3aad78478
+ELF: ctor[1/4] @0x3aad515b0
 ELF: ctor[1/4] OK
-ELF: ctor[2/4] @0xeda39e7e4
+ELF: ctor[2/4] @0x3aad697e4
 ELF: ctor[2/4] OK
-ELF: ctor[3/4] @0xeda3a5984
+ELF: ctor[3/4] @0x3aad70984
 ELF: ctor[3/4] OK
-ELF: ctor[4/4] @0xeda3ad478
+ELF: ctor[4/4] @0x3aad78478
 ELF: ctor[4/4] OK
 ELF: libCryMovie.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libCryMovie.so: ctors done ok=4 failed=0 skipped=0
@@ -860,173 +862,173 @@ ELF ctors: libCryAISystem.so
 ELF ctors: libCryFont.so
 ELF ctors: libCryAnimation.so
 ELF: libCryAnimation.so: running 3 constructors
-ELF: init_arr[0]=0x310536564
-ELF: init_arr[1]=0x310545298
-ELF: init_arr[2]=0x31056498c
-ELF: ctor[1/3] @0x310536564
+ELF: init_arr[0]=0xfcc06a564
+ELF: init_arr[1]=0xfcc079298
+ELF: init_arr[2]=0xfcc09898c
+ELF: ctor[1/3] @0xfcc06a564
 ELF: ctor[1/3] OK
-ELF: ctor[2/3] @0x310545298
+ELF: ctor[2/3] @0xfcc079298
 ELF: ctor[2/3] OK
-ELF: ctor[3/3] @0x31056498c
+ELF: ctor[3/3] @0xfcc09898c
 ELF: ctor[3/3] OK
 ELF: libCryAnimation.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libCryAnimation.so: ctors done ok=3 failed=0 skipped=0
 ELF ctors: libCry3DEngine.so
 ELF: libCry3DEngine.so: running 1 constructors
-ELF: init_arr[0]=0x3a4480dfc
-ELF: ctor[1/1] @0x3a4480dfc
+ELF: init_arr[0]=0x3e3434dfc
+ELF: ctor[1/1] @0x3e3434dfc
 ELF: ctor[1/1] OK
 ELF: libCry3DEngine.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libCry3DEngine.so: ctors done ok=1 failed=0 skipped=0
 ELF ctors: libCryPhysics.so
 ELF: libCryPhysics.so: running 2 constructors
-ELF: init_arr[0]=0x28da1e078
-ELF: init_arr[1]=0x28da73bbc
-ELF: ctor[1/2] @0x28da1e078
+ELF: init_arr[0]=0x1d9936078
+ELF: init_arr[1]=0x1d998bbbc
+ELF: ctor[1/2] @0x1d9936078
 ELF: ctor[1/2] OK
-ELF: ctor[2/2] @0x28da73bbc
+ELF: ctor[2/2] @0x1d998bbbc
 ELF: ctor[2/2] OK
 ELF: libCryPhysics.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libCryPhysics.so: ctors done ok=2 failed=0 skipped=0
 ELF ctors: libCrySystem.so
 ELF: libCrySystem.so: running 8 constructors
-ELF: init_arr[0]=0xd101869b4
-ELF: init_arr[1]=0xd1019e5b4
-ELF: init_arr[2]=0xd1019f05c
-ELF: init_arr[3]=0xd101a20ac
-ELF: ctor[1/8] @0xd101869b4
+ELF: init_arr[0]=0xf775e79b4
+ELF: init_arr[1]=0xf775ff5b4
+ELF: init_arr[2]=0xf7760005c
+ELF: init_arr[3]=0xf776030ac
+ELF: ctor[1/8] @0xf775e79b4
 ELF: ctor[1/8] OK
-ELF: ctor[2/8] @0xd1019e5b4
+ELF: ctor[2/8] @0xf775ff5b4
 ELF: ctor[2/8] OK
-ELF: ctor[3/8] @0xd1019f05c
+ELF: ctor[3/8] @0xf7760005c
 ELF: ctor[3/8] OK
-ELF: ctor[4/8] @0xd101a20ac
+ELF: ctor[4/8] @0xf776030ac
 ELF: ctor[4/8] OK
-ELF: ctor[5/8] @0xd101a3658
+ELF: ctor[5/8] @0xf77604658
 ELF: ctor[5/8] OK
-ELF: ctor[6/8] @0xd101a7fcc
+ELF: ctor[6/8] @0xf77608fcc
 ELF: ctor[6/8] OK
-ELF: ctor[7/8] @0xd101b3c7c
+ELF: ctor[7/8] @0xf77614c7c
 ELF: ctor[7/8] OK
-ELF: ctor[8/8] @0xd101e4d0c
+ELF: ctor[8/8] @0xf77645d0c
 ELF: ctor[8/8] OK
 ELF: libCrySystem.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libCrySystem.so: ctors done ok=8 failed=0 skipped=0
 ELF ctors: libCryGame.so
 ELF: libCryGame.so: running 32 constructors
-ELF: init_arr[0]=0x28589b05c
-ELF: init_arr[1]=0x2858a10b0
-ELF: init_arr[2]=0x2858a3230
-ELF: init_arr[3]=0x2858a57dc
-ELF: ctor[1/32] @0x28589b05c
+ELF: init_arr[0]=0xbcf49605c
+ELF: init_arr[1]=0xbcf49c0b0
+ELF: init_arr[2]=0xbcf49e230
+ELF: init_arr[3]=0xbcf4a07dc
+ELF: ctor[1/32] @0xbcf49605c
 ELF: ctor[1/32] OK
-ELF: ctor[2/32] @0x2858a10b0
+ELF: ctor[2/32] @0xbcf49c0b0
 ELF: ctor[2/32] OK
-ELF: ctor[3/32] @0x2858a3230
+ELF: ctor[3/32] @0xbcf49e230
 ELF: ctor[3/32] OK
-ELF: ctor[4/32] @0x2858a57dc
+ELF: ctor[4/32] @0xbcf4a07dc
 ELF: ctor[4/32] OK
-ELF: ctor[5/32] @0x2858b8d40
+ELF: ctor[5/32] @0xbcf4b3d40
 ELF: ctor[5/32] OK
-ELF: ctor[6/32] @0x2858bb044
+ELF: ctor[6/32] @0xbcf4b6044
 ELF: ctor[6/32] OK
-ELF: ctor[7/32] @0x2858bbc08
+ELF: ctor[7/32] @0xbcf4b6c08
 ELF: ctor[7/32] OK
-ELF: ctor[8/32] @0x2858c7f14
+ELF: ctor[8/32] @0xbcf4c2f14
 ELF: ctor[8/32] OK
-ELF: ctor[9/32] @0x2858c92a0
+ELF: ctor[9/32] @0xbcf4c42a0
 ELF: ctor[9/32] OK
-ELF: ctor[10/32] @0x2858ccc44
+ELF: ctor[10/32] @0xbcf4c7c44
 ELF: ctor[10/32] OK
-ELF: ctor[11/32] @0x2858ce024
+ELF: ctor[11/32] @0xbcf4c9024
 ELF: ctor[11/32] OK
-ELF: ctor[12/32] @0x2858ce6cc
+ELF: ctor[12/32] @0xbcf4c96cc
 ELF: ctor[12/32] OK
-ELF: ctor[13/32] @0x2858cfd04
+ELF: ctor[13/32] @0xbcf4cad04
 ELF: ctor[13/32] OK
-ELF: ctor[14/32] @0x2858d0a8c
+ELF: ctor[14/32] @0xbcf4cba8c
 ELF: ctor[14/32] OK
-ELF: ctor[15/32] @0x2858df5ec
+ELF: ctor[15/32] @0xbcf4da5ec
 ELF: ctor[15/32] OK
-ELF: ctor[16/32] @0x2858e2f7c
+ELF: ctor[16/32] @0xbcf4ddf7c
 ELF: ctor[16/32] OK
-ELF: ctor[17/32] @0x2858e89a8
+ELF: ctor[17/32] @0xbcf4e39a8
 ELF: ctor[17/32] OK
-ELF: ctor[18/32] @0x2858f547c
+ELF: ctor[18/32] @0xbcf4f047c
 ELF: ctor[18/32] OK
-ELF: ctor[19/32] @0x2858f6f9c
+ELF: ctor[19/32] @0xbcf4f1f9c
 ELF: ctor[19/32] OK
-ELF: ctor[20/32] @0x2858ffcc0
+ELF: ctor[20/32] @0xbcf4facc0
 ELF: ctor[20/32] OK
-ELF: ctor[21/32] @0x285905c48
+ELF: ctor[21/32] @0xbcf500c48
 ELF: ctor[21/32] OK
-ELF: ctor[22/32] @0x2859158a8
+ELF: ctor[22/32] @0xbcf5108a8
 ELF: ctor[22/32] OK
-ELF: ctor[23/32] @0x285917800
+ELF: ctor[23/32] @0xbcf512800
 ELF: ctor[23/32] OK
-ELF: ctor[24/32] @0x28591cd2c
+ELF: ctor[24/32] @0xbcf517d2c
 ELF: ctor[24/32] OK
-ELF: ctor[25/32] @0x285922d80
+ELF: ctor[25/32] @0xbcf51dd80
 ELF: ctor[25/32] OK
-ELF: ctor[26/32] @0x2859365e8
+ELF: ctor[26/32] @0xbcf5315e8
 ELF: ctor[26/32] OK
-ELF: ctor[27/32] @0x2859a84a0
+ELF: ctor[27/32] @0xbcf5a34a0
 ELF: ctor[27/32] OK
-ELF: ctor[28/32] @0x2859adff0
+ELF: ctor[28/32] @0xbcf5a8ff0
 ELF: ctor[28/32] OK
-ELF: ctor[29/32] @0x2859aecc8
+ELF: ctor[29/32] @0xbcf5a9cc8
 ELF: ctor[29/32] OK
-ELF: ctor[30/32] @0x2859afc24
+ELF: ctor[30/32] @0xbcf5aac24
 ELF: ctor[30/32] OK
-ELF: ctor[31/32] @0x2859b1fc0
+ELF: ctor[31/32] @0xbcf5acfc0
 ELF: ctor[31/32] OK
-ELF: ctor[32/32] @0x2859b83ac
+ELF: ctor[32/32] @0xbcf5b33ac
 ELF: ctor[32/32] OK
 ELF: libCryGame.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libCryGame.so: ctors done ok=32 failed=0 skipped=0
 ELF ctors: libXRenderOGL.so
 ELF: libXRenderOGL.so: running 19 constructors
-ELF: init_arr[0]=0x3438b6998
-ELF: init_arr[1]=0x3438bbc64
-ELF: init_arr[2]=0x3438bc654
-ELF: init_arr[3]=0x3438c7658
-ELF: ctor[1/19] @0x3438b6998
+ELF: init_arr[0]=0x42b5d3998
+ELF: init_arr[1]=0x42b5d8c64
+ELF: init_arr[2]=0x42b5d9654
+ELF: init_arr[3]=0x42b5e4658
+ELF: ctor[1/19] @0x42b5d3998
 ELF: ctor[1/19] OK
-ELF: ctor[2/19] @0x3438bbc64
+ELF: ctor[2/19] @0x42b5d8c64
 ELF: ctor[2/19] OK
-ELF: ctor[3/19] @0x3438bc654
+ELF: ctor[3/19] @0x42b5d9654
 ELF: ctor[3/19] OK
-ELF: ctor[4/19] @0x3438c7658
+ELF: ctor[4/19] @0x42b5e4658
 ELF: ctor[4/19] OK
-ELF: ctor[5/19] @0x3438c7e88
+ELF: ctor[5/19] @0x42b5e4e88
 ELF: ctor[5/19] OK
-ELF: ctor[6/19] @0x3438da080
+ELF: ctor[6/19] @0x42b5f7080
 ELF: ctor[6/19] OK
-ELF: ctor[7/19] @0x3438ed2e4
+ELF: ctor[7/19] @0x42b60a2e4
 ELF: ctor[7/19] OK
-ELF: ctor[8/19] @0x3438f167c
+ELF: ctor[8/19] @0x42b60e67c
 ELF: ctor[8/19] OK
-ELF: ctor[9/19] @0x3438f6d4c
+ELF: ctor[9/19] @0x42b613d4c
 ELF: ctor[9/19] OK
-ELF: ctor[10/19] @0x343905350
+ELF: ctor[10/19] @0x42b622350
 ELF: ctor[10/19] OK
-ELF: ctor[11/19] @0x343910584
+ELF: ctor[11/19] @0x42b62d584
 ELF: ctor[11/19] OK
-ELF: ctor[12/19] @0x343918f84
+ELF: ctor[12/19] @0x42b635f84
 ELF: ctor[12/19] OK
-ELF: ctor[13/19] @0x343937150
+ELF: ctor[13/19] @0x42b654150
 ELF: ctor[13/19] OK
-ELF: ctor[14/19] @0x343943810
+ELF: ctor[14/19] @0x42b660810
 ELF: ctor[14/19] OK
-ELF: ctor[15/19] @0x3439514a8
+ELF: ctor[15/19] @0x42b66e4a8
 ELF: ctor[15/19] OK
-ELF: ctor[16/19] @0x34395afb0
+ELF: ctor[16/19] @0x42b677fb0
 ELF: ctor[16/19] OK
-ELF: ctor[17/19] @0x3439cd524
+ELF: ctor[17/19] @0x42b6ea524
 ELF: ctor[17/19] OK
-ELF: ctor[18/19] @0x3439e01ec
+ELF: ctor[18/19] @0x42b6fd1ec
 ELF: ctor[18/19] OK
-ELF: ctor[19/19] @0x3439eaa6c
+ELF: ctor[19/19] @0x42b707a6c
 ELF: ctor[19/19] OK
 ELF: libXRenderOGL.so: heap walk covered 271 chunks, stopped: reached the break (no corruption seen)
 ELF: libXRenderOGL.so: ctors done ok=19 failed=0 skipped=0
@@ -1105,12 +1107,12 @@ JNI RegisterNative: HIDDeviceOpenResult
 JNI RegisterNative: HIDDeviceDisconnected
 JNI RegisterNative: HIDDeviceInputReport
 JNI RegisterNative: HIDDeviceReportResponse
-SDL: JNI_OnLoad(vm=0x2371ecb28) -> 0x10004
+SDL: JNI_OnLoad(vm=0x3d305b28) -> 0x10004
 [SDL] nativeSetupJNI()
-pthread_once: calling fn @0x2e898f5bc
-pthread_key_create → key=0 dtor=0x2e898f604
+pthread_once: calling fn @0xe944fa5bc
+pthread_key_create → key=0 dtor=0xe944fa604
 pthread_once: fn returned
-pthread_setspecific(key=0, val=0x2371ecb20)
+pthread_setspecific(key=0, val=0x3d305b20)
 JNI GetStaticMethodID: getContext ()Landroid/app/Activity;
 JNI GetStaticMethodID: getDeviceFormFactor ()Ljava/lang/String;
 JNI GetStaticMethodID: getManifestEnvironmentVariables ()Z
@@ -1157,10 +1159,10 @@ JNI GetStaticMethodID: hapticRun (IFI)V
 JNI GetStaticMethodID: hapticRumble (IFFI)V
 JNI GetStaticMethodID: hapticStop (I)V
 SDL: SDLControllerManager.nativeSetupJNI() called
-pthread_setspecific(key=0, val=0x2371ecb20)
+pthread_setspecific(key=0, val=0x3d305b20)
 SDL: SDLActivity.nativeInitMainThread() called
 SDL: Android JNI bootstrap complete for direct guest SDL_main
-Starting Far Cry: 0x9c8ce0354 argc=7
+Starting Far Cry: 0x688cb5354 argc=7
 remove BLOCKED: protected config system.cfg
 remove BLOCKED: protected config System.cfg
 remove BLOCKED: protected config SYSTEM.CFG
@@ -1170,29 +1172,29 @@ JNI CallObjectMethodV
 pthread_getspecific(key=1) → scratch buf (first use)
 JNI CallStaticVoidMethodV: setBackButtonTrapEnabled (Z)V
 JNI CallStaticVoidMethodV: initTouch ()V
-realloc: unowned ptr 0x2372076d0 — returning fresh block
-pthread_setspecific(key=1, val=0x483cca000)
+realloc: unowned ptr 0x3d3206d0 — returning fresh block
+pthread_setspecific(key=1, val=0x7224ca000)
 JNI CallStaticBooleanMethodV: sendMessage → false
-dlopen: libCrySystem.so already loaded → 0x4843a8040
-dlopen: libCryScriptSystem.so already loaded → 0x483875040
+dlopen: libCrySystem.so already loaded → 0x722ba8040
+dlopen: libCryScriptSystem.so already loaded → 0x722075040
 remove BLOCKED: protected config system.cfg
 remove BLOCKED: protected config System.cfg
 remove BLOCKED: protected config SYSTEM.CFG
-dlopen: libCryNetwork.so already loaded → 0x4837e9040
+dlopen: libCryNetwork.so already loaded → 0x721fe9040
 net: gethostbyname(switch) → offline
-dlopen: libCryPhysics.so already loaded → 0x4834fcb40
-dlopen: libCryMovie.so already loaded → 0x483cb1040
-dlopen: libXRenderOGL.so already loaded → 0x4834fce00
+dlopen: libCryPhysics.so already loaded → 0x721cfcb40
+dlopen: libCryMovie.so already loaded → 0x7224b1040
+dlopen: libXRenderOGL.so already loaded → 0x721cfce00
 dlopen: libGLESv2.so -> Mesa host shim handle
 dlopen: libEGL.so -> Mesa host shim handle
 JNI CallStaticVoidMethodV: setOrientation (IIZLjava/lang/String;)V
-EGL: eglCreateWindowSurface(win=0x2371e38b8 -> 0x2372421c8) -> 0x483580e60 (err=0x3000)
+EGL: eglCreateWindowSurface(win=0x3d2fc8b8 -> 0x3d35b1c8) -> 0x721d81b40 (err=0x3000)
 JNI CallStaticVoidMethodV: setWindowStyle (Z)V
-SDL: SDL_CreateWindow(- Far Cry - Sep 19 2026 (21:17:25),1024,768,0x2) -> 0x483580910 err=
-EGL: eglCreateContext(share=0x0) -> 0x483581370 (err=0x3000)
-EGL: eglMakeCurrent(draw=0x483580e60 ctx=0x483581370) -> 1 (err=0x3000)
-SDL: SDL_GL_CreateContext(0x483580910) -> 0x483581370 err=
-SDL: SDL_GL_MakeCurrent(0x483580910,0x483581370) -> 1 err=
+SDL: SDL_CreateWindow(- Far Cry - Sep 19 2026 (21:17:25),1024,768,0x2) -> 0x721d815d0 err=
+EGL: eglCreateContext(share=0x0) -> 0x721d81900 (err=0x3000)
+EGL: eglMakeCurrent(draw=0x721d81b40 ctx=0x721d81900) -> 1 (err=0x3000)
+SDL: SDL_GL_CreateContext(0x721d815d0) -> 0x721d81900 err=
+SDL: SDL_GL_MakeCurrent(0x721d815d0,0x721d81900) -> 1 err=
 dlopen: libGL.so -> Mesa host shim handle
 dlopen: loading libGL.so.1 on demand from /switch/NearChuckle_nx/game/lib/libGL.so.1
 ELF: loading /switch/NearChuckle_nx/game/lib/libGL.so.1
@@ -3571,13 +3573,13 @@ fopen FAIL: Shaders/templheatvis_sources.ext (mode=rb)
 fopen FAIL: Shaders/templinvlight.ext (mode=rb)
 fopen FAIL: Shaders/templdof.ext (mode=rb)
 [CryEngine] Error: CCGVProgram_GL::mfAddNewScript: Couldn't find CG script for name 'CommonSubroutines'
-UNRECOVERED FAULT desc=0x100 esr=0x82000004 pc=0xbad0bad0bad00000 far=0xbad0bad0bad00000 lr=0x34394e0fc sp=0x647b96b0 fp=0x647b9ed0 x0=0x647b98c0 x1=0x343857a95 x2=0x100 x3=0x100
-UNRECOVERED FAULT x4=0x0 x5=0x483d0f6d7 x6=0xed x7=0x1 x8=0x483d0f3a0 x9=0x2371e3ef0 x10=0xa x11=0x1 x12=0x343869706 x13=0x647b9610 x14=0x0 x15=0x0
-UNRECOVERED FAULT at host+0xbad0bace8518a000
+UNRECOVERED FAULT desc=0x100 esr=0x82000004 pc=0xbad0bad0bad00000 far=0xbad0bad0bad00000 lr=0x42b66b0fc sp=0x696a16b0 fp=0x696a1ed0 x0=0x696a18c0 x1=0x42b574a95 x2=0x100 x3=0x100
+UNRECOVERED FAULT x4=0x0 x5=0x72250f737 x6=0xed x7=0x1 x8=0x72250f400 x9=0x3d2fcef0 x10=0xa x11=0x1 x12=0x42b586706 x13=0x696a1610 x14=0x0 x15=0x0
+UNRECOVERED FAULT at host+0xbad0bad07f071000
 UNRECOVERED FAULT lr in /switch/NearChuckle_nx/game/lib/libXRenderOGL.so +0x1780fc sym=_ZN13CCGPShader_GL10mfActivateEv+0x224
 UNRECOVERED FAULT LR insns -40=b0000648 -3c=910843e0 -38=52802002 -34=52802003 -30=52801004 -2c=f941a908 -28=f9400108 -24=91405d08
 UNRECOVERED FAULT LR insns -20=9108e101 -1c=9402f808 -18=b0fff841 -14=910843e0 -10=912a5421 -0c=52802002 -08=52802003 -04=94030016
-UNRECOVERED FAULT callee-saved x19=0x488b14940 x20=0x483cf83a0 x21=0x2371e3af0 x22=0x1 x23=0x0
-UNRECOVERED FAULT callee-saved x24=0x483d0eb20 x25=0x343ae6490 x26=0x343ae4eb8 x27=0x0 x28=0x343a8e690
+UNRECOVERED FAULT callee-saved x19=0x727312ae0 x20=0x7224f8400 x21=0x3d2fcaf0 x22=0x1 x23=0x0
+UNRECOVERED FAULT callee-saved x24=0x72250eb80 x25=0x42b803490 x26=0x42b801eb8 x27=0x0 x28=0x42b7ab690
 UNRECOVERED FAULT pc 0xbad0bad0bad00000: region=0x1000000000 size=0xfffffff000000000 type=0x10 perm=---
 UNRECOVERED FAULT far 0xbad0bad0bad00000: region=0x1000000000 size=0xfffffff000000000 type=0x10 perm=---
