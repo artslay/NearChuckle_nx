@@ -30,6 +30,45 @@ static bool is_so_name(const char* name) {
     return len > 3 && !std::strcmp(name + len - 3, ".so");
 }
 
+// These are Android-side helpers from the original application package.
+// They are not part of the Switch runtime: Mesa provides the native GL/Vulkan
+// stack, while VNX provides the Android compatibility layer and file handling.
+static bool skip_android_helper(const char* name) {
+    if (!name) return false;
+
+    static const char* const skip[] = {
+        "libdriverloader.so",
+        "libGL.so",
+        "libXRenderNULL.so",
+        "libfile_redirect_hook.so",
+        "libmain_hook.so",
+        "libgsl_alloc_hook.so",
+        "libhook_impl.so",
+        nullptr
+    };
+
+    for (size_t i = 0; skip[i]; ++i) {
+        if (!std::strcmp(name, skip[i]))
+            return true;
+    }
+    return false;
+}
+
+static int library_priority(const std::string& name) {
+    // Load the guest C++ ABI and low-level runtime libraries before the CryEngine
+    // libraries that import their symbols.
+    if (name == "libc++_shared.so") return 0;
+    if (name == "libogg.so")        return 10;
+    if (name == "libvorbis.so")     return 11;
+    if (name == "libvorbisenc.so")  return 12;
+    if (name == "libvorbisfile.so") return 13;
+    if (name == "libopenal.so")     return 20;
+    if (name == "libSDL3.so")       return 21;
+    if (name == "libXRenderOGL.so") return 90;
+    if (name == "libFarCry.so")     return 100;
+    return 50;
+}
+
 static std::vector<SoFile> find_guest_libraries() {
     std::vector<SoFile> result;
 
@@ -42,6 +81,10 @@ static std::vector<SoFile> find_guest_libraries() {
     while (dirent* ent = readdir(dir)) {
         if (!is_so_name(ent->d_name))
             continue;
+        if (skip_android_helper(ent->d_name)) {
+            std::printf("NearChuckle: skip Android helper: %s\n", ent->d_name);
+            continue;
+        }
 
         std::string full = std::string(config.lib_dir) + "/" + ent->d_name;
         struct stat st = {};
@@ -58,8 +101,9 @@ static std::vector<SoFile> find_guest_libraries() {
     closedir(dir);
 
     std::sort(result.begin(), result.end(), [](const SoFile& a, const SoFile& b) {
-        if (a.name == "libFarCry.so") return false;
-        if (b.name == "libFarCry.so") return true;
+        const int pa = library_priority(a.name);
+        const int pb = library_priority(b.name);
+        if (pa != pb) return pa < pb;
         if (a.size != b.size) return a.size < b.size;
         return a.name < b.name;
     });
@@ -86,6 +130,44 @@ static void setup_environment() {
            "+GL_ARB_vertex_program +GL_ARB_fragment_program", 1);
 
     chdir(config.data_root);
+}
+
+static void log_system_resources(const char* stage) {
+    u64 res_total = 0;
+    u64 res_used = 0;
+    u64 mem_total = 0;
+    u64 mem_used = 0;
+
+    const Result r1 = svcGetInfo(&res_total, InfoType_SystemResourceSizeTotal,
+                                 CUR_PROCESS_HANDLE, 0);
+    const Result r2 = svcGetInfo(&res_used, InfoType_SystemResourceSizeUsed,
+                                 CUR_PROCESS_HANDLE, 0);
+    const Result r3 = svcGetInfo(&mem_total, InfoType_TotalMemorySize,
+                                 CUR_PROCESS_HANDLE, 0);
+    const Result r4 = svcGetInfo(&mem_used, InfoType_UsedMemorySize,
+                                 CUR_PROCESS_HANDLE, 0);
+
+    if (R_SUCCEEDED(r1) && R_SUCCEEDED(r2)) {
+        compatLogFmt("resources[%s]: system=%llu/%llu KiB",
+                     stage ? stage : "?",
+                     static_cast<unsigned long long>(res_used / 1024),
+                     static_cast<unsigned long long>(res_total / 1024));
+    } else {
+        compatLogFmt("resources[%s]: system query failed r1=0x%08X r2=0x%08X",
+                     stage ? stage : "?", static_cast<unsigned>(r1),
+                     static_cast<unsigned>(r2));
+    }
+
+    if (R_SUCCEEDED(r3) && R_SUCCEEDED(r4)) {
+        compatLogFmt("resources[%s]: memory=%llu/%llu KiB",
+                     stage ? stage : "?",
+                     static_cast<unsigned long long>(mem_used / 1024),
+                     static_cast<unsigned long long>(mem_total / 1024));
+    } else {
+        compatLogFmt("resources[%s]: memory query failed r3=0x%08X r4=0x%08X",
+                     stage ? stage : "?", static_cast<unsigned>(r3),
+                     static_cast<unsigned>(r4));
+    }
 }
 
 static void setup_android_runtime() {
@@ -193,6 +275,8 @@ int main(int, char**) {
 
     LoadedSo* game_so = nullptr;
 
+    log_system_resources("before ELF load");
+
     for (const SoFile& file : libs) {
         compatLogFmt("ELF load: %s (%llu bytes)",
                      file.name.c_str(),
@@ -201,8 +285,11 @@ int main(int, char**) {
         LoadedSo* so = elfLoad(file.path.c_str(), nullptr);
         if (!so) {
             compatLogFmt("WARN: failed to load %s", file.name.c_str());
+            log_system_resources(file.name.c_str());
             continue;
         }
+
+        log_system_resources(file.name.c_str());
 
         if (file.name == "libFarCry.so")
             game_so = so;
