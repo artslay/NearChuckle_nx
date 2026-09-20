@@ -3137,6 +3137,97 @@ static void shim_glTexImage3DEXT(GLenum target, GLint level, GLenum internalform
     glTexImage3D(target, level, internalformat, width, height, depth, border, format, type, pixels);
 }
 
+// ARB vertex/fragment program entry points used by Far Cry's OpenGL renderer.
+// The active Switch Mesa context reports these extensions, and Mesa's desktop
+// GL library provides the corresponding functions. The Android renderer asks
+// for them through dlsym(libGL), which is handled by fake_dlsym() below.
+static void shim_glBindProgramARB(GLenum target, GLuint program) {
+    glBindProgramARB(target, program);
+}
+static void shim_glDeleteProgramsARB(GLsizei n, const GLuint* programs) {
+    glDeleteProgramsARB(n, programs);
+}
+static void shim_glGenProgramsARB(GLsizei n, GLuint* programs) {
+    glGenProgramsARB(n, programs);
+}
+static GLboolean shim_glIsProgramARB(GLuint program) {
+    return glIsProgramARB(program);
+}
+static void shim_glProgramStringARB(GLenum target, GLenum format,
+                                    GLsizei len, const void* string) {
+    glProgramStringARB(target, format, len, string);
+}
+static void shim_glProgramEnvParameter4fARB(GLenum target, GLuint index,
+                                            GLfloat x, GLfloat y,
+                                            GLfloat z, GLfloat w) {
+    glProgramEnvParameter4fARB(target, index, x, y, z, w);
+}
+static void shim_glProgramEnvParameter4fvARB(GLenum target, GLuint index,
+                                             const GLfloat* params) {
+    glProgramEnvParameter4fvARB(target, index, params);
+}
+static void shim_glProgramEnvParameter4dARB(GLenum target, GLuint index,
+                                            GLdouble x, GLdouble y,
+                                            GLdouble z, GLdouble w) {
+    glProgramEnvParameter4dARB(target, index, x, y, z, w);
+}
+static void shim_glProgramEnvParameter4dvARB(GLenum target, GLuint index,
+                                             const GLdouble* params) {
+    glProgramEnvParameter4dvARB(target, index, params);
+}
+static void shim_glProgramLocalParameter4fARB(GLenum target, GLuint index,
+                                              GLfloat x, GLfloat y,
+                                              GLfloat z, GLfloat w) {
+    glProgramLocalParameter4fARB(target, index, x, y, z, w);
+}
+static void shim_glProgramLocalParameter4fvARB(GLenum target, GLuint index,
+                                               const GLfloat* params) {
+    glProgramLocalParameter4fvARB(target, index, params);
+}
+static void shim_glProgramLocalParameter4dARB(GLenum target, GLuint index,
+                                              GLdouble x, GLdouble y,
+                                              GLdouble z, GLdouble w) {
+    glProgramLocalParameter4dARB(target, index, x, y, z, w);
+}
+static void shim_glProgramLocalParameter4dvARB(GLenum target, GLuint index,
+                                               const GLdouble* params) {
+    glProgramLocalParameter4dvARB(target, index, params);
+}
+static void shim_glGetProgramivARB(GLenum target, GLenum pname, GLint* params) {
+    glGetProgramivARB(target, pname, params);
+}
+static void shim_glGetProgramStringARB(GLenum target, GLenum pname, void* string) {
+    glGetProgramStringARB(target, pname, string);
+}
+static void shim_glGetProgramEnvParameterfvARB(GLenum target, GLuint index,
+                                               GLfloat* params) {
+    glGetProgramEnvParameterfvARB(target, index, params);
+}
+static void shim_glGetProgramEnvParameterdvARB(GLenum target, GLuint index,
+                                               GLdouble* params) {
+    glGetProgramEnvParameterdvARB(target, index, params);
+}
+static void shim_glGetProgramLocalParameterfvARB(GLenum target, GLuint index,
+                                                 GLfloat* params) {
+    glGetProgramLocalParameterfvARB(target, index, params);
+}
+static void shim_glGetProgramLocalParameterdvARB(GLenum target, GLuint index,
+                                                 GLdouble* params) {
+    glGetProgramLocalParameterdvARB(target, index, params);
+}
+static void shim_glVertexAttribPointerARB(GLuint index, GLint size, GLenum type,
+                                          GLboolean normalized, GLsizei stride,
+                                          const void* pointer) {
+    glVertexAttribPointerARB(index, size, type, normalized, stride, pointer);
+}
+static void shim_glEnableVertexAttribArrayARB(GLuint index) {
+    glEnableVertexAttribArrayARB(index);
+}
+static void shim_glDisableVertexAttribArrayARB(GLuint index) {
+    glDisableVertexAttribArrayARB(index);
+}
+
+
 
 // ─── getauxval (Android uses AT_HWCAP for NEON detection) ───────────────────
 static unsigned long stub_getauxval(unsigned long type) {
@@ -4543,6 +4634,28 @@ static const ShimEntry g_shims[] = {
     {"glBindBufferARB", (void*)shim_glBindBufferARB},
     {"glBufferDataARB", (void*)shim_glBufferDataARB},
     {"glBufferSubDataARB", (void*)shim_glBufferSubDataARB},
+    {"glBindProgramARB", (void*)shim_glBindProgramARB},
+    {"glDeleteProgramsARB", (void*)shim_glDeleteProgramsARB},
+    {"glGenProgramsARB", (void*)shim_glGenProgramsARB},
+    {"glGetProgramEnvParameterdvARB", (void*)shim_glGetProgramEnvParameterdvARB},
+    {"glGetProgramEnvParameterfvARB", (void*)shim_glGetProgramEnvParameterfvARB},
+    {"glGetProgramLocalParameterdvARB", (void*)shim_glGetProgramLocalParameterdvARB},
+    {"glGetProgramLocalParameterfvARB", (void*)shim_glGetProgramLocalParameterfvARB},
+    {"glGetProgramStringARB", (void*)shim_glGetProgramStringARB},
+    {"glGetProgramivARB", (void*)shim_glGetProgramivARB},
+    {"glIsProgramARB", (void*)shim_glIsProgramARB},
+    {"glProgramEnvParameter4dARB", (void*)shim_glProgramEnvParameter4dARB},
+    {"glProgramEnvParameter4dvARB", (void*)shim_glProgramEnvParameter4dvARB},
+    {"glProgramEnvParameter4fARB", (void*)shim_glProgramEnvParameter4fARB},
+    {"glProgramEnvParameter4fvARB", (void*)shim_glProgramEnvParameter4fvARB},
+    {"glProgramLocalParameter4dARB", (void*)shim_glProgramLocalParameter4dARB},
+    {"glProgramLocalParameter4dvARB", (void*)shim_glProgramLocalParameter4dvARB},
+    {"glProgramLocalParameter4fARB", (void*)shim_glProgramLocalParameter4fARB},
+    {"glProgramLocalParameter4fvARB", (void*)shim_glProgramLocalParameter4fvARB},
+    {"glProgramStringARB", (void*)shim_glProgramStringARB},
+    {"glVertexAttribPointerARB", (void*)shim_glVertexAttribPointerARB},
+    {"glEnableVertexAttribArrayARB", (void*)shim_glEnableVertexAttribArrayARB},
+    {"glDisableVertexAttribArrayARB", (void*)shim_glDisableVertexAttribArrayARB},
     {"glClearDepth", (void*)glClearDepth},
     {"glClipPlane", (void*)glClipPlane},
     {"glColor3f", (void*)glColor3f},
