@@ -1257,6 +1257,67 @@ static void* w_eglGetProcAddress(const char* name) {
     return nullptr;
 }
 
+// ─── SDL3 graphics-init probes ───────────────────────────────────────────────
+// libXRenderOGL is an Android build of CryEngine and asks the guest SDL3 to
+// create the Android/EGL window and GL context. These wrappers call the real
+// guest SDL3 export, but log the result and SDL_GetError so a failed renderer
+// init cannot masquerade as a later null function-pointer crash in shutdown.
+static LoadedSo* sdl3_loaded() {
+    static LoadedSo* cached = nullptr;
+    if (!cached) cached = elfFindLoaded("libSDL3.so");
+    return cached;
+}
+
+static void* sdl3_sym(const char* name) {
+    LoadedSo* so = sdl3_loaded();
+    return so ? so->findSym(name) : nullptr;
+}
+
+static const char* sdl3_error() {
+    using Fn = const char* (*)();
+    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GetError"));
+    return fn ? fn() : "";
+}
+
+static void* w_SDL_CreateWindow(const char* title, int w, int h, uint32_t flags) {
+    using Fn = void* (*)(const char*, int, int, uint32_t);
+    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_CreateWindow"));
+    if (!fn) {
+        compatLog("SDL: SDL_CreateWindow export not found");
+        return nullptr;
+    }
+    void* win = fn(title, w, h, flags);
+    compatLogFmt("SDL: SDL_CreateWindow(%s,%d,%d,0x%x) -> %p err=%s",
+                 title ? title : "", w, h, flags, win, sdl3_error());
+    return win;
+}
+
+static void* w_SDL_GL_CreateContext(void* window) {
+    using Fn = void* (*)(void*);
+    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GL_CreateContext"));
+    if (!fn) {
+        compatLog("SDL: SDL_GL_CreateContext export not found");
+        return nullptr;
+    }
+    void* ctx = fn(window);
+    compatLogFmt("SDL: SDL_GL_CreateContext(%p) -> %p err=%s",
+                 window, ctx, sdl3_error());
+    return ctx;
+}
+
+static int w_SDL_GL_MakeCurrent(void* window, void* context) {
+    using Fn = bool (*)(void*, void*);
+    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GL_MakeCurrent"));
+    if (!fn) {
+        compatLog("SDL: SDL_GL_MakeCurrent export not found");
+        return 0;
+    }
+    bool ok = fn(window, context);
+    compatLogFmt("SDL: SDL_GL_MakeCurrent(%p,%p) -> %d err=%s",
+                 window, context, ok ? 1 : 0, sdl3_error());
+    return ok ? 1 : 0;
+}
+
 // ─── libandroid shims ────────────────────────────────────────────────────────
 // AAssetManager
 static AAsset* asset_open(AAssetManager* mgr, const char* fn, int) {
@@ -2635,6 +2696,11 @@ static const ShimEntry g_shims[] = {
     {"dlsym",   (void*)fake_dlsym},
     {"dlclose", (void*)fake_dlclose},
     {"dlerror", (void*)fake_dlerror},
+
+    // ── SDL3 graphics-init probes ───────────────────────────────────────────
+    {"SDL_CreateWindow",     (void*)w_SDL_CreateWindow},
+    {"SDL_GL_CreateContext",(void*)w_SDL_GL_CreateContext},
+    {"SDL_GL_MakeCurrent",  (void*)w_SDL_GL_MakeCurrent},
 
     // ── libandroid ───────────────────────────────────────────────────────────
     {"AAssetManager_fromJava",      (void*)assetMgr_fromJava},
