@@ -430,8 +430,17 @@ static jobject dispatchObjectMethod(jobject recv, MethodEntry* e, va_list args) 
     if (!strcmp(m, "getApplicationContext") || !strcmp(m, "getBaseContext"))
         return recv;
     if (!strcmp(m, "getClassLoader"))      return jmake(JCls::Generic);
-    if (!strcmp(m, "getPackageName") || !strcmp(m, "getPackageCodePath"))
+    if (!strcmp(m, "getPackageName"))
         return (jobject)jdup(packageName().c_str());
+
+    // SDL's Android APK enumerator asks Context.getPackageResourcePath().
+    // There is no APK on the Switch install (assets are already extracted), so
+    // return an absolute placeholder path. SDL treats a missing APK as an empty
+    // package tree, but it must not receive an empty/non-absolute string.
+    if (!strcmp(m, "getPackageCodePath") || !strcmp(m, "getPackageResourcePath")) {
+        std::string apk = dataDir() + "/.nearchuckle.apk";
+        return (jobject)jdup(apk.c_str());
+    }
     // getObbDir is its own answer now that expansion files are actually
     // installed somewhere (see compat/obb.h). It used to fall in with the rest
     // and report the data dir, which was harmless only for as long as no OBB
