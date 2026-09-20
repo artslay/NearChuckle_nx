@@ -575,40 +575,62 @@ static void logUnrecoveredFault(ThreadExceptionDump* ctx) {
     snprintf(buf, sizeof(buf), "UNRECOVERED FAULT lr in %s", where);
     compatLogRaw(buf);
 
-    // PC=0 with LR inside a guest function means the fault is almost certainly
-    // an indirect branch through a null function pointer. On AArch64 the normal
-    // call form is BLR Xn, whose encoding is 0xD63F0000 | (n << 5). Decode the
-    // instruction immediately before LR and print both the selected register
-    // and its live value. This turns "EF_PipelineShutdown()+0x2a0, PC=0" into
-    // the exact null callback/dispatch slot the renderer tried to invoke.
+    // PC=0 with LR inside a guest function means an indirect branch reached
+    // a null target. Decode the call instruction immediately before LR, then
+    // dump the nearby instruction window and callee-saved registers. The latter
+    // are where AArch64 normally keeps C++ "this" and long-lived object pointers.
     const uint64_t lr = ctx->lr.x;
-    if (lr >= 4 && (lr & 3) == 0) {
+    if (lr >= 0x40 && (lr & 3) == 0) {
         const uint32_t insn = *(const volatile uint32_t*)(uintptr_t)(lr - 4);
-        const uint32_t op_blr = insn & 0xFFFFFC1Fu;
-        const uint32_t op_br  = insn & 0xFFFFFC1Fu;
-        if (op_blr == 0xD63F0000u || op_br == 0xD61F0000u) {
+        const uint32_t op = insn & 0xFFFFFC1Fu;
+        const bool is_blr = (op == 0xD63F0000u);
+        const bool is_br  = (op == 0xD61F0000u);
+        if (is_blr || is_br) {
             const unsigned rn = (insn >> 5) & 31u;
-            uint64_t target = 0;
-            if (rn < 31) target = ctx->cpu_gprs[rn].x;
-            else         target = ctx->lr.x;
+            uint64_t target = (rn < 31) ? ctx->cpu_gprs[rn].x : ctx->lr.x;
             snprintf(buf, sizeof(buf),
                      "UNRECOVERED FAULT indirect-call: [lr-4]=0x%08x %s x%u=%p",
-                     insn, (op_blr == 0xD63F0000u) ? "BLR" : "BR",
-                     rn, (void*)target);
-            compatLogRaw(buf);
-        } else {
-            // Dump a small window even when LR-4 is not BLR/BR; this catches
-            // veneers, tail calls and unusual hand-written dispatch sequences.
-            const uint32_t i0 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x10);
-            const uint32_t i1 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x0c);
-            const uint32_t i2 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x08);
-            const uint32_t i3 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x04);
-            const uint32_t i4 = *(const volatile uint32_t*)(uintptr_t)(lr + 0x00);
-            snprintf(buf, sizeof(buf),
-                     "UNRECOVERED FAULT LR insns: -10=%08x -0c=%08x -08=%08x -04=%08x +00=%08x",
-                     i0, i1, i2, i3, i4);
+                     insn, is_blr ? "BLR" : "BR", rn, (void*)target);
             compatLogRaw(buf);
         }
+
+        const uint32_t i0 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x40);
+        const uint32_t i1 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x3c);
+        const uint32_t i2 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x38);
+        const uint32_t i3 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x34);
+        const uint32_t i4 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x30);
+        const uint32_t i5 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x2c);
+        const uint32_t i6 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x28);
+        const uint32_t i7 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x24);
+        const uint32_t i8 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x20);
+        const uint32_t i9 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x1c);
+        const uint32_t ia = *(const volatile uint32_t*)(uintptr_t)(lr - 0x18);
+        const uint32_t ib = *(const volatile uint32_t*)(uintptr_t)(lr - 0x14);
+        const uint32_t ic = *(const volatile uint32_t*)(uintptr_t)(lr - 0x10);
+        const uint32_t id = *(const volatile uint32_t*)(uintptr_t)(lr - 0x0c);
+        const uint32_t ie = *(const volatile uint32_t*)(uintptr_t)(lr - 0x08);
+        const uint32_t iff= *(const volatile uint32_t*)(uintptr_t)(lr - 0x04);
+        snprintf(buf, sizeof(buf),
+                 "UNRECOVERED FAULT LR insns -40=%08x -3c=%08x -38=%08x -34=%08x -30=%08x -2c=%08x -28=%08x -24=%08x",
+                 i0,i1,i2,i3,i4,i5,i6,i7);
+        compatLogRaw(buf);
+        snprintf(buf, sizeof(buf),
+                 "UNRECOVERED FAULT LR insns -20=%08x -1c=%08x -18=%08x -14=%08x -10=%08x -0c=%08x -08=%08x -04=%08x",
+                 i8,i9,ia,ib,ic,id,ie,iff);
+        compatLogRaw(buf);
+
+        snprintf(buf, sizeof(buf),
+                 "UNRECOVERED FAULT callee-saved x19=%p x20=%p x21=%p x22=%p x23=%p",
+                 (void*)ctx->cpu_gprs[19].x, (void*)ctx->cpu_gprs[20].x,
+                 (void*)ctx->cpu_gprs[21].x, (void*)ctx->cpu_gprs[22].x,
+                 (void*)ctx->cpu_gprs[23].x);
+        compatLogRaw(buf);
+        snprintf(buf, sizeof(buf),
+                 "UNRECOVERED FAULT callee-saved x24=%p x25=%p x26=%p x27=%p x28=%p",
+                 (void*)ctx->cpu_gprs[24].x, (void*)ctx->cpu_gprs[25].x,
+                 (void*)ctx->cpu_gprs[26].x, (void*)ctx->cpu_gprs[27].x,
+                 (void*)ctx->cpu_gprs[28].x);
+        compatLogRaw(buf);
     }
 
     elfLogAddrInfo("UNRECOVERED FAULT pc", ctx->pc.x);
