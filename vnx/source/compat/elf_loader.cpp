@@ -853,13 +853,9 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
         compatLog("ELF: no PT_LOAD segments");
         return nullptr;
     }
-    // The SplitMap step below assumes exactly one contiguous executable region
-    // followed by exactly one contiguous writable region (a single split point
-    // at the first PF_W segment) — true for every .so this project has loaded
-    // so far, but not guaranteed by the ELF spec in general. Warn rather than
-    // silently mis-map permissions if a future game's linker output ever has
-    // more than one segment of either kind, so a weird crash on a new game
-    // points straight here instead of being a mystery.
+    // Report unusual ELF layouts because permissions are now assigned per
+    // PT_LOAD. Multiple executable/writable segments are valid ELF, but they
+    // deserve a visible log entry when encountered.
     if (exec_seg_count > 1 || writable_seg_count > 1) {
         compatLogFmt("ELF: WARN %d PT_LOAD segments (%d exec, %d writable) — "
                      "single-split-point assumption may mis-map permissions",
@@ -868,13 +864,11 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
 
     size_t alloc_size = (size_t)ALIGN_UP(max_vaddr - min_vaddr, 0x1000);
 
-    // Page-aligned split between code and data segments.
-    // data_off_pg == 0 means no separate data segment (single JIT allocation).
+    // Page-aligned location of the first writable segment, retained for
+    // symbol lookup. The actual mapping remains one contiguous image.
     uint64_t data_off_pg = 0;
     if (data_seg_vaddr != UINT64_MAX && data_seg_vaddr > min_vaddr)
         data_off_pg = ALIGN_DOWN(data_seg_vaddr - min_vaddr, 0x1000);
-    size_t code_jit_size = (data_off_pg > 0) ? (size_t)data_off_pg : alloc_size;
-    size_t data_jit_size = alloc_size - code_jit_size;
 
     // ── Allocate unified process-code image ──────────────────────────────────
     // One persistent heap-backed ELF image is mapped into the process code
@@ -915,8 +909,6 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     }
 
     uint8_t* code_exec = (uint8_t*)va;
-    uint64_t data_off_pg = (data_seg_vaddr != UINT64_MAX && data_seg_vaddr > min_vaddr)
-                         ? ALIGN_DOWN(data_seg_vaddr - min_vaddr, 0x1000) : 0;
     uint8_t* data_exec = data_off_pg ? code_exec + data_off_pg : nullptr;
     uint8_t* code_write = backing;
     // ── Heap staging buffer ───────────────────────────────────────────────────
@@ -956,7 +948,7 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     compatLog("ELF: stage zeroed");
 
     // exec_base: used for GOT entries that reference CODE symbols.
-    // Data symbols are at data_exec+offset (handled after relocations via remapping).
+    // Data symbols are at data_exec+offset within the same process-code mapping.
     uint8_t* stage_base = stage - min_vaddr;
     uint8_t* exec_base  = code_exec - min_vaddr;
 
