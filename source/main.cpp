@@ -111,6 +111,69 @@ static std::vector<SoFile> find_guest_libraries() {
     return result;
 }
 
+static void normalize_engine_data_dirs() {
+    struct Pair {
+        const char* from;
+        const char* to;
+    };
+
+    const Pair root_dirs[] = {
+        {"FCData", "fcdata"},
+        {"Shaders", "shaders"},
+    };
+
+    for (const Pair& p : root_dirs) {
+        const std::string from = std::string(config.data_root) + "/" + p.from;
+        const std::string to = std::string(config.data_root) + "/" + p.to;
+
+        struct stat st_from = {};
+        struct stat st_to = {};
+        const bool has_from = (stat(from.c_str(), &st_from) == 0) && S_ISDIR(st_from.st_mode);
+        const bool has_to = (stat(to.c_str(), &st_to) == 0) && S_ISDIR(st_to);
+
+        if (has_from && !has_to) {
+            if (rename(from.c_str(), to.c_str()) == 0) {
+                compatLogFmt("data casefix: %s -> %s", from.c_str(), to.c_str());
+            } else {
+                compatLogFmt("data casefix FAILED: %s -> %s errno=%d",
+                             from.c_str(), to.c_str(), errno);
+            }
+        } else {
+            compatLogFmt("data dir: %s=%s %s=%s",
+                         p.from, has_from ? "present" : "missing",
+                         p.to, has_to ? "present" : "missing");
+        }
+    }
+
+    const std::string localized_from =
+        std::string(config.data_root) + "/fcdata/Localized";
+    const std::string localized_to =
+        std::string(config.data_root) + "/fcdata/localized";
+
+    struct stat loc_from_st = {};
+    struct stat loc_to_st = {};
+    const bool has_loc_from =
+        (stat(localized_from.c_str(), &loc_from_st) == 0) &&
+        S_ISDIR(loc_from_st.st_mode);
+    const bool has_loc_to =
+        (stat(localized_to.c_str(), &loc_to_st) == 0) &&
+        S_ISDIR(loc_to_st.st_mode);
+
+    if (has_loc_from && !has_loc_to) {
+        if (rename(localized_from.c_str(), localized_to.c_str()) == 0) {
+            compatLogFmt("data casefix: %s -> %s",
+                         localized_from.c_str(), localized_to.c_str());
+        } else {
+            compatLogFmt("data casefix FAILED: %s -> %s errno=%d",
+                         localized_from.c_str(), localized_to.c_str(), errno);
+        }
+    } else {
+        compatLogFmt("data dir: FCData/Localized=%s FCData/localized=%s",
+                     has_loc_from ? "present" : "missing",
+                     has_loc_to ? "present" : "missing");
+    }
+}
+
 static void setup_environment() {
     setenv("FARCRY_DATA_DIR", config.data_root, 1);
     setenv("MODULE_PATH", config.lib_dir, 1);
@@ -138,6 +201,7 @@ static void setup_environment() {
            "+GL_ARB_vertex_program +GL_ARB_fragment_program", 1);
 
     chdir(config.data_root);
+    normalize_engine_data_dirs();
 }
 
 static void log_system_resources(const char* stage) {
