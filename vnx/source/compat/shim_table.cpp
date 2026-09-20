@@ -1233,6 +1233,29 @@ static EGLBoolean w_eglMakeCurrent(EGLDisplay d, EGLSurface draw, EGLSurface rea
     return ok;
 }
 
+// XRenderOGL resolves a number of legacy/extension GL entry points at runtime.
+// Mesa's eglGetProcAddress() does not necessarily expose every compatibility
+// symbol that we already provide through the ELF shim table. Fall back to the
+// same shim resolver before returning NULL, otherwise the renderer can cache a
+// null function pointer and later jump to PC=0 during pipeline setup/shutdown.
+static void* w_eglGetProcAddress(const char* name) {
+    if (!name || !*name)
+        return nullptr;
+
+    void* p = eglGetProcAddress(name);
+    if (p)
+        return p;
+
+    p = shimResolve(name);
+    if (p) {
+        compatLogFmt("EGL: eglGetProcAddress(%s) -> shim %p", name, p);
+        return p;
+    }
+
+    compatLogFmt("EGL: eglGetProcAddress(%s) -> NULL", name);
+    return nullptr;
+}
+
 // ─── libandroid shims ────────────────────────────────────────────────────────
 // AAssetManager
 static AAsset* asset_open(AAssetManager* mgr, const char* fn, int) {
@@ -2718,7 +2741,7 @@ static const ShimEntry g_shims[] = {
     {"eglQuerySurface",     (void*)eglQuerySurface},
     {"eglQueryContext",     (void*)eglQueryContext},
     {"eglGetError",         (void*)eglGetError},
-    {"eglGetProcAddress",   (void*)eglGetProcAddress},
+    {"eglGetProcAddress",   (void*)w_eglGetProcAddress},
     {"eglReleaseThread",    (void*)eglReleaseThread},
     {"eglWaitGL",           (void*)eglWaitGL},
     {"eglWaitClient",       (void*)eglWaitClient},
