@@ -1966,6 +1966,24 @@ static size_t stub_mbsnrtowcs(wchar_t* d, const char** src, size_t nmc, size_t l
 // Provide a zero-filled placeholder so GOT entries are non-null.
 static uint8_t g_fake_sF[3 * 256] = {};
 
+// Guest Android ELF files can import stdin/stdout/stderr as data symbols.
+// These are pointer variables, so the relocation must receive their ADDRESS,
+// not the FILE* value itself. Point them at the Switch/newlib standard streams.
+// The values stay valid for the lifetime of the process.
+static FILE* g_guest_stdin  = stdin;
+static FILE* g_guest_stdout = stdout;
+static FILE* g_guest_stderr = stderr;
+
+// system() is not part of the Android runtime we want to emulate here.
+// Returning failure is preferable to attempting to execute an Android shell
+// command on Switch.
+static int stub_system(const char* command) {
+    compatLogFmt("game system(%s) -> unsupported", command ? command : "null");
+    errno = ENOSYS;
+    return -1;
+}
+
+
 // Anything the game prints to its stdout/stderr (&__sF[1]/&__sF[2]) would hit
 // the zeroed fake FILE and vanish — libc++abi's terminate/verbose-abort
 // messages included. Detect fake-__sF FILE* and divert the text to the log.
@@ -2355,6 +2373,12 @@ static const ShimEntry g_shims[] = {
     {"__android_log_buf_print", (void*)android_log_buf_print},
 
     // ── libc / newlib passthrough ────────────────────────────────────────────
+    // Guest stdio data symbols.
+    {"stdin",       (void*)&g_guest_stdin},
+    {"stdout",      (void*)&g_guest_stdout},
+    {"stderr",      (void*)&g_guest_stderr},
+    {"tmpnam",      (void*)tmpnam},
+    {"system",      (void*)stub_system},
     {"malloc",      (void*)sh_malloc},
     {"free",        (void*)sh_free},
     {"calloc",      (void*)sh_calloc},
