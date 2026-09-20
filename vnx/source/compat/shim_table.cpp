@@ -918,31 +918,11 @@ static FILE* makeEmptyLanguagePak(const char* path, const char* mode) {
         return nullptr;
 
     FILE* f = fopen(path, mode);
-
-    // The Android CryEngine binary used by NearChuckle attempts to open
-    // CData/517.pak during CSystem::OpenBasicPaks(), but that archive does not
-    // exist in the original repositories, the shipped FCData archives, or the
-    // current Switch data tree. Treat this single Android packaging artifact as
-    // an empty valid ZIP so ZipDir can complete archive initialization instead
-    // of throwing ZipDir::Error. Do not redirect or synthesize any other CData
-    // files; later real content requests must still fail normally.
-    if (!f && path && mode && mode[0] == 'r') {
-        const std::string normalizedPath = pakNormalizeName(path);
-        if (normalizedPath == "cdata/517.pak") {
-            mkdir("CData", 0755);
-            FILE* fallback = makeEmptyLanguagePak(path, mode);
-            if (fallback) {
-                compatLogFmt("fopen FALLBACK: %s -> empty ZIP for Android startup compatibility",
-                             path);
-                return fallback;
-            }
-        }
-    }
     if (!f)
         return nullptr;
 
     setvbuf(f, nullptr, _IOFBF, 16 * 1024);
-    compatLogFmt("fopen FALLBACK: %s -> created empty compatibility pak", path);
+    compatLogFmt("fopen FALLBACK: %s -> created empty optional language pak", path);
     return f;
 }
 
@@ -1854,6 +1834,26 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             FILE* fallback = makeEmptyLanguagePak(path, mode);
             if (fallback)
                 return fallback;
+        }
+
+        // The Android CryEngine binary used by NearChuckle attempts to open
+        // CData/517.pak during CSystem::OpenBasicPaks(), but that archive does not
+        // exist in the original repositories, the shipped FCData archives, or the
+        // current Switch data tree. Treat this single Android packaging artifact as
+        // an empty valid ZIP so ZipDir can complete archive initialization instead
+        // of throwing ZipDir::Error. Do not redirect or synthesize any other CData
+        // files; later real content requests must still fail normally.
+        if (mode && mode[0] == 'r' && path) {
+            const std::string normalizedPath = pakNormalizeName(path);
+            if (normalizedPath == "cdata/517.pak") {
+                mkdir("CData", 0755);
+                FILE* fallback = makeEmptyLanguagePak(path, mode);
+                if (fallback) {
+                    compatLogFmt("fopen FALLBACK: %s -> empty ZIP for Android startup compatibility",
+                                 path);
+                    return fallback;
+                }
+            }
         }
 
         if (shaderPath) startupShaderOverlay("FAIL", path);
