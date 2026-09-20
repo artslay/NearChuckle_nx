@@ -1739,11 +1739,12 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             const bool startupPak517 =
                 normalizedPath == "cdata/517.pak" ||
                 normalizedPath == "fcdata/517.pak" ||
-                (normalizedPath.size() > 14 &&
-                 (normalizedPath.compare(normalizedPath.size() - 14, 14,
-                                         "/cdata/517.pak") == 0 ||
-                  normalizedPath.compare(normalizedPath.size() - 14, 14,
-                                         "/fcdata/517.pak") == 0));
+                (normalizedPath.size() >= 14 &&
+                 normalizedPath.compare(normalizedPath.size() - 14, 14,
+                                         "/cdata/517.pak") == 0) ||
+                (normalizedPath.size() >= 15 &&
+                 normalizedPath.compare(normalizedPath.size() - 15, 15,
+                                         "/fcdata/517.pak") == 0);
 
             if (startupPak517) {
                 if (normalizedPath == "cdata/517.pak") {
