@@ -836,11 +836,22 @@ static void applyRela(LoadedSo* so, const Elf64_Rela* relas, size_t count,
         if (sym.st_shndx != SHN_UNDEF && sym.st_value != 0) {
             sym_addr = (uint64_t)exec_base + sym.st_value;
         } else if (sym_name[0]) {
-            sym_addr = (uint64_t)resolveSymbol(sym_name);
-            if (!sym_addr) {
-                compatLogFmt("ELF: unresolved: %s", sym_name);
-                g_unresolved_count++;
-                sym_addr = kUnresolvedSymbolPoison;
+            // ELF weak undefined symbols are intentionally allowed to remain
+            // unresolved: the dynamic linker resolves them to the null address.
+            // C++ thread_local initialization thunks use exactly this pattern
+            // (_ZTH...), and callers test the GOT entry before invoking it.
+            // Treating a missing weak symbol as our poison address changes that
+            // ABI contract and can turn a harmless NULL check into a crash.
+            if (ELF64_ST_BIND(sym.st_info) == STB_WEAK) {
+                compatLogFmt("ELF: weak unresolved -> 0: %s", sym_name);
+                sym_addr = 0;
+            } else {
+                sym_addr = (uint64_t)resolveSymbol(sym_name);
+                if (!sym_addr) {
+                    compatLogFmt("ELF: unresolved: %s", sym_name);
+                    g_unresolved_count++;
+                    sym_addr = kUnresolvedSymbolPoison;
+                }
             }
         }
 
