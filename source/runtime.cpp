@@ -100,6 +100,24 @@ void* compatFindGameSym(const char* name) {
     return g_game_so ? g_game_so->findSym(name) : nullptr;
 }
 
+// OpenAL Soft's C++ TLS wrapper for ALCcontext::sLocalContext has a weak
+// definition in the Android build. On Switch there is no guest dynamic linker
+// to provide that wrapper, but the variable is trivially zero-initialized, so
+// its initialization thunk can safely be a no-op.
+extern "C" void near_openal_tls_local_context_init() {}
+
+// The Android/Bionic ABI uses __cxa_thread_atexit_impl to register TLS
+// destructors. The guest pthread layer does not currently emulate per-thread
+// C++ destructor lists, so report successful registration and keep the object
+// alive until process exit. This is sufficient for the current OpenAL Soft
+// ThreadCtx object and avoids branching through an unresolved weak import.
+extern "C" int near_openal_cxa_thread_atexit(void (*dtor)(void*), void* obj, void* dso) {
+    (void)dtor;
+    (void)obj;
+    (void)dso;
+    return 0;
+}
+
 void compatMarkSplashDone() {}
 void compatMarkPastLoading() {}
 
