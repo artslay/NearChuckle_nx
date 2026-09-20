@@ -1096,7 +1096,7 @@ static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
     const std::string wanted = pakNormalizeName(requested);
     if (wanted.empty()) return nullptr;
 
-    const std::string cacheRoot = std::string(config.data_root) + "/_pakcache";
+    const std::string cacheRoot = "_pakcache";
     std::string safeName = wanted;
     for (char& c : safeName) if (c == '/') c = '_';
     const std::string outPath = cacheRoot + "/" + safeName;
@@ -1120,7 +1120,7 @@ static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
 
     for (size_t r = 0; roots[r]; ++r) {
         for (size_t i = 0; paks[i]; ++i) {
-            std::string pakPath = std::string(config.data_root) + "/" + roots[r] + "/" + paks[i];
+            std::string pakPath = std::string(roots[r]) + "/" + paks[i];
             struct stat st = {};
             if (::stat(pakPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
                 std::string resolved;
