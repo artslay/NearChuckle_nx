@@ -1795,7 +1795,7 @@ static bool resolvePathCaseInsensitive(const char* input, std::string& resolved)
 
     std::string path(input);
     for (char& c : path) {
-        if (c == '\')
+        if ((unsigned char)c == 92)
             c = '/';
     }
 
