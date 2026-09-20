@@ -1191,8 +1191,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     }
 
     if (!f && path && path[0] != '/' && path[0] != '\\' &&
-        std::strncasecmp(path, "FCData/", 7) != 0 &&
-        std::strncasecmp(path, "fcdata/", 7) != 0) {
+        strncasecmp(path, "FCData/", 7) != 0 &&
+        strncasecmp(path, "fcdata/", 7) != 0) {
         const std::string virtualPath = std::string("FCData/") + path;
         std::string resolved;
         if (resolvePathCaseInsensitive(virtualPath.c_str(), resolved)) {
