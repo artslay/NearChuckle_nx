@@ -1,0 +1,3631 @@
+=== NearChuckle_nx start ===
+data_root=/switch/NearChuckle_nx/game
+lib_dir=/switch/NearChuckle_nx/game/lib
+mesa_driver=zink
+resolution=1280x720
+resources[before ELF load]: system=0/0 KiB
+resources[before ELF load]: memory=3359888/3363840 KiB
+ELF load: libc++_shared.so (1027152 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libc++_shared.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0xf1be0 memsz=0xf1be0 flags=0x5
+ELF: seg[2] vaddr=0xf2be0 filesz=0x8778 memsz=0x8778 flags=0x6
+ELF: seg[3] vaddr=0xfc358 filesz=0x128 memsz=0x7a19 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x1852c/115723 symtab=0x388 syment=24 rela=0x34938/78264 jmprel=0x47af0/11664 init_arr=0xf9ce0/16
+ELF: so built sym_count=4113 strsz=115723
+ELF: registered
+ELF: rela 3261 entries
+bind: free -> shim 0x3531495b0
+RELA: all 3261 entries processed
+ELF: rela done
+ELF: jmprel 486 entries
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+bind: calloc -> shim 0x353149440
+bind: realloc -> shim 0x3531493b0
+JMPREL: all 486 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0xf2000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0xf2000 size=0xa000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0xfc000 size=0x8000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x11b468000 backing=0x5ba1ea000 size=0x104000
+ELF: process-code copy complete
+ELF: 2 constructors deferred (arr=0x11b561ce0)
+ELF: loaded OK code_exec=0x11b468000 data_exec=0x11b55a000 sym_count=4113 unresolved=0
+resources[libc++_shared.so]: system=0/0 KiB
+resources[libc++_shared.so]: memory=3359888/3363840 KiB
+ELF load: libogg.so (30360 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libogg.so
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x6e40 memsz=0x6e40 flags=0x5
+ELF: seg[2] vaddr=0x7e40 filesz=0x240 memsz=0x240 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0xd28/1351 symtab=0x2c0 syment=24 rela=0x1270/120 jmprel=0x12e8/336 init_arr=0x0/0
+ELF: so built sym_count=111 strsz=1351
+ELF: registered
+ELF: rela 5 entries
+RELA: all 5 entries processed
+ELF: rela done
+ELF: jmprel 14 entries
+bind: malloc -> shim 0x3531495c0
+bind: free -> shim 0x3531495b0
+bind: realloc -> shim 0x3531493b0
+JMPREL: all 14 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x7000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x7000 size=0x2000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x14c259000 backing=0x5ba0f7000 size=0x9000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0x14c259000 data_exec=0x14c260000 sym_count=111 unresolved=0
+resources[libogg.so]: system=0/0 KiB
+resources[libogg.so]: memory=3359888/3363840 KiB
+ELF load: libvorbis.so (189128 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libvorbis.so
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x2d620 memsz=0x2d620 flags=0x5
+ELF: seg[2] vaddr=0x2e620 filesz=0x690 memsz=0x690 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x1600/2612 symtab=0x2c0 syment=24 rela=0x2038/1464 jmprel=0x25f0/2160 init_arr=0x0/0
+ELF: so built sym_count=205 strsz=2612
+ELF: registered
+ELF: rela 61 entries
+RELA: all 61 entries processed
+ELF: rela done
+ELF: jmprel 90 entries
+bind: malloc -> shim 0x3531495c0
+bind: free -> shim 0x3531495b0
+bind: calloc -> shim 0x353149440
+bind: realloc -> shim 0x3531493b0
+JMPREL: all 90 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x2e000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x2e000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0xcc4468000 backing=0x5ba130000 size=0x2f000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0xcc4468000 data_exec=0xcc4496000 sym_count=205 unresolved=0
+resources[libvorbis.so]: system=0/0 KiB
+resources[libvorbis.so]: memory=3359888/3363840 KiB
+ELF load: libvorbisenc.so (654000 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libvorbisenc.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x890f0 memsz=0x890f0 flags=0x5
+ELF: seg[2] vaddr=0x8a0f0 filesz=0x16370 memsz=0x16370 flags=0x6
+ELF: seg[3] vaddr=0xa1460 filesz=0x38 memsz=0x38 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x4c4/292 symtab=0x2f8 syment=24 rela=0x5e8/78552 jmprel=0x138c0/240 init_arr=0x0/0
+ELF: so built sym_count=19 strsz=292
+ELF: registered
+ELF: rela 3273 entries
+RELA: all 3273 entries processed
+ELF: rela done
+ELF: jmprel 10 entries
+bind: calloc -> shim 0x353149440
+bind: malloc -> shim 0x3531495c0
+JMPREL: all 10 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x8a000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x8a000 size=0x17000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0xa1000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0xf64323000 backing=0x5ba4c7000 size=0xa2000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0xf64323000 data_exec=0xf643ad000 sym_count=19 unresolved=0
+resources[libvorbisenc.so]: system=0/0 KiB
+resources[libvorbisenc.so]: memory=3359888/3363840 KiB
+ELF load: libvorbisfile.so (32752 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libvorbisfile.so
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x75c0 memsz=0x75c0 flags=0x5
+ELF: seg[2] vaddr=0x85c0 filesz=0x418 memsz=0x418 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0xd5c/1496 symtab=0x2c0 syment=24 rela=0x1338/288 jmprel=0x1458/1488 init_arr=0x0/0
+ELF: so built sym_count=113 strsz=1496
+ELF: registered
+ELF: rela 12 entries
+RELA: all 12 entries processed
+ELF: rela done
+ELF: jmprel 62 entries
+bind: free -> shim 0x3531495b0
+bind: calloc -> shim 0x353149440
+bind: malloc -> shim 0x3531495c0
+bind: realloc -> shim 0x3531493b0
+JMPREL: all 62 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x8000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x8000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x9f9f9000 backing=0x5ba102000 size=0x9000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0x9f9f9000 data_exec=0x9fa01000 sym_count=113 unresolved=0
+resources[libvorbisfile.so]: system=0/0 KiB
+resources[libvorbisfile.so]: memory=3359888/3363840 KiB
+ELF load: libopenal.so (1261160 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libopenal.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x12aab0 memsz=0x12aab0 flags=0x5
+ELF: seg[2] vaddr=0x12bab0 filesz=0x8a10 memsz=0x8a10 flags=0x6
+ELF: seg[3] vaddr=0x1354c0 filesz=0x268 memsz=0x7b8b0 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x2a48/4718 symtab=0x2f8 syment=24 rela=0x3cb8/84336 jmprel=0x18628/3456 init_arr=0x1337f8/88
+ELF: so built sym_count=419 strsz=4718
+ELF: registered
+ELF: rela 3514 entries
+ELF: unresolved: _ZTHN10ALCcontext13sLocalContextE
+bind: free -> shim 0x3531495b0
+RELA: all 3514 entries processed
+ELF: rela done
+ELF: jmprel 144 entries
+ELF: unresolved: _ZTHN10ALCcontext13sLocalContextE
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+bind: realloc -> shim 0x3531493b0
+JMPREL: all 144 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x12b000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x12b000 size=0xa000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x135000 size=0x7c000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0xbd1d6f000 backing=0x5ba69d000 size=0x1b1000
+ELF: process-code copy complete
+ELF: 11 constructors deferred (arr=0xbd1ea27f8)
+ELF: loaded OK code_exec=0xbd1d6f000 data_exec=0xbd1e9a000 sym_count=419 unresolved=2
+resources[libopenal.so]: system=0/0 KiB
+resources[libopenal.so]: memory=3359888/3363840 KiB
+ELF load: libSDL3.so (2380768 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libSDL3.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x234c30 memsz=0x234c30 flags=0x5
+ELF: seg[2] vaddr=0x235c30 filesz=0x9228 memsz=0x9228 flags=0x6
+ELF: seg[3] vaddr=0x23fe58 filesz=0x6df8 memsz=0xa078 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0xc8f8/31779 symtab=0x2f8 syment=24 rela=0x14520/88152 jmprel=0x29d78/18984 init_arr=0x23cc00/16
+ELF: so built sym_count=2112 strsz=31779
+ELF: registered
+ELF: rela 3673 entries
+ELF: unresolved: glBlendEquationOES
+ELF: unresolved: glBlendEquationSeparateOES
+ELF: unresolved: glBlendFuncSeparateOES
+ELF: unresolved: glDrawTexfOES
+ELF: unresolved: glGenFramebuffersOES
+ELF: unresolved: glOrthof
+ELF: unresolved: glBindFramebufferOES
+ELF: unresolved: glFramebufferTexture2DOES
+ELF: unresolved: glCheckFramebufferStatusOES
+ELF: unresolved: glDeleteFramebuffersOES
+RELA: all 3673 entries processed
+ELF: rela done
+ELF: jmprel 791 entries
+ELF: unresolved: feholdexcept
+ELF: unresolved: fesetenv
+ELF: unresolved: fdatasync
+ELF: unresolved: fseeko64
+ELF: unresolved: ftello64
+ELF: unresolved: fopen64
+bind: malloc -> shim 0x3531495c0
+bind: calloc -> shim 0x353149440
+bind: realloc -> shim 0x3531493b0
+bind: free -> shim 0x3531495b0
+ELF: unresolved: scalbnf
+ELF: unresolved: wcsnlen
+ELF: unresolved: wcslcpy
+ELF: unresolved: wcslcat
+ELF: unresolved: strlcat
+ELF: unresolved: pthread_getschedparam
+JMPREL: all 791 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x235000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x235000 size=0xa000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x23f000 size=0xb000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0xae33ae000 backing=0x5bac45000 size=0x24a000
+ELF: process-code copy complete
+ELF: 2 constructors deferred (arr=0xae35eac00)
+ELF: loaded OK code_exec=0xae33ae000 data_exec=0xae35e3000 sym_count=2112 unresolved=24
+resources[libSDL3.so]: system=0/0 KiB
+resources[libSDL3.so]: memory=3359888/3363840 KiB
+ELF load: libCryInput.so (112952 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCryInput.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x1a290 memsz=0x1a290 flags=0x5
+ELF: seg[2] vaddr=0x1b290 filesz=0xc60 memsz=0xc60 flags=0x6
+ELF: seg[3] vaddr=0x1cef0 filesz=0x358 memsz=0xba8 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x2988/11414 symtab=0x2f8 syment=24 rela=0x5620/4920 jmprel=0x6958/3000 init_arr=0x0/0
+ELF: so built sym_count=411 strsz=11414
+ELF: registered
+ELF: rela 205 entries
+RELA: all 205 entries processed
+ELF: rela done
+ELF: jmprel 125 entries
+bind: malloc -> shim 0x3531495c0
+bind: free -> shim 0x3531495b0
+ELF: unresolved: mbstowcs
+JMPREL: all 125 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x1b000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x1b000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x1c000 size=0x2000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x11a3f1000 backing=0x5ba17d000 size=0x1e000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0x11a3f1000 data_exec=0x11a40c000 sym_count=411 unresolved=25
+resources[libCryInput.so]: system=0/0 KiB
+resources[libCryInput.so]: memory=3359888/3363840 KiB
+ELF load: libCryScriptSystem.so (282840 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCryScriptSystem.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x42c70 memsz=0x42c70 flags=0x5
+ELF: seg[2] vaddr=0x43c70 filesz=0x1d58 memsz=0x1d58 flags=0x6
+ELF: seg[3] vaddr=0x469c8 filesz=0x20 memsz=0x9c8 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x4d68/14435 symtab=0x2f8 syment=24 rela=0x85d0/12888 jmprel=0xb828/8136 init_arr=0x0/0
+ELF: so built sym_count=794 strsz=14435
+ELF: registered
+ELF: rela 537 entries
+RELA: all 537 entries processed
+ELF: rela done
+ELF: jmprel 339 entries
+bind: free -> shim 0x3531495b0
+bind: realloc -> shim 0x3531493b0
+bind: malloc -> shim 0x3531495c0
+JMPREL: all 339 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x43000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x43000 size=0x3000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x46000 size=0x2000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0xbf286c000 backing=0x5ba427000 size=0x48000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0xbf286c000 data_exec=0xbf28af000 sym_count=794 unresolved=25
+resources[libCryScriptSystem.so]: system=0/0 KiB
+resources[libCryScriptSystem.so]: memory=3359888/3363840 KiB
+ELF load: libCryEntitySystem.so (296384 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCryEntitySystem.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x467c0 memsz=0x467c0 flags=0x5
+ELF: seg[2] vaddr=0x477c0 filesz=0x16f0 memsz=0x16f0 flags=0x6
+ELF: seg[3] vaddr=0x49eb0 filesz=0x20 memsz=0x7c58 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x5098/24377 symtab=0x2f8 syment=24 rela=0xafd8/10512 jmprel=0xd8e8/5136 init_arr=0x0/0
+ELF: so built sym_count=828 strsz=24377
+ELF: registered
+ELF: rela 438 entries
+RELA: all 438 entries processed
+ELF: rela done
+ELF: jmprel 214 entries
+bind: malloc -> shim 0x3531495c0
+bind: free -> shim 0x3531495b0
+bind: calloc -> shim 0x353149440
+bind: realloc -> shim 0x3531493b0
+JMPREL: all 214 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x47000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x47000 size=0x2000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x49000 size=0x9000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x45669a000 backing=0x5ba2ef000 size=0x52000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0x45669a000 data_exec=0x4566e1000 sym_count=828 unresolved=25
+resources[libCryEntitySystem.so]: system=0/0 KiB
+resources[libCryEntitySystem.so]: memory=3359888/3363840 KiB
+ELF load: libCryNetwork.so (296904 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCryNetwork.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x45850 memsz=0x45850 flags=0x5
+ELF: seg[2] vaddr=0x46850 filesz=0x2568 memsz=0x2568 flags=0x6
+ELF: seg[3] vaddr=0x49db8 filesz=0x320 memsz=0x3368 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x7d44/33108 symtab=0x2f8 syment=24 rela=0xfe98/19752 jmprel=0x14bc0/7080 init_arr=0x0/0
+ELF: so built sym_count=1304 strsz=33108
+ELF: registered
+ELF: rela 823 entries
+RELA: all 823 entries processed
+ELF: rela done
+ELF: jmprel 295 entries
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+JMPREL: all 295 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x46000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x46000 size=0x3000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x49000 size=0x5000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0xced448000 backing=0x5ba395000 size=0x4e000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0xced448000 data_exec=0xced48e000 sym_count=1304 unresolved=25
+resources[libCryNetwork.so]: system=0/0 KiB
+resources[libCryNetwork.so]: memory=3359888/3363840 KiB
+ELF load: libCrySoundSystem.so (332704 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCrySoundSystem.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x4f110 memsz=0x4f110 flags=0x5
+ELF: seg[2] vaddr=0x50110 filesz=0x1b20 memsz=0x1b20 flags=0x6
+ELF: seg[3] vaddr=0x52c30 filesz=0x30 memsz=0x4d90 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x6a5c/30054 symtab=0x2f8 syment=24 rela=0xdfc8/11040 jmprel=0x10ae8/7656 init_arr=0x50eb0/8
+ELF: so built sym_count=1102 strsz=30054
+ELF: registered
+ELF: rela 460 entries
+RELA: all 460 entries processed
+ELF: rela done
+ELF: jmprel 319 entries
+bind: _ZdlPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e828
+bind: _Znwm -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e754
+bind: _Znam -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e7f0
+bind: free -> shim 0x3531495b0
+bind: _ZdaPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e840
+bind: malloc -> shim 0x3531495c0
+bind: realloc -> shim 0x3531493b0
+ELF: unresolved: __fread_chk
+JMPREL: all 319 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x50000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x50000 size=0x2000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x52000 size=0x6000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0xc79a96000 backing=0x5ba5bb000 size=0x58000
+ELF: process-code copy complete
+ELF: 1 constructors deferred (arr=0xc79ae6eb0)
+ELF: loaded OK code_exec=0xc79a96000 data_exec=0xc79ae6000 sym_count=1102 unresolved=26
+resources[libCrySoundSystem.so]: system=0/0 KiB
+resources[libCrySoundSystem.so]: memory=3359888/3363840 KiB
+ELF load: libCryMovie.so (366728 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCryMovie.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x55fc0 memsz=0x55fc0 flags=0x5
+ELF: seg[2] vaddr=0x56fc0 filesz=0x3168 memsz=0x3168 flags=0x6
+ELF: seg[3] vaddr=0x5b128 filesz=0x20 memsz=0x9a8 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x77f0/37224 symtab=0x2f8 syment=24 rela=0x10958/31728 jmprel=0x18548/3768 init_arr=0x598e0/32
+ELF: so built sym_count=1247 strsz=37224
+ELF: registered
+ELF: rela 1322 entries
+RELA: all 1322 entries processed
+ELF: rela done
+ELF: jmprel 157 entries
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+JMPREL: all 157 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x56000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x56000 size=0x5000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x5b000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x294484000 backing=0x5ba84f000 size=0x5c000
+ELF: process-code copy complete
+ELF: 4 constructors deferred (arr=0x2944dd8e0)
+ELF: loaded OK code_exec=0x294484000 data_exec=0x2944da000 sym_count=1247 unresolved=26
+resources[libCryMovie.so]: system=0/0 KiB
+resources[libCryMovie.so]: memory=3359888/3363840 KiB
+ELF load: libCryAISystem.so (473168 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCryAISystem.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x70bc0 memsz=0x70bc0 flags=0x5
+ELF: seg[2] vaddr=0x71bc0 filesz=0x2580 memsz=0x2580 flags=0x6
+ELF: seg[3] vaddr=0x75140 filesz=0x20 memsz=0x3d70 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x759c/37875 symtab=0x2f8 syment=24 rela=0x10990/17184 jmprel=0x14cb0/9072 init_arr=0x0/0
+ELF: so built sym_count=1222 strsz=37875
+ELF: registered
+ELF: rela 716 entries
+RELA: all 716 entries processed
+ELF: rela done
+ELF: jmprel 378 entries
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+JMPREL: all 378 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x71000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x71000 size=0x4000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x75000 size=0x4000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x1eabf000 backing=0x5ba930000 size=0x79000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0x1eabf000 data_exec=0x1eb30000 sym_count=1222 unresolved=26
+resources[libCryAISystem.so]: system=0/0 KiB
+resources[libCryAISystem.so]: memory=3359888/3363840 KiB
+ELF load: libCryFont.so (511232 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCryFont.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x725b0 memsz=0x725b0 flags=0x5
+ELF: seg[2] vaddr=0x735b0 filesz=0xa018 memsz=0xa018 flags=0x6
+ELF: seg[3] vaddr=0x7e5c8 filesz=0x48 memsz=0x28a0 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x3f48/14000 symtab=0x2f8 syment=24 rela=0x75f8/112512 jmprel=0x22d78/5136 init_arr=0x0/0
+ELF: so built sym_count=643 strsz=14000
+ELF: registered
+ELF: rela 4688 entries
+RELA: all 4688 entries processed
+ELF: rela done
+ELF: jmprel 214 entries
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+bind: realloc -> shim 0x3531493b0
+JMPREL: all 214 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x73000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x73000 size=0xb000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x7e000 size=0x3000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0xc8d341000 backing=0x5baa37000 size=0x81000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0xc8d341000 data_exec=0xc8d3b4000 sym_count=643 unresolved=26
+resources[libCryFont.so]: system=0/0 KiB
+resources[libCryFont.so]: memory=3359888/3363840 KiB
+ELF load: libCryAnimation.so (863504 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCryAnimation.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0xce240 memsz=0xce240 flags=0x5
+ELF: seg[2] vaddr=0xcf240 filesz=0x3ff8 memsz=0x3ff8 flags=0x6
+ELF: seg[3] vaddr=0xd4238 filesz=0x398 memsz=0x7708 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0xfc48/91213 symtab=0x2f8 syment=24 rela=0x26098/26064 jmprel=0x2c668/22752 init_arr=0xd0f98/24
+ELF: so built sym_count=2659 strsz=91213
+ELF: registered
+ELF: rela 1086 entries
+RELA: all 1086 entries processed
+ELF: rela done
+ELF: jmprel 948 entries
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+bind: calloc -> shim 0x353149440
+bind: realloc -> shim 0x3531493b0
+JMPREL: all 948 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0xcf000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0xcf000 size=0x5000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0xd4000 size=0x8000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0xdf53a000 backing=0x5bb0da000 size=0xdc000
+ELF: process-code copy complete
+ELF: 3 constructors deferred (arr=0xdf60af98)
+ELF: loaded OK code_exec=0xdf53a000 data_exec=0xdf609000 sym_count=2659 unresolved=26
+resources[libCryAnimation.so]: system=0/0 KiB
+resources[libCryAnimation.so]: memory=3359888/3363840 KiB
+ELF load: libCry3DEngine.so (960880 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCry3DEngine.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0xe6ae0 memsz=0xe6ae0 flags=0x5
+ELF: seg[2] vaddr=0xe7ae0 filesz=0x34c8 memsz=0x34c8 flags=0x6
+ELF: seg[3] vaddr=0xebfa8 filesz=0x288 memsz=0xd850 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0xcdd4/65093 symtab=0x2f8 syment=24 rela=0x1cc20/21000 jmprel=0x21e28/16416 init_arr=0xe9570/8
+ELF: so built sym_count=2163 strsz=65093
+ELF: registered
+ELF: rela 875 entries
+RELA: all 875 entries processed
+ELF: rela done
+ELF: jmprel 684 entries
+bind: malloc -> shim 0x3531495c0
+bind: free -> shim 0x3531495b0
+bind: realloc -> shim 0x3531493b0
+ELF: unresolved: __strncat_chk
+bind: calloc -> shim 0x353149440
+JMPREL: all 684 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0xe7000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0xe7000 size=0x4000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0xeb000 size=0xf000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x23b1b0000 backing=0x5bb1b7000 size=0xfa000
+ELF: process-code copy complete
+ELF: 1 constructors deferred (arr=0x23b299570)
+ELF: loaded OK code_exec=0x23b1b0000 data_exec=0x23b297000 sym_count=2163 unresolved=27
+resources[libCry3DEngine.so]: system=0/0 KiB
+resources[libCry3DEngine.so]: memory=3359888/3363840 KiB
+ELF load: libCryPhysics.so (1065016 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCryPhysics.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0xff7c0 memsz=0xff7c0 flags=0x5
+ELF: seg[2] vaddr=0x1007c0 filesz=0x3710 memsz=0x3710 flags=0x6
+ELF: seg[3] vaddr=0x104ed0 filesz=0xa28 memsz=0x229c30 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x985c/52023 symtab=0x2f8 syment=24 rela=0x16398/37896 jmprel=0x1f7a0/8064 init_arr=0x102c38/16
+ELF: so built sym_count=1593 strsz=52023
+ELF: registered
+ELF: rela 1579 entries
+RELA: all 1579 entries processed
+ELF: rela done
+ELF: jmprel 336 entries
+bind: malloc -> shim 0x3531495c0
+bind: free -> shim 0x3531495b0
+JMPREL: all 336 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x100000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x100000 size=0x4000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x104000 size=0x22b000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x8ca7c9000 backing=0x5bb2b2000 size=0x32f000
+ELF: process-code copy complete
+ELF: 2 constructors deferred (arr=0x8ca8cbc38)
+ELF: loaded OK code_exec=0x8ca7c9000 data_exec=0x8ca8c9000 sym_count=1593 unresolved=27
+resources[libCryPhysics.so]: system=0/0 KiB
+resources[libCryPhysics.so]: memory=3359888/3363840 KiB
+ELF load: libCrySystem.so (1082552 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCrySystem.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x102010 memsz=0x102010 flags=0x5
+ELF: seg[2] vaddr=0x103010 filesz=0x5b30 memsz=0x5b30 flags=0x6
+ELF: seg[3] vaddr=0x109b40 filesz=0x238 memsz=0x7720 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x10cb0/92776 symtab=0x2f8 syment=24 rela=0x27718/38064 jmprel=0x30bc8/16776 init_arr=0x106498/64
+ELF: so built sym_count=2834 strsz=92776
+ELF: registered
+ELF: rela 1586 entries
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+bind: realloc -> shim 0x3531493b0
+RELA: all 1586 entries processed
+ELF: rela done
+ELF: jmprel 699 entries
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+ELF: unresolved: fstat64
+ELF: unresolved: ldiv
+bind: calloc -> shim 0x353149440
+ELF: unresolved: __strncat_chk
+JMPREL: all 699 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x103000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x103000 size=0x6000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x109000 size=0x9000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x8b21f8000 backing=0x5bae90000 size=0x112000
+ELF: process-code copy complete
+ELF: 8 constructors deferred (arr=0x8b22fe498)
+ELF: loaded OK code_exec=0x8b21f8000 data_exec=0x8b22fb000 sym_count=2834 unresolved=30
+resources[libCrySystem.so]: system=0/0 KiB
+resources[libCrySystem.so]: memory=3359888/3363840 KiB
+ELF load: libCryGame.so (2333760 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libCryGame.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x22e810 memsz=0x22e810 flags=0x5
+ELF: seg[2] vaddr=0x22f810 filesz=0xa8b8 memsz=0xa8b8 flags=0x6
+ELF: seg[3] vaddr=0x23b0c8 filesz=0x438 memsz=0x96098 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x23270/203890 symtab=0x2f8 syment=24 rela=0x54ee8/83256 jmprel=0x69420/38976 init_arr=0x234960/256
+ELF: so built sym_count=5967 strsz=203890
+ELF: registered
+ELF: rela 3469 entries
+RELA: all 3469 entries processed
+ELF: rela done
+ELF: jmprel 1624 entries
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+bind: calloc -> shim 0x353149440
+bind: realloc -> shim 0x3531493b0
+ELF: unresolved: mbstowcs
+ELF: unresolved: __fread_chk
+bind: _ZdlPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e828
+bind: _Znwm -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e754
+bind: _Znam -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e7f0
+bind: _ZdaPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e840
+JMPREL: all 1624 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x22f000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x22f000 size=0xc000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x23b000 size=0x97000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x314092000 backing=0x5bbb4a000 size=0x2d2000
+ELF: process-code copy complete
+ELF: 32 constructors deferred (arr=0x3142c6960)
+ELF: loaded OK code_exec=0x314092000 data_exec=0x3142c1000 sym_count=5967 unresolved=32
+resources[libCryGame.so]: system=0/0 KiB
+resources[libCryGame.so]: memory=3359888/3363840 KiB
+ELF load: libXRenderOGL.so (2409464 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libXRenderOGL.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x239a30 memsz=0x239a30 flags=0x5
+ELF: seg[2] vaddr=0x23aa30 filesz=0xd9f0 memsz=0xd9f0 flags=0x6
+ELF: seg[3] vaddr=0x249420 filesz=0x4898 memsz=0xf1718 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x2aa0c/164804 symtab=0x2f8 syment=24 rela=0x52dd0/151944 jmprel=0x77f58/24288 init_arr=0x2410d0/152
+ELF: so built sym_count=7243 strsz=164804
+ELF: registered
+ELF: rela 6331 entries
+RELA: all 6331 entries processed
+ELF: rela done
+ELF: jmprel 1012 entries
+bind: free -> shim 0x3531495b0
+bind: realloc -> shim 0x3531493b0
+bind: malloc -> shim 0x3531495c0
+bind: calloc -> shim 0x353149440
+bind: _Znam -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e7f0
+bind: _ZdlPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e828
+bind: _ZdaPv -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e840
+bind: _Znwm -> /switch/NearChuckle_nx/game/lib/libc++_shared.so 0x11b52e754
+ELF: unresolved: fstat64
+ELF: unresolved: __strncat_chk
+JMPREL: all 1012 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x23a000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x23a000 size=0xf000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0x249000 size=0xf2000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0x8c1f92000 backing=0x5bc069000 size=0x33b000
+ELF: process-code copy complete
+ELF: 19 constructors deferred (arr=0x8c21d30d0)
+ELF: loaded OK code_exec=0x8c1f92000 data_exec=0x8c21cc000 sym_count=7243 unresolved=34
+resources[libXRenderOGL.so]: system=0/0 KiB
+resources[libXRenderOGL.so]: memory=3359888/3363840 KiB
+ELF load: libFarCry.so (36256 bytes)
+ELF: loading /switch/NearChuckle_nx/game/lib/libFarCry.so
+ELF: WARN 3 PT_LOAD segments (1 exec, 2 writable) — single-split-point assumption may mis-map permissions
+ProcessMap: own_handle=0x000581fa hints map=1 unmap=1 perm=1
+ELF: stage alloc OK
+ELF: stage zeroed
+ELF: seg[1] vaddr=0x0 filesz=0x8290 memsz=0x8290 flags=0x5
+ELF: seg[2] vaddr=0x9290 filesz=0x400 memsz=0x400 flags=0x6
+ELF: seg[3] vaddr=0xa690 filesz=0x20 memsz=0x970 flags=0x6
+ELF: segs copied to stage
+ELF: stage[0]=0x464c457f after segs copy
+ELF: dyn: strtab=0x9a4/1025 symtab=0x2f8 syment=24 rela=0xda8/600 jmprel=0x1000/1104 init_arr=0x0/0
+ELF: so built sym_count=71 strsz=1025
+ELF: registered
+ELF: rela 25 entries
+RELA: all 25 entries processed
+ELF: rela done
+ELF: jmprel 46 entries
+bind: free -> shim 0x3531495b0
+bind: malloc -> shim 0x3531495c0
+JMPREL: all 46 entries processed
+ELF: jmprel done
+ELF: strtab/symtab copied
+ProcessMap: PT_LOAD[1] rel=0x0 size=0x9000 flags=0x5 perm=Rx rc=0x00000000
+ProcessMap: PT_LOAD[2] rel=0x9000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: PT_LOAD[3] rel=0xa000 size=0x1000 flags=0x6 perm=Rw rc=0x00000000
+ProcessMap: mapped image base=0xf8a198000 backing=0x5ba59d000 size=0xb000
+ELF: process-code copy complete
+ELF: loaded OK code_exec=0xf8a198000 data_exec=0xf8a1a1000 sym_count=71 unresolved=34
+resources[libFarCry.so]: system=0/0 KiB
+resources[libFarCry.so]: memory=3359888/3363840 KiB
+Loaded Android ARM64 libraries. unresolved=34
+ELF ctors: libc++_shared.so
+ELF: libc++_shared.so: running 2 constructors
+ELF: init_arr[0]=0x11b4fdab0
+ELF: init_arr[1]=0x11b556c64
+ELF: ctor[1/2] @0x11b4fdab0
+ELF: ctor[1/2] OK
+ELF: ctor[2/2] @0x11b556c64
+ELF: ctor[2/2] OK
+ELF: libc++_shared.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libc++_shared.so: ctors done ok=2 failed=0 skipped=0
+ELF ctors: libogg.so
+ELF ctors: libvorbis.so
+ELF ctors: libvorbisenc.so
+ELF ctors: libvorbisfile.so
+ELF ctors: libopenal.so
+ELF: libopenal.so: running 11 constructors
+ELF: init_arr[0]=0xbd1df355c
+ELF: init_arr[1]=0xbd1e19e40
+ELF: init_arr[2]=0xbd1e1f29c
+ELF: init_arr[3]=0xbd1e2356c
+ELF: ctor[1/11] @0xbd1df355c
+ELF: ctor[1/11] OK
+ELF: ctor[2/11] @0xbd1e19e40
+ELF: ctor[2/11] OK
+ELF: ctor[3/11] @0xbd1e1f29c
+ELF: ctor[3/11] OK
+ELF: ctor[4/11] @0xbd1e2356c
+ELF: ctor[4/11] OK
+ELF: ctor[5/11] @0xbd1e2b75c
+ELF: ctor[5/11] OK
+ELF: ctor[6/11] @0xbd1e2ca90
+ELF: ctor[6/11] OK
+ELF: ctor[7/11] @0xbd1e3e4c8
+ELF: ctor[7/11] OK
+ELF: ctor[8/11] @0xbd1e40308
+ELF: ctor[8/11] OK
+ELF: ctor[9/11] @0xbd1e4de60
+ELF: ctor[9/11] OK
+ELF: ctor[10/11] @0xbd1e55668
+ELF: ctor[10/11] OK
+ELF: ctor[11/11] @0xbd1e94ff4
+ELF: ctor[11/11] OK
+ELF: libopenal.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libopenal.so: ctors done ok=11 failed=0 skipped=0
+ELF ctors: libSDL3.so
+ELF: libSDL3.so: running 2 constructors
+ELF: init_arr[0]=0xae35730b0
+ELF: init_arr[1]=0xae35dba94
+ELF: ctor[1/2] @0xae35730b0
+ELF: ctor[1/2] OK
+ELF: ctor[2/2] @0xae35dba94
+ELF: ctor[2/2] OK
+ELF: libSDL3.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libSDL3.so: ctors done ok=2 failed=0 skipped=0
+ELF ctors: libCryInput.so
+ELF ctors: libCryScriptSystem.so
+ELF ctors: libCryEntitySystem.so
+ELF ctors: libCryNetwork.so
+ELF ctors: libCrySoundSystem.so
+ELF: libCrySoundSystem.so: running 1 constructors
+ELF: init_arr[0]=0xc79ae00f0
+ELF: ctor[1/1] @0xc79ae00f0
+ELF: ctor[1/1] OK
+ELF: libCrySoundSystem.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libCrySoundSystem.so: ctors done ok=1 failed=0 skipped=0
+ELF ctors: libCryMovie.so
+ELF: libCryMovie.so: running 4 constructors
+ELF: init_arr[0]=0x2944a75b0
+ELF: init_arr[1]=0x2944bf7e4
+ELF: init_arr[2]=0x2944c6984
+ELF: init_arr[3]=0x2944ce478
+ELF: ctor[1/4] @0x2944a75b0
+ELF: ctor[1/4] OK
+ELF: ctor[2/4] @0x2944bf7e4
+ELF: ctor[2/4] OK
+ELF: ctor[3/4] @0x2944c6984
+ELF: ctor[3/4] OK
+ELF: ctor[4/4] @0x2944ce478
+ELF: ctor[4/4] OK
+ELF: libCryMovie.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libCryMovie.so: ctors done ok=4 failed=0 skipped=0
+ELF ctors: libCryAISystem.so
+ELF ctors: libCryFont.so
+ELF ctors: libCryAnimation.so
+ELF: libCryAnimation.so: running 3 constructors
+ELF: init_arr[0]=0xdf5b4564
+ELF: init_arr[1]=0xdf5c3298
+ELF: init_arr[2]=0xdf5e298c
+ELF: ctor[1/3] @0xdf5b4564
+ELF: ctor[1/3] OK
+ELF: ctor[2/3] @0xdf5c3298
+ELF: ctor[2/3] OK
+ELF: ctor[3/3] @0xdf5e298c
+ELF: ctor[3/3] OK
+ELF: libCryAnimation.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libCryAnimation.so: ctors done ok=3 failed=0 skipped=0
+ELF ctors: libCry3DEngine.so
+ELF: libCry3DEngine.so: running 1 constructors
+ELF: init_arr[0]=0x23b217dfc
+ELF: ctor[1/1] @0x23b217dfc
+ELF: ctor[1/1] OK
+ELF: libCry3DEngine.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libCry3DEngine.so: ctors done ok=1 failed=0 skipped=0
+ELF ctors: libCryPhysics.so
+ELF: libCryPhysics.so: running 2 constructors
+ELF: init_arr[0]=0x8ca865078
+ELF: init_arr[1]=0x8ca8babbc
+ELF: ctor[1/2] @0x8ca865078
+ELF: ctor[1/2] OK
+ELF: ctor[2/2] @0x8ca8babbc
+ELF: ctor[2/2] OK
+ELF: libCryPhysics.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libCryPhysics.so: ctors done ok=2 failed=0 skipped=0
+ELF ctors: libCrySystem.so
+ELF: libCrySystem.so: running 8 constructors
+ELF: init_arr[0]=0x8b227a9b4
+ELF: init_arr[1]=0x8b22925b4
+ELF: init_arr[2]=0x8b229305c
+ELF: init_arr[3]=0x8b22960ac
+ELF: ctor[1/8] @0x8b227a9b4
+ELF: ctor[1/8] OK
+ELF: ctor[2/8] @0x8b22925b4
+ELF: ctor[2/8] OK
+ELF: ctor[3/8] @0x8b229305c
+ELF: ctor[3/8] OK
+ELF: ctor[4/8] @0x8b22960ac
+ELF: ctor[4/8] OK
+ELF: ctor[5/8] @0x8b2297658
+ELF: ctor[5/8] OK
+ELF: ctor[6/8] @0x8b229bfcc
+ELF: ctor[6/8] OK
+ELF: ctor[7/8] @0x8b22a7c7c
+ELF: ctor[7/8] OK
+ELF: ctor[8/8] @0x8b22d8d0c
+ELF: ctor[8/8] OK
+ELF: libCrySystem.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libCrySystem.so: ctors done ok=8 failed=0 skipped=0
+ELF ctors: libCryGame.so
+ELF: libCryGame.so: running 32 constructors
+ELF: init_arr[0]=0x31419605c
+ELF: init_arr[1]=0x31419c0b0
+ELF: init_arr[2]=0x31419e230
+ELF: init_arr[3]=0x3141a07dc
+ELF: ctor[1/32] @0x31419605c
+ELF: ctor[1/32] OK
+ELF: ctor[2/32] @0x31419c0b0
+ELF: ctor[2/32] OK
+ELF: ctor[3/32] @0x31419e230
+ELF: ctor[3/32] OK
+ELF: ctor[4/32] @0x3141a07dc
+ELF: ctor[4/32] OK
+ELF: ctor[5/32] @0x3141b3d40
+ELF: ctor[5/32] OK
+ELF: ctor[6/32] @0x3141b6044
+ELF: ctor[6/32] OK
+ELF: ctor[7/32] @0x3141b6c08
+ELF: ctor[7/32] OK
+ELF: ctor[8/32] @0x3141c2f14
+ELF: ctor[8/32] OK
+ELF: ctor[9/32] @0x3141c42a0
+ELF: ctor[9/32] OK
+ELF: ctor[10/32] @0x3141c7c44
+ELF: ctor[10/32] OK
+ELF: ctor[11/32] @0x3141c9024
+ELF: ctor[11/32] OK
+ELF: ctor[12/32] @0x3141c96cc
+ELF: ctor[12/32] OK
+ELF: ctor[13/32] @0x3141cad04
+ELF: ctor[13/32] OK
+ELF: ctor[14/32] @0x3141cba8c
+ELF: ctor[14/32] OK
+ELF: ctor[15/32] @0x3141da5ec
+ELF: ctor[15/32] OK
+ELF: ctor[16/32] @0x3141ddf7c
+ELF: ctor[16/32] OK
+ELF: ctor[17/32] @0x3141e39a8
+ELF: ctor[17/32] OK
+ELF: ctor[18/32] @0x3141f047c
+ELF: ctor[18/32] OK
+ELF: ctor[19/32] @0x3141f1f9c
+ELF: ctor[19/32] OK
+ELF: ctor[20/32] @0x3141facc0
+ELF: ctor[20/32] OK
+ELF: ctor[21/32] @0x314200c48
+ELF: ctor[21/32] OK
+ELF: ctor[22/32] @0x3142108a8
+ELF: ctor[22/32] OK
+ELF: ctor[23/32] @0x314212800
+ELF: ctor[23/32] OK
+ELF: ctor[24/32] @0x314217d2c
+ELF: ctor[24/32] OK
+ELF: ctor[25/32] @0x31421dd80
+ELF: ctor[25/32] OK
+ELF: ctor[26/32] @0x3142315e8
+ELF: ctor[26/32] OK
+ELF: ctor[27/32] @0x3142a34a0
+ELF: ctor[27/32] OK
+ELF: ctor[28/32] @0x3142a8ff0
+ELF: ctor[28/32] OK
+ELF: ctor[29/32] @0x3142a9cc8
+ELF: ctor[29/32] OK
+ELF: ctor[30/32] @0x3142aac24
+ELF: ctor[30/32] OK
+ELF: ctor[31/32] @0x3142acfc0
+ELF: ctor[31/32] OK
+ELF: ctor[32/32] @0x3142b33ac
+ELF: ctor[32/32] OK
+ELF: libCryGame.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libCryGame.so: ctors done ok=32 failed=0 skipped=0
+ELF ctors: libXRenderOGL.so
+ELF: libXRenderOGL.so: running 19 constructors
+ELF: init_arr[0]=0x8c2072998
+ELF: init_arr[1]=0x8c2077c64
+ELF: init_arr[2]=0x8c2078654
+ELF: init_arr[3]=0x8c2083658
+ELF: ctor[1/19] @0x8c2072998
+ELF: ctor[1/19] OK
+ELF: ctor[2/19] @0x8c2077c64
+ELF: ctor[2/19] OK
+ELF: ctor[3/19] @0x8c2078654
+ELF: ctor[3/19] OK
+ELF: ctor[4/19] @0x8c2083658
+ELF: ctor[4/19] OK
+ELF: ctor[5/19] @0x8c2083e88
+ELF: ctor[5/19] OK
+ELF: ctor[6/19] @0x8c2096080
+ELF: ctor[6/19] OK
+ELF: ctor[7/19] @0x8c20a92e4
+ELF: ctor[7/19] OK
+ELF: ctor[8/19] @0x8c20ad67c
+ELF: ctor[8/19] OK
+ELF: ctor[9/19] @0x8c20b2d4c
+ELF: ctor[9/19] OK
+ELF: ctor[10/19] @0x8c20c1350
+ELF: ctor[10/19] OK
+ELF: ctor[11/19] @0x8c20cc584
+ELF: ctor[11/19] OK
+ELF: ctor[12/19] @0x8c20d4f84
+ELF: ctor[12/19] OK
+ELF: ctor[13/19] @0x8c20f3150
+ELF: ctor[13/19] OK
+ELF: ctor[14/19] @0x8c20ff810
+ELF: ctor[14/19] OK
+ELF: ctor[15/19] @0x8c210d4a8
+ELF: ctor[15/19] OK
+ELF: ctor[16/19] @0x8c2116fb0
+ELF: ctor[16/19] OK
+ELF: ctor[17/19] @0x8c2189524
+ELF: ctor[17/19] OK
+ELF: ctor[18/19] @0x8c219c1ec
+ELF: ctor[18/19] OK
+ELF: ctor[19/19] @0x8c21a6a6c
+ELF: ctor[19/19] OK
+ELF: libXRenderOGL.so: heap walk covered 269 chunks, stopped: reached the break (no corruption seen)
+ELF: libXRenderOGL.so: ctors done ok=19 failed=0 skipped=0
+ELF ctors: libFarCry.so
+ELF constructors complete
+JNI FindClass: org/libsdl/app/SDLActivity
+JNI RegisterNative: nativeGetVersion
+JNI RegisterNative: nativeSetupJNI
+JNI RegisterNative: nativeGetCompiledSubsystems
+JNI RegisterNative: nativeIsHIDAPIEnabled
+JNI RegisterNative: nativeInitMainThread
+JNI RegisterNative: nativeCleanupMainThread
+JNI RegisterNative: nativeRunMain
+JNI RegisterNative: nativeLowMemory
+JNI RegisterNative: onNativeLocaleChanged
+JNI RegisterNative: onNativeDarkModeChanged
+JNI RegisterNative: nativeSendQuit
+JNI RegisterNative: nativeQuit
+JNI RegisterNative: nativePause
+JNI RegisterNative: nativeResume
+JNI RegisterNative: nativeFocusChanged
+JNI RegisterNative: nativeGetHint
+JNI RegisterNative: nativeGetHintBoolean
+JNI RegisterNative: nativeSetenv
+JNI RegisterNative: nativePermissionResult
+JNI RegisterNative: nativeAllowRecreateActivity
+JNI RegisterNative: nativeCheckSDLThreadCounter
+JNI RegisterNative: onNativeFileDialog
+JNI RegisterNative: onNativeDropFile
+JNI RegisterNative: nativeSetScreenResolution
+JNI RegisterNative: onNativeResize
+JNI RegisterNative: nativeSetNaturalOrientation
+JNI RegisterNative: onNativeRotationChanged
+JNI RegisterNative: onNativeInsetsChanged
+JNI RegisterNative: nativeAddTouch
+JNI RegisterNative: onNativeSurfaceCreated
+JNI RegisterNative: onNativeSurfaceChanged
+JNI RegisterNative: onNativeSurfaceDestroyed
+JNI RegisterNative: onNativeScreenKeyboardShown
+JNI RegisterNative: onNativeScreenKeyboardHidden
+JNI RegisterNative: onNativeKeyDown
+JNI RegisterNative: onNativeKeyUp
+JNI RegisterNative: onNativeSoftReturnKey
+JNI RegisterNative: onNativeKeyboardFocusLost
+JNI RegisterNative: onNativeTouch
+JNI RegisterNative: onNativePinchStart
+JNI RegisterNative: onNativePinchUpdate
+JNI RegisterNative: onNativePinchEnd
+JNI RegisterNative: onNativeMouse
+JNI RegisterNative: onNativePen
+JNI RegisterNative: onNativeClipboardChanged
+JNI FindClass: org/libsdl/app/SDLInputConnection
+JNI RegisterNative: nativeCommitText
+JNI RegisterNative: nativeGenerateScancodeForUnichar
+JNI FindClass: org/libsdl/app/SDLAudioManager
+JNI RegisterNative: nativeSetupJNI
+JNI RegisterNative: nativeAddAudioDevice
+JNI RegisterNative: nativeRemoveAudioDevice
+JNI FindClass: org/libsdl/app/SDLControllerManager
+JNI RegisterNative: nativeSetupJNI
+JNI RegisterNative: onNativePadDown
+JNI RegisterNative: onNativePadUp
+JNI RegisterNative: onNativeJoy
+JNI RegisterNative: onNativeHat
+JNI RegisterNative: onNativeJoySensor
+JNI RegisterNative: nativeAddJoystick
+JNI RegisterNative: nativeRemoveJoystick
+JNI RegisterNative: nativeAddHaptic
+JNI RegisterNative: nativeRemoveHaptic
+JNI FindClass: org/libsdl/app/HIDDeviceManager
+JNI RegisterNative: HIDDeviceRegisterCallback
+JNI RegisterNative: HIDDeviceReleaseCallback
+JNI RegisterNative: HIDDeviceConnected
+JNI RegisterNative: HIDDeviceOpenPending
+JNI RegisterNative: HIDDeviceOpenResult
+JNI RegisterNative: HIDDeviceDisconnected
+JNI RegisterNative: HIDDeviceInputReport
+JNI RegisterNative: HIDDeviceReportResponse
+SDL: JNI_OnLoad(vm=0x354709ae8) -> 0x10004
+[SDL] nativeSetupJNI()
+pthread_once: calling fn @0xae356d5bc
+pthread_key_create → key=0 dtor=0xae356d604
+pthread_once: fn returned
+pthread_setspecific(key=0, val=0x354709ae0)
+JNI GetStaticMethodID: getContext ()Landroid/app/Activity;
+JNI GetStaticMethodID: getDeviceFormFactor ()Ljava/lang/String;
+JNI GetStaticMethodID: getManifestEnvironmentVariables ()Z
+JNI GetStaticMethodID: isAndroidTV ()Z
+JNI GetStaticMethodID: isChromebook ()Z
+JNI GetStaticMethodID: isDeXMode ()Z
+JNI GetStaticMethodID: isTablet ()Z
+JNI GetStaticMethodID: openURL (Ljava/lang/String;)Z
+JNI GetStaticMethodID: requestPermission (Ljava/lang/String;I)V
+JNI GetStaticMethodID: showToast (Ljava/lang/String;IIII)Z
+JNI GetStaticMethodID: sendMessage (II)Z
+JNI GetStaticMethodID: openFileDescriptor (Ljava/lang/String;Ljava/lang/String;)I
+JNI GetStaticMethodID: manualBackButton ()V
+JNI GetStaticMethodID: showFileDialog ([Ljava/lang/String;ZILjava/lang/String;I)Z
+JNI GetStaticMethodID: getPreferredLocales ()Ljava/lang/String;
+JNI GetStaticMethodID: setBackButtonTrapEnabled (Z)V
+JNI GetStaticMethodID: clipboardGetText ()Ljava/lang/String;
+JNI GetStaticMethodID: clipboardHasText ()Z
+JNI GetStaticMethodID: clipboardSetText (Ljava/lang/String;)V
+JNI GetStaticMethodID: createCustomCursor ([IIIII)I
+JNI GetStaticMethodID: destroyCustomCursor (I)V
+JNI GetStaticMethodID: getNativeSurface ()Landroid/view/Surface;
+JNI GetStaticMethodID: initTouch ()V
+JNI GetStaticMethodID: minimizeWindow ()V
+JNI GetStaticMethodID: setActivityTitle (Ljava/lang/String;)Z
+JNI GetStaticMethodID: setCustomCursor (I)Z
+JNI GetStaticMethodID: setOrientation (IIZLjava/lang/String;)V
+JNI GetStaticMethodID: setRelativeMouseEnabled (Z)Z
+JNI GetStaticMethodID: setSystemCursor (I)Z
+JNI GetStaticMethodID: setWindowStyle (Z)V
+JNI GetStaticMethodID: shouldMinimizeOnFocusLoss ()Z
+JNI GetStaticMethodID: showTextInput (IIIII)Z
+JNI GetStaticMethodID: supportsRelativeMouse ()Z
+SDL: SDLActivity.nativeSetupJNI() called
+JNI GetStaticMethodID: registerAudioDeviceCallback ()V
+JNI GetStaticMethodID: unregisterAudioDeviceCallback ()V
+JNI GetStaticMethodID: audioSetThreadPriority (ZI)V
+SDL: SDLAudioManager.nativeSetupJNI() called
+JNI GetStaticMethodID: detectDevices ()V
+JNI GetStaticMethodID: joystickSetLED (IIII)V
+JNI GetStaticMethodID: joystickSetSensorsEnabled (IZ)V
+JNI GetStaticMethodID: detectHapticDevices ()V
+JNI GetStaticMethodID: hapticRun (IFI)V
+JNI GetStaticMethodID: hapticRumble (IFFI)V
+JNI GetStaticMethodID: hapticStop (I)V
+SDL: SDLControllerManager.nativeSetupJNI() called
+pthread_setspecific(key=0, val=0x354709ae0)
+SDL: SDLActivity.nativeInitMainThread() called
+SDL: Android JNI bootstrap complete for direct guest SDL_main
+Starting Far Cry: 0xf8a19b354 argc=7
+pthread_key_create → key=1 dtor=0x0
+JNI GetMethodID: getPackageName ()Ljava/lang/String;
+JNI CallObjectMethodV
+pthread_getspecific(key=1) → scratch buf (first use)
+JNI CallStaticVoidMethodV: setBackButtonTrapEnabled (Z)V
+JNI CallStaticVoidMethodV: initTouch ()V
+realloc: unowned ptr 0x354724690 — returning fresh block
+pthread_setspecific(key=1, val=0x5ba8c4000)
+JNI CallStaticBooleanMethodV: sendMessage → false
+dlopen: libCrySystem.so already loaded → 0x5bafa2040
+dlopen: libCryScriptSystem.so already loaded → 0x5ba46f040
+dlopen: libCryNetwork.so already loaded → 0x5ba3e3040
+net: gethostbyname(switch) → offline
+dlopen: libCryPhysics.so already loaded → 0x5ba12fd40
+dlopen: libCryMovie.so already loaded → 0x5ba8ab040
+dlopen: libXRenderOGL.so already loaded → 0x5ba4c66c0
+dlopen: libGLESv2.so -> Mesa host shim handle
+dlopen: libEGL.so -> Mesa host shim handle
+JNI CallStaticVoidMethodV: setOrientation (IIZLjava/lang/String;)V
+EGL: eglCreateWindowSurface(win=0x354700878 -> 0x35475f188) -> 0x5baaedac0 (err=0x3000)
+JNI CallStaticVoidMethodV: setWindowStyle (Z)V
+SDL: SDL_CreateWindow(- Far Cry - Sep 19 2026 (21:17:25),1024,768,0x2) -> 0x5baaed4d0 err=
+EGL: eglCreateContext(share=0x0) -> 0x5baaedf70 (err=0x3000)
+EGL: eglMakeCurrent(draw=0x5baaedac0 ctx=0x5baaedf70) -> 1 (err=0x3000)
+SDL: SDL_GL_CreateContext(0x5baaed4d0) -> 0x5baaedf70 err=
+SDL: SDL_GL_MakeCurrent(0x5baaed4d0,0x5baaedf70) -> 1 err=
+dlopen: libGL.so -> Mesa host shim handle
+dlopen: loading libGL.so.1 on demand from /switch/NearChuckle_nx/game/lib/libGL.so.1
+ELF: loading /switch/NearChuckle_nx/game/lib/libGL.so.1
+ELF: fopen failed
+dlopen: elfLoad failed for /switch/NearChuckle_nx/game/lib/libGL.so.1
+dlopen: libGL.so.1 not resolvable to a loaded .so — sentinel handle
+dlopen: loading libGLESv3.so on demand from /switch/NearChuckle_nx/game/lib/libGLESv3.so
+ELF: loading /switch/NearChuckle_nx/game/lib/libGLESv3.so
+ELF: fopen failed
+dlopen: elfLoad failed for /switch/NearChuckle_nx/game/lib/libGLESv3.so
+dlopen: libGLESv3.so not resolvable to a loaded .so — sentinel handle
+dlopen: libGLESv2.so -> Mesa host shim handle
+dlopen: libGLESv1_CM.so -> Mesa host shim handle
+dlsym: unresolved set_getprocaddress
+dlsym: unresolved initialize_gl4es
+dlsym: unresolved glAccum
+dlsym: unresolved glAccum
+dlsym: unresolved glAccum
+dlsym: unresolved _glAccum
+dlsym: unresolved glArrayElement
+dlsym: unresolved glArrayElement
+dlsym: unresolved glArrayElement
+dlsym: unresolved _glArrayElement
+dlsym: unresolved glBitmap
+dlsym: unresolved glBitmap
+dlsym: unresolved glBitmap
+dlsym: unresolved _glBitmap
+dlsym: unresolved glCallList
+dlsym: unresolved glCallList
+dlsym: unresolved glCallList
+dlsym: unresolved _glCallList
+dlsym: unresolved glCallLists
+dlsym: unresolved glCallLists
+dlsym: unresolved glCallLists
+dlsym: unresolved _glCallLists
+dlsym: unresolved glClearAccum
+dlsym: unresolved glClearAccum
+dlsym: unresolved glClearAccum
+dlsym: unresolved _glClearAccum
+dlsym: unresolved glClearIndex
+dlsym: unresolved glClearIndex
+dlsym: unresolved glClearIndex
+dlsym: unresolved _glClearIndex
+dlsym: unresolved glColor3b
+dlsym: unresolved glColor3b
+dlsym: unresolved glColor3b
+dlsym: unresolved _glColor3b
+dlsym: unresolved glColor3bv
+dlsym: unresolved glColor3bv
+dlsym: unresolved glColor3bv
+dlsym: unresolved _glColor3bv
+dlsym: unresolved glColor3d
+dlsym: unresolved glColor3d
+dlsym: unresolved glColor3d
+dlsym: unresolved _glColor3d
+dlsym: unresolved glColor3dv
+dlsym: unresolved glColor3dv
+dlsym: unresolved glColor3dv
+dlsym: unresolved _glColor3dv
+dlsym: unresolved glColor3i
+dlsym: unresolved glColor3i
+dlsym: unresolved glColor3i
+dlsym: unresolved _glColor3i
+dlsym: unresolved glColor3iv
+dlsym: unresolved glColor3iv
+dlsym: unresolved glColor3iv
+dlsym: unresolved _glColor3iv
+dlsym: unresolved glColor3s
+dlsym: unresolved glColor3s
+dlsym: unresolved glColor3s
+dlsym: unresolved _glColor3s
+dlsym: unresolved glColor3sv
+dlsym: unresolved glColor3sv
+dlsym: unresolved glColor3sv
+dlsym: unresolved _glColor3sv
+dlsym: unresolved glColor3ub
+dlsym: unresolved glColor3ub
+dlsym: unresolved glColor3ub
+dlsym: unresolved _glColor3ub
+dlsym: unresolved glColor3ubv
+dlsym: unresolved glColor3ubv
+dlsym: unresolved glColor3ubv
+dlsym: unresolved _glColor3ubv
+dlsym: unresolved glColor3ui
+dlsym: unresolved glColor3ui
+dlsym: unresolved glColor3ui
+dlsym: unresolved _glColor3ui
+dlsym: unresolved glColor3uiv
+dlsym: unresolved glColor3uiv
+dlsym: unresolved glColor3uiv
+dlsym: unresolved _glColor3uiv
+dlsym: unresolved glColor3us
+dlsym: unresolved glColor3us
+dlsym: unresolved glColor3us
+dlsym: unresolved _glColor3us
+dlsym: unresolved glColor3usv
+dlsym: unresolved glColor3usv
+dlsym: unresolved glColor3usv
+dlsym: unresolved _glColor3usv
+dlsym: unresolved glColor4b
+dlsym: unresolved glColor4b
+dlsym: unresolved glColor4b
+dlsym: unresolved _glColor4b
+dlsym: unresolved glColor4bv
+dlsym: unresolved glColor4bv
+dlsym: unresolved glColor4bv
+dlsym: unresolved _glColor4bv
+dlsym: unresolved glColor4d
+dlsym: unresolved glColor4d
+dlsym: unresolved glColor4d
+dlsym: unresolved _glColor4d
+dlsym: unresolved glColor4dv
+dlsym: unresolved glColor4dv
+dlsym: unresolved glColor4dv
+dlsym: unresolved _glColor4dv
+dlsym: unresolved glColor4i
+dlsym: unresolved glColor4i
+dlsym: unresolved glColor4i
+dlsym: unresolved _glColor4i
+dlsym: unresolved glColor4iv
+dlsym: unresolved glColor4iv
+dlsym: unresolved glColor4iv
+dlsym: unresolved _glColor4iv
+dlsym: unresolved glColor4s
+dlsym: unresolved glColor4s
+dlsym: unresolved glColor4s
+dlsym: unresolved _glColor4s
+dlsym: unresolved glColor4sv
+dlsym: unresolved glColor4sv
+dlsym: unresolved glColor4sv
+dlsym: unresolved _glColor4sv
+dlsym: unresolved glColor4ub
+dlsym: unresolved glColor4ub
+dlsym: unresolved glColor4ub
+dlsym: unresolved _glColor4ub
+dlsym: unresolved glColor4ubv
+dlsym: unresolved glColor4ubv
+dlsym: unresolved glColor4ubv
+dlsym: unresolved _glColor4ubv
+dlsym: unresolved glColor4ui
+dlsym: unresolved glColor4ui
+dlsym: unresolved glColor4ui
+dlsym: unresolved _glColor4ui
+dlsym: unresolved glColor4uiv
+dlsym: unresolved glColor4uiv
+dlsym: unresolved glColor4uiv
+dlsym: unresolved _glColor4uiv
+dlsym: unresolved glColor4us
+dlsym: unresolved glColor4us
+dlsym: unresolved glColor4us
+dlsym: unresolved _glColor4us
+dlsym: unresolved glColor4usv
+dlsym: unresolved glColor4usv
+dlsym: unresolved glColor4usv
+dlsym: unresolved _glColor4usv
+dlsym: unresolved glColorMaterial
+dlsym: unresolved glColorMaterial
+dlsym: unresolved glColorMaterial
+dlsym: unresolved _glColorMaterial
+dlsym: unresolved glCopyPixels
+dlsym: unresolved glCopyPixels
+dlsym: unresolved glCopyPixels
+dlsym: unresolved _glCopyPixels
+dlsym: unresolved glCopyTexImage1D
+dlsym: unresolved glCopyTexImage1D
+dlsym: unresolved glCopyTexImage1D
+dlsym: unresolved _glCopyTexImage1D
+dlsym: unresolved glCopyTexSubImage1D
+dlsym: unresolved glCopyTexSubImage1D
+dlsym: unresolved glCopyTexSubImage1D
+dlsym: unresolved _glCopyTexSubImage1D
+dlsym: unresolved glDeleteLists
+dlsym: unresolved glDeleteLists
+dlsym: unresolved glDeleteLists
+dlsym: unresolved _glDeleteLists
+dlsym: unresolved glDrawPixels
+dlsym: unresolved glDrawPixels
+dlsym: unresolved glDrawPixels
+dlsym: unresolved _glDrawPixels
+dlsym: unresolved glEdgeFlag
+dlsym: unresolved glEdgeFlag
+dlsym: unresolved glEdgeFlag
+dlsym: unresolved _glEdgeFlag
+dlsym: unresolved glEdgeFlagPointer
+dlsym: unresolved glEdgeFlagPointer
+dlsym: unresolved glEdgeFlagPointer
+dlsym: unresolved _glEdgeFlagPointer
+dlsym: unresolved glEdgeFlagv
+dlsym: unresolved glEdgeFlagv
+dlsym: unresolved glEdgeFlagv
+dlsym: unresolved _glEdgeFlagv
+dlsym: unresolved glEndList
+dlsym: unresolved glEndList
+dlsym: unresolved glEndList
+dlsym: unresolved _glEndList
+dlsym: unresolved glEvalCoord1d
+dlsym: unresolved glEvalCoord1d
+dlsym: unresolved glEvalCoord1d
+dlsym: unresolved _glEvalCoord1d
+dlsym: unresolved glEvalCoord1dv
+dlsym: unresolved glEvalCoord1dv
+dlsym: unresolved glEvalCoord1dv
+dlsym: unresolved _glEvalCoord1dv
+dlsym: unresolved glEvalCoord1f
+dlsym: unresolved glEvalCoord1f
+dlsym: unresolved glEvalCoord1f
+dlsym: unresolved _glEvalCoord1f
+dlsym: unresolved glEvalCoord1fv
+dlsym: unresolved glEvalCoord1fv
+dlsym: unresolved glEvalCoord1fv
+dlsym: unresolved _glEvalCoord1fv
+dlsym: unresolved glEvalCoord2d
+dlsym: unresolved glEvalCoord2d
+dlsym: unresolved glEvalCoord2d
+dlsym: unresolved _glEvalCoord2d
+dlsym: unresolved glEvalCoord2dv
+dlsym: unresolved glEvalCoord2dv
+dlsym: unresolved glEvalCoord2dv
+dlsym: unresolved _glEvalCoord2dv
+dlsym: unresolved glEvalCoord2f
+dlsym: unresolved glEvalCoord2f
+dlsym: unresolved glEvalCoord2f
+dlsym: unresolved _glEvalCoord2f
+dlsym: unresolved glEvalCoord2fv
+dlsym: unresolved glEvalCoord2fv
+dlsym: unresolved glEvalCoord2fv
+dlsym: unresolved _glEvalCoord2fv
+dlsym: unresolved glEvalMesh1
+dlsym: unresolved glEvalMesh1
+dlsym: unresolved glEvalMesh1
+dlsym: unresolved _glEvalMesh1
+dlsym: unresolved glEvalMesh2
+dlsym: unresolved glEvalMesh2
+dlsym: unresolved glEvalMesh2
+dlsym: unresolved _glEvalMesh2
+dlsym: unresolved glEvalPoint1
+dlsym: unresolved glEvalPoint1
+dlsym: unresolved glEvalPoint1
+dlsym: unresolved _glEvalPoint1
+dlsym: unresolved glEvalPoint2
+dlsym: unresolved glEvalPoint2
+dlsym: unresolved glEvalPoint2
+dlsym: unresolved _glEvalPoint2
+dlsym: unresolved glFeedbackBuffer
+dlsym: unresolved glFeedbackBuffer
+dlsym: unresolved glFeedbackBuffer
+dlsym: unresolved _glFeedbackBuffer
+dlsym: unresolved glFogiv
+dlsym: unresolved glFogiv
+dlsym: unresolved glFogiv
+dlsym: unresolved _glFogiv
+dlsym: unresolved glFrustum
+dlsym: unresolved glFrustum
+dlsym: unresolved glFrustum
+dlsym: unresolved _glFrustum
+dlsym: unresolved glGenLists
+dlsym: unresolved glGenLists
+dlsym: unresolved glGenLists
+dlsym: unresolved _glGenLists
+dlsym: unresolved glGetClipPlane
+dlsym: unresolved glGetClipPlane
+dlsym: unresolved glGetClipPlane
+dlsym: unresolved _glGetClipPlane
+dlsym: unresolved glGetLightfv
+dlsym: unresolved glGetLightfv
+dlsym: unresolved glGetLightfv
+dlsym: unresolved _glGetLightfv
+dlsym: unresolved glGetLightiv
+dlsym: unresolved glGetLightiv
+dlsym: unresolved glGetLightiv
+dlsym: unresolved _glGetLightiv
+dlsym: unresolved glGetMapdv
+dlsym: unresolved glGetMapdv
+dlsym: unresolved glGetMapdv
+dlsym: unresolved _glGetMapdv
+dlsym: unresolved glGetMapfv
+dlsym: unresolved glGetMapfv
+dlsym: unresolved glGetMapfv
+dlsym: unresolved _glGetMapfv
+dlsym: unresolved glGetMapiv
+dlsym: unresolved glGetMapiv
+dlsym: unresolved glGetMapiv
+dlsym: unresolved _glGetMapiv
+dlsym: unresolved glGetMaterialfv
+dlsym: unresolved glGetMaterialfv
+dlsym: unresolved glGetMaterialfv
+dlsym: unresolved _glGetMaterialfv
+dlsym: unresolved glGetMaterialiv
+dlsym: unresolved glGetMaterialiv
+dlsym: unresolved glGetMaterialiv
+dlsym: unresolved _glGetMaterialiv
+dlsym: unresolved glGetPixelMapfv
+dlsym: unresolved glGetPixelMapfv
+dlsym: unresolved glGetPixelMapfv
+dlsym: unresolved _glGetPixelMapfv
+dlsym: unresolved glGetPixelMapuiv
+dlsym: unresolved glGetPixelMapuiv
+dlsym: unresolved glGetPixelMapuiv
+dlsym: unresolved _glGetPixelMapuiv
+dlsym: unresolved glGetPixelMapusv
+dlsym: unresolved glGetPixelMapusv
+dlsym: unresolved glGetPixelMapusv
+dlsym: unresolved _glGetPixelMapusv
+dlsym: unresolved glGetPointerv
+dlsym: unresolved glGetPointerv
+dlsym: unresolved glGetPointerv
+dlsym: unresolved _glGetPointerv
+dlsym: unresolved glGetPolygonStipple
+dlsym: unresolved glGetPolygonStipple
+dlsym: unresolved glGetPolygonStipple
+dlsym: unresolved _glGetPolygonStipple
+dlsym: unresolved glGetTexEnvfv
+dlsym: unresolved glGetTexEnvfv
+dlsym: unresolved glGetTexEnvfv
+dlsym: unresolved _glGetTexEnvfv
+dlsym: unresolved glGetTexEnviv
+dlsym: unresolved glGetTexEnviv
+dlsym: unresolved glGetTexEnviv
+dlsym: unresolved _glGetTexEnviv
+dlsym: unresolved glGetTexGendv
+dlsym: unresolved glGetTexGendv
+dlsym: unresolved glGetTexGendv
+dlsym: unresolved _glGetTexGendv
+dlsym: unresolved glGetTexGenfv
+dlsym: unresolved glGetTexGenfv
+dlsym: unresolved glGetTexGenfv
+dlsym: unresolved _glGetTexGenfv
+dlsym: unresolved glGetTexGeniv
+dlsym: unresolved glGetTexGeniv
+dlsym: unresolved glGetTexGeniv
+dlsym: unresolved _glGetTexGeniv
+dlsym: unresolved glGetTexLevelParameterfv
+dlsym: unresolved glGetTexLevelParameterfv
+dlsym: unresolved glGetTexLevelParameterfv
+dlsym: unresolved _glGetTexLevelParameterfv
+dlsym: unresolved glIndexMask
+dlsym: unresolved glIndexMask
+dlsym: unresolved glIndexMask
+dlsym: unresolved _glIndexMask
+dlsym: unresolved glIndexPointer
+dlsym: unresolved glIndexPointer
+dlsym: unresolved glIndexPointer
+dlsym: unresolved _glIndexPointer
+dlsym: unresolved glIndexd
+dlsym: unresolved glIndexd
+dlsym: unresolved glIndexd
+dlsym: unresolved _glIndexd
+dlsym: unresolved glIndexdv
+dlsym: unresolved glIndexdv
+dlsym: unresolved glIndexdv
+dlsym: unresolved _glIndexdv
+dlsym: unresolved glIndexf
+dlsym: unresolved glIndexf
+dlsym: unresolved glIndexf
+dlsym: unresolved _glIndexf
+dlsym: unresolved glIndexfv
+dlsym: unresolved glIndexfv
+dlsym: unresolved glIndexfv
+dlsym: unresolved _glIndexfv
+dlsym: unresolved glIndexi
+dlsym: unresolved glIndexi
+dlsym: unresolved glIndexi
+dlsym: unresolved _glIndexi
+dlsym: unresolved glIndexiv
+dlsym: unresolved glIndexiv
+dlsym: unresolved glIndexiv
+dlsym: unresolved _glIndexiv
+dlsym: unresolved glIndexs
+dlsym: unresolved glIndexs
+dlsym: unresolved glIndexs
+dlsym: unresolved _glIndexs
+dlsym: unresolved glIndexsv
+dlsym: unresolved glIndexsv
+dlsym: unresolved glIndexsv
+dlsym: unresolved _glIndexsv
+dlsym: unresolved glIndexub
+dlsym: unresolved glIndexub
+dlsym: unresolved glIndexub
+dlsym: unresolved _glIndexub
+dlsym: unresolved glIndexubv
+dlsym: unresolved glIndexubv
+dlsym: unresolved glIndexubv
+dlsym: unresolved _glIndexubv
+dlsym: unresolved glInitNames
+dlsym: unresolved glInitNames
+dlsym: unresolved glInitNames
+dlsym: unresolved _glInitNames
+dlsym: unresolved glInterleavedArrays
+dlsym: unresolved glInterleavedArrays
+dlsym: unresolved glInterleavedArrays
+dlsym: unresolved _glInterleavedArrays
+dlsym: unresolved glIsList
+dlsym: unresolved glIsList
+dlsym: unresolved glIsList
+dlsym: unresolved _glIsList
+dlsym: unresolved glLightModelf
+dlsym: unresolved glLightModelf
+dlsym: unresolved glLightModelf
+dlsym: unresolved _glLightModelf
+dlsym: unresolved glLightModeliv
+dlsym: unresolved glLightModeliv
+dlsym: unresolved glLightModeliv
+dlsym: unresolved _glLightModeliv
+dlsym: unresolved glLighti
+dlsym: unresolved glLighti
+dlsym: unresolved glLighti
+dlsym: unresolved _glLighti
+dlsym: unresolved glLightiv
+dlsym: unresolved glLightiv
+dlsym: unresolved glLightiv
+dlsym: unresolved _glLightiv
+dlsym: unresolved glLineStipple
+dlsym: unresolved glLineStipple
+dlsym: unresolved glLineStipple
+dlsym: unresolved _glLineStipple
+dlsym: unresolved glListBase
+dlsym: unresolved glListBase
+dlsym: unresolved glListBase
+dlsym: unresolved _glListBase
+dlsym: unresolved glLoadMatrixd
+dlsym: unresolved glLoadMatrixd
+dlsym: unresolved glLoadMatrixd
+dlsym: unresolved _glLoadMatrixd
+dlsym: unresolved glLoadName
+dlsym: unresolved glLoadName
+dlsym: unresolved glLoadName
+dlsym: unresolved _glLoadName
+dlsym: unresolved glLogicOp
+dlsym: unresolved glLogicOp
+dlsym: unresolved glLogicOp
+dlsym: unresolved _glLogicOp
+dlsym: unresolved glMap1d
+dlsym: unresolved glMap1d
+dlsym: unresolved glMap1d
+dlsym: unresolved _glMap1d
+dlsym: unresolved glMap1f
+dlsym: unresolved glMap1f
+dlsym: unresolved glMap1f
+dlsym: unresolved _glMap1f
+dlsym: unresolved glMap2d
+dlsym: unresolved glMap2d
+dlsym: unresolved glMap2d
+dlsym: unresolved _glMap2d
+dlsym: unresolved glMap2f
+dlsym: unresolved glMap2f
+dlsym: unresolved glMap2f
+dlsym: unresolved _glMap2f
+dlsym: unresolved glMapGrid1d
+dlsym: unresolved glMapGrid1d
+dlsym: unresolved glMapGrid1d
+dlsym: unresolved _glMapGrid1d
+dlsym: unresolved glMapGrid1f
+dlsym: unresolved glMapGrid1f
+dlsym: unresolved glMapGrid1f
+dlsym: unresolved _glMapGrid1f
+dlsym: unresolved glMapGrid2d
+dlsym: unresolved glMapGrid2d
+dlsym: unresolved glMapGrid2d
+dlsym: unresolved _glMapGrid2d
+dlsym: unresolved glMapGrid2f
+dlsym: unresolved glMapGrid2f
+dlsym: unresolved glMapGrid2f
+dlsym: unresolved _glMapGrid2f
+dlsym: unresolved glMateriali
+dlsym: unresolved glMateriali
+dlsym: unresolved glMateriali
+dlsym: unresolved _glMateriali
+dlsym: unresolved glMaterialiv
+dlsym: unresolved glMaterialiv
+dlsym: unresolved glMaterialiv
+dlsym: unresolved _glMaterialiv
+dlsym: unresolved glMultMatrixd
+dlsym: unresolved glMultMatrixd
+dlsym: unresolved glMultMatrixd
+dlsym: unresolved _glMultMatrixd
+dlsym: unresolved glNewList
+dlsym: unresolved glNewList
+dlsym: unresolved glNewList
+dlsym: unresolved _glNewList
+dlsym: unresolved glNormal3b
+dlsym: unresolved glNormal3b
+dlsym: unresolved glNormal3b
+dlsym: unresolved _glNormal3b
+dlsym: unresolved glNormal3bv
+dlsym: unresolved glNormal3bv
+dlsym: unresolved glNormal3bv
+dlsym: unresolved _glNormal3bv
+dlsym: unresolved glNormal3d
+dlsym: unresolved glNormal3d
+dlsym: unresolved glNormal3d
+dlsym: unresolved _glNormal3d
+dlsym: unresolved glNormal3dv
+dlsym: unresolved glNormal3dv
+dlsym: unresolved glNormal3dv
+dlsym: unresolved _glNormal3dv
+dlsym: unresolved glNormal3f
+dlsym: unresolved glNormal3f
+dlsym: unresolved glNormal3f
+dlsym: unresolved _glNormal3f
+dlsym: unresolved glNormal3fv
+dlsym: unresolved glNormal3fv
+dlsym: unresolved glNormal3fv
+dlsym: unresolved _glNormal3fv
+dlsym: unresolved glNormal3i
+dlsym: unresolved glNormal3i
+dlsym: unresolved glNormal3i
+dlsym: unresolved _glNormal3i
+dlsym: unresolved glNormal3iv
+dlsym: unresolved glNormal3iv
+dlsym: unresolved glNormal3iv
+dlsym: unresolved _glNormal3iv
+dlsym: unresolved glNormal3s
+dlsym: unresolved glNormal3s
+dlsym: unresolved glNormal3s
+dlsym: unresolved _glNormal3s
+dlsym: unresolved glNormal3sv
+dlsym: unresolved glNormal3sv
+dlsym: unresolved glNormal3sv
+dlsym: unresolved _glNormal3sv
+dlsym: unresolved glPassThrough
+dlsym: unresolved glPassThrough
+dlsym: unresolved glPassThrough
+dlsym: unresolved _glPassThrough
+dlsym: unresolved glPixelMapfv
+dlsym: unresolved glPixelMapfv
+dlsym: unresolved glPixelMapfv
+dlsym: unresolved _glPixelMapfv
+dlsym: unresolved glPixelMapuiv
+dlsym: unresolved glPixelMapuiv
+dlsym: unresolved glPixelMapuiv
+dlsym: unresolved _glPixelMapuiv
+dlsym: unresolved glPixelMapusv
+dlsym: unresolved glPixelMapusv
+dlsym: unresolved glPixelMapusv
+dlsym: unresolved _glPixelMapusv
+dlsym: unresolved glPixelStoref
+dlsym: unresolved glPixelStoref
+dlsym: unresolved glPixelStoref
+dlsym: unresolved _glPixelStoref
+dlsym: unresolved glPixelTransferf
+dlsym: unresolved glPixelTransferf
+dlsym: unresolved glPixelTransferf
+dlsym: unresolved _glPixelTransferf
+dlsym: unresolved glPixelTransferi
+dlsym: unresolved glPixelTransferi
+dlsym: unresolved glPixelTransferi
+dlsym: unresolved _glPixelTransferi
+dlsym: unresolved glPixelZoom
+dlsym: unresolved glPixelZoom
+dlsym: unresolved glPixelZoom
+dlsym: unresolved _glPixelZoom
+dlsym: unresolved glPolygonStipple
+dlsym: unresolved glPolygonStipple
+dlsym: unresolved glPolygonStipple
+dlsym: unresolved _glPolygonStipple
+dlsym: unresolved glPopAttrib
+dlsym: unresolved glPopAttrib
+dlsym: unresolved glPopAttrib
+dlsym: unresolved _glPopAttrib
+dlsym: unresolved glPopClientAttrib
+dlsym: unresolved glPopClientAttrib
+dlsym: unresolved glPopClientAttrib
+dlsym: unresolved _glPopClientAttrib
+dlsym: unresolved glPopName
+dlsym: unresolved glPopName
+dlsym: unresolved glPopName
+dlsym: unresolved _glPopName
+dlsym: unresolved glPrioritizeTextures
+dlsym: unresolved glPrioritizeTextures
+dlsym: unresolved glPrioritizeTextures
+dlsym: unresolved _glPrioritizeTextures
+dlsym: unresolved glPushAttrib
+dlsym: unresolved glPushAttrib
+dlsym: unresolved glPushAttrib
+dlsym: unresolved _glPushAttrib
+dlsym: unresolved glPushClientAttrib
+dlsym: unresolved glPushClientAttrib
+dlsym: unresolved glPushClientAttrib
+dlsym: unresolved _glPushClientAttrib
+dlsym: unresolved glPushName
+dlsym: unresolved glPushName
+dlsym: unresolved glPushName
+dlsym: unresolved _glPushName
+dlsym: unresolved glRasterPos2d
+dlsym: unresolved glRasterPos2d
+dlsym: unresolved glRasterPos2d
+dlsym: unresolved _glRasterPos2d
+dlsym: unresolved glRasterPos2dv
+dlsym: unresolved glRasterPos2dv
+dlsym: unresolved glRasterPos2dv
+dlsym: unresolved _glRasterPos2dv
+dlsym: unresolved glRasterPos2f
+dlsym: unresolved glRasterPos2f
+dlsym: unresolved glRasterPos2f
+dlsym: unresolved _glRasterPos2f
+dlsym: unresolved glRasterPos2fv
+dlsym: unresolved glRasterPos2fv
+dlsym: unresolved glRasterPos2fv
+dlsym: unresolved _glRasterPos2fv
+dlsym: unresolved glRasterPos2i
+dlsym: unresolved glRasterPos2i
+dlsym: unresolved glRasterPos2i
+dlsym: unresolved _glRasterPos2i
+dlsym: unresolved glRasterPos2iv
+dlsym: unresolved glRasterPos2iv
+dlsym: unresolved glRasterPos2iv
+dlsym: unresolved _glRasterPos2iv
+dlsym: unresolved glRasterPos2s
+dlsym: unresolved glRasterPos2s
+dlsym: unresolved glRasterPos2s
+dlsym: unresolved _glRasterPos2s
+dlsym: unresolved glRasterPos2sv
+dlsym: unresolved glRasterPos2sv
+dlsym: unresolved glRasterPos2sv
+dlsym: unresolved _glRasterPos2sv
+dlsym: unresolved glRasterPos3d
+dlsym: unresolved glRasterPos3d
+dlsym: unresolved glRasterPos3d
+dlsym: unresolved _glRasterPos3d
+dlsym: unresolved glRasterPos3dv
+dlsym: unresolved glRasterPos3dv
+dlsym: unresolved glRasterPos3dv
+dlsym: unresolved _glRasterPos3dv
+dlsym: unresolved glRasterPos3f
+dlsym: unresolved glRasterPos3f
+dlsym: unresolved glRasterPos3f
+dlsym: unresolved _glRasterPos3f
+dlsym: unresolved glRasterPos3fv
+dlsym: unresolved glRasterPos3fv
+dlsym: unresolved glRasterPos3fv
+dlsym: unresolved _glRasterPos3fv
+dlsym: unresolved glRasterPos3i
+dlsym: unresolved glRasterPos3i
+dlsym: unresolved glRasterPos3i
+dlsym: unresolved _glRasterPos3i
+dlsym: unresolved glRasterPos3iv
+dlsym: unresolved glRasterPos3iv
+dlsym: unresolved glRasterPos3iv
+dlsym: unresolved _glRasterPos3iv
+dlsym: unresolved glRasterPos3s
+dlsym: unresolved glRasterPos3s
+dlsym: unresolved glRasterPos3s
+dlsym: unresolved _glRasterPos3s
+dlsym: unresolved glRasterPos3sv
+dlsym: unresolved glRasterPos3sv
+dlsym: unresolved glRasterPos3sv
+dlsym: unresolved _glRasterPos3sv
+dlsym: unresolved glRasterPos4d
+dlsym: unresolved glRasterPos4d
+dlsym: unresolved glRasterPos4d
+dlsym: unresolved _glRasterPos4d
+dlsym: unresolved glRasterPos4dv
+dlsym: unresolved glRasterPos4dv
+dlsym: unresolved glRasterPos4dv
+dlsym: unresolved _glRasterPos4dv
+dlsym: unresolved glRasterPos4f
+dlsym: unresolved glRasterPos4f
+dlsym: unresolved glRasterPos4f
+dlsym: unresolved _glRasterPos4f
+dlsym: unresolved glRasterPos4fv
+dlsym: unresolved glRasterPos4fv
+dlsym: unresolved glRasterPos4fv
+dlsym: unresolved _glRasterPos4fv
+dlsym: unresolved glRasterPos4i
+dlsym: unresolved glRasterPos4i
+dlsym: unresolved glRasterPos4i
+dlsym: unresolved _glRasterPos4i
+dlsym: unresolved glRasterPos4iv
+dlsym: unresolved glRasterPos4iv
+dlsym: unresolved glRasterPos4iv
+dlsym: unresolved _glRasterPos4iv
+dlsym: unresolved glRasterPos4s
+dlsym: unresolved glRasterPos4s
+dlsym: unresolved glRasterPos4s
+dlsym: unresolved _glRasterPos4s
+dlsym: unresolved glRasterPos4sv
+dlsym: unresolved glRasterPos4sv
+dlsym: unresolved glRasterPos4sv
+dlsym: unresolved _glRasterPos4sv
+dlsym: unresolved glRectd
+dlsym: unresolved glRectd
+dlsym: unresolved glRectd
+dlsym: unresolved _glRectd
+dlsym: unresolved glRectdv
+dlsym: unresolved glRectdv
+dlsym: unresolved glRectdv
+dlsym: unresolved _glRectdv
+dlsym: unresolved glRectf
+dlsym: unresolved glRectf
+dlsym: unresolved glRectf
+dlsym: unresolved _glRectf
+dlsym: unresolved glRectfv
+dlsym: unresolved glRectfv
+dlsym: unresolved glRectfv
+dlsym: unresolved _glRectfv
+dlsym: unresolved glRecti
+dlsym: unresolved glRecti
+dlsym: unresolved glRecti
+dlsym: unresolved _glRecti
+dlsym: unresolved glRectiv
+dlsym: unresolved glRectiv
+dlsym: unresolved glRectiv
+dlsym: unresolved _glRectiv
+dlsym: unresolved glRects
+dlsym: unresolved glRects
+dlsym: unresolved glRects
+dlsym: unresolved _glRects
+dlsym: unresolved glRectsv
+dlsym: unresolved glRectsv
+dlsym: unresolved glRectsv
+dlsym: unresolved _glRectsv
+dlsym: unresolved glRenderMode
+dlsym: unresolved glRenderMode
+dlsym: unresolved glRenderMode
+dlsym: unresolved _glRenderMode
+dlsym: unresolved glRotated
+dlsym: unresolved glRotated
+dlsym: unresolved glRotated
+dlsym: unresolved _glRotated
+dlsym: unresolved glScaled
+dlsym: unresolved glScaled
+dlsym: unresolved glScaled
+dlsym: unresolved _glScaled
+dlsym: unresolved glSelectBuffer
+dlsym: unresolved glSelectBuffer
+dlsym: unresolved glSelectBuffer
+dlsym: unresolved _glSelectBuffer
+dlsym: unresolved glTexCoord1d
+dlsym: unresolved glTexCoord1d
+dlsym: unresolved glTexCoord1d
+dlsym: unresolved _glTexCoord1d
+dlsym: unresolved glTexCoord1dv
+dlsym: unresolved glTexCoord1dv
+dlsym: unresolved glTexCoord1dv
+dlsym: unresolved _glTexCoord1dv
+dlsym: unresolved glTexCoord1f
+dlsym: unresolved glTexCoord1f
+dlsym: unresolved glTexCoord1f
+dlsym: unresolved _glTexCoord1f
+dlsym: unresolved glTexCoord1fv
+dlsym: unresolved glTexCoord1fv
+dlsym: unresolved glTexCoord1fv
+dlsym: unresolved _glTexCoord1fv
+dlsym: unresolved glTexCoord1i
+dlsym: unresolved glTexCoord1i
+dlsym: unresolved glTexCoord1i
+dlsym: unresolved _glTexCoord1i
+dlsym: unresolved glTexCoord1iv
+dlsym: unresolved glTexCoord1iv
+dlsym: unresolved glTexCoord1iv
+dlsym: unresolved _glTexCoord1iv
+dlsym: unresolved glTexCoord1s
+dlsym: unresolved glTexCoord1s
+dlsym: unresolved glTexCoord1s
+dlsym: unresolved _glTexCoord1s
+dlsym: unresolved glTexCoord1sv
+dlsym: unresolved glTexCoord1sv
+dlsym: unresolved glTexCoord1sv
+dlsym: unresolved _glTexCoord1sv
+dlsym: unresolved glTexCoord2d
+dlsym: unresolved glTexCoord2d
+dlsym: unresolved glTexCoord2d
+dlsym: unresolved _glTexCoord2d
+dlsym: unresolved glTexCoord2dv
+dlsym: unresolved glTexCoord2dv
+dlsym: unresolved glTexCoord2dv
+dlsym: unresolved _glTexCoord2dv
+dlsym: unresolved glTexCoord2fv
+dlsym: unresolved glTexCoord2fv
+dlsym: unresolved glTexCoord2fv
+dlsym: unresolved _glTexCoord2fv
+dlsym: unresolved glTexCoord2i
+dlsym: unresolved glTexCoord2i
+dlsym: unresolved glTexCoord2i
+dlsym: unresolved _glTexCoord2i
+dlsym: unresolved glTexCoord2iv
+dlsym: unresolved glTexCoord2iv
+dlsym: unresolved glTexCoord2iv
+dlsym: unresolved _glTexCoord2iv
+dlsym: unresolved glTexCoord2s
+dlsym: unresolved glTexCoord2s
+dlsym: unresolved glTexCoord2s
+dlsym: unresolved _glTexCoord2s
+dlsym: unresolved glTexCoord2sv
+dlsym: unresolved glTexCoord2sv
+dlsym: unresolved glTexCoord2sv
+dlsym: unresolved _glTexCoord2sv
+dlsym: unresolved glTexCoord3d
+dlsym: unresolved glTexCoord3d
+dlsym: unresolved glTexCoord3d
+dlsym: unresolved _glTexCoord3d
+dlsym: unresolved glTexCoord3dv
+dlsym: unresolved glTexCoord3dv
+dlsym: unresolved glTexCoord3dv
+dlsym: unresolved _glTexCoord3dv
+dlsym: unresolved glTexCoord3fv
+dlsym: unresolved glTexCoord3fv
+dlsym: unresolved glTexCoord3fv
+dlsym: unresolved _glTexCoord3fv
+dlsym: unresolved glTexCoord3i
+dlsym: unresolved glTexCoord3i
+dlsym: unresolved glTexCoord3i
+dlsym: unresolved _glTexCoord3i
+dlsym: unresolved glTexCoord3iv
+dlsym: unresolved glTexCoord3iv
+dlsym: unresolved glTexCoord3iv
+dlsym: unresolved _glTexCoord3iv
+dlsym: unresolved glTexCoord3s
+dlsym: unresolved glTexCoord3s
+dlsym: unresolved glTexCoord3s
+dlsym: unresolved _glTexCoord3s
+dlsym: unresolved glTexCoord3sv
+dlsym: unresolved glTexCoord3sv
+dlsym: unresolved glTexCoord3sv
+dlsym: unresolved _glTexCoord3sv
+dlsym: unresolved glTexCoord4d
+dlsym: unresolved glTexCoord4d
+dlsym: unresolved glTexCoord4d
+dlsym: unresolved _glTexCoord4d
+dlsym: unresolved glTexCoord4dv
+dlsym: unresolved glTexCoord4dv
+dlsym: unresolved glTexCoord4dv
+dlsym: unresolved _glTexCoord4dv
+dlsym: unresolved glTexCoord4f
+dlsym: unresolved glTexCoord4f
+dlsym: unresolved glTexCoord4f
+dlsym: unresolved _glTexCoord4f
+dlsym: unresolved glTexCoord4fv
+dlsym: unresolved glTexCoord4fv
+dlsym: unresolved glTexCoord4fv
+dlsym: unresolved _glTexCoord4fv
+dlsym: unresolved glTexCoord4i
+dlsym: unresolved glTexCoord4i
+dlsym: unresolved glTexCoord4i
+dlsym: unresolved _glTexCoord4i
+dlsym: unresolved glTexCoord4iv
+dlsym: unresolved glTexCoord4iv
+dlsym: unresolved glTexCoord4iv
+dlsym: unresolved _glTexCoord4iv
+dlsym: unresolved glTexCoord4s
+dlsym: unresolved glTexCoord4s
+dlsym: unresolved glTexCoord4s
+dlsym: unresolved _glTexCoord4s
+dlsym: unresolved glTexCoord4sv
+dlsym: unresolved glTexCoord4sv
+dlsym: unresolved glTexCoord4sv
+dlsym: unresolved _glTexCoord4sv
+dlsym: unresolved glTexEnviv
+dlsym: unresolved glTexEnviv
+dlsym: unresolved glTexEnviv
+dlsym: unresolved _glTexEnviv
+dlsym: unresolved glTexGend
+dlsym: unresolved glTexGend
+dlsym: unresolved glTexGend
+dlsym: unresolved _glTexGend
+dlsym: unresolved glTexGendv
+dlsym: unresolved glTexGendv
+dlsym: unresolved glTexGendv
+dlsym: unresolved _glTexGendv
+dlsym: unresolved glTexGeniv
+dlsym: unresolved glTexGeniv
+dlsym: unresolved glTexGeniv
+dlsym: unresolved _glTexGeniv
+dlsym: unresolved glTexImage1D
+dlsym: unresolved glTexImage1D
+dlsym: unresolved glTexImage1D
+dlsym: unresolved _glTexImage1D
+dlsym: unresolved glTexSubImage1D
+dlsym: unresolved glTexSubImage1D
+dlsym: unresolved glTexSubImage1D
+dlsym: unresolved _glTexSubImage1D
+dlsym: unresolved glTranslated
+dlsym: unresolved glTranslated
+dlsym: unresolved glTranslated
+dlsym: unresolved _glTranslated
+dlsym: unresolved glVertex2d
+dlsym: unresolved glVertex2d
+dlsym: unresolved glVertex2d
+dlsym: unresolved _glVertex2d
+dlsym: unresolved glVertex2dv
+dlsym: unresolved glVertex2dv
+dlsym: unresolved glVertex2dv
+dlsym: unresolved _glVertex2dv
+dlsym: unresolved glVertex2fv
+dlsym: unresolved glVertex2fv
+dlsym: unresolved glVertex2fv
+dlsym: unresolved _glVertex2fv
+dlsym: unresolved glVertex2iv
+dlsym: unresolved glVertex2iv
+dlsym: unresolved glVertex2iv
+dlsym: unresolved _glVertex2iv
+dlsym: unresolved glVertex2s
+dlsym: unresolved glVertex2s
+dlsym: unresolved glVertex2s
+dlsym: unresolved _glVertex2s
+dlsym: unresolved glVertex2sv
+dlsym: unresolved glVertex2sv
+dlsym: unresolved glVertex2sv
+dlsym: unresolved _glVertex2sv
+dlsym: unresolved glVertex3d
+dlsym: unresolved glVertex3d
+dlsym: unresolved glVertex3d
+dlsym: unresolved _glVertex3d
+dlsym: unresolved glVertex3dv
+dlsym: unresolved glVertex3dv
+dlsym: unresolved glVertex3dv
+dlsym: unresolved _glVertex3dv
+dlsym: unresolved glVertex3i
+dlsym: unresolved glVertex3i
+dlsym: unresolved glVertex3i
+dlsym: unresolved _glVertex3i
+dlsym: unresolved glVertex3iv
+dlsym: unresolved glVertex3iv
+dlsym: unresolved glVertex3iv
+dlsym: unresolved _glVertex3iv
+dlsym: unresolved glVertex3s
+dlsym: unresolved glVertex3s
+dlsym: unresolved glVertex3s
+dlsym: unresolved _glVertex3s
+dlsym: unresolved glVertex3sv
+dlsym: unresolved glVertex3sv
+dlsym: unresolved glVertex3sv
+dlsym: unresolved _glVertex3sv
+dlsym: unresolved glVertex4d
+dlsym: unresolved glVertex4d
+dlsym: unresolved glVertex4d
+dlsym: unresolved _glVertex4d
+dlsym: unresolved glVertex4dv
+dlsym: unresolved glVertex4dv
+dlsym: unresolved glVertex4dv
+dlsym: unresolved _glVertex4dv
+dlsym: unresolved glVertex4f
+dlsym: unresolved glVertex4f
+dlsym: unresolved glVertex4f
+dlsym: unresolved _glVertex4f
+dlsym: unresolved glVertex4fv
+dlsym: unresolved glVertex4fv
+dlsym: unresolved glVertex4fv
+dlsym: unresolved _glVertex4fv
+dlsym: unresolved glVertex4i
+dlsym: unresolved glVertex4i
+dlsym: unresolved glVertex4i
+dlsym: unresolved _glVertex4i
+dlsym: unresolved glVertex4iv
+dlsym: unresolved glVertex4iv
+dlsym: unresolved glVertex4iv
+dlsym: unresolved _glVertex4iv
+dlsym: unresolved glVertex4s
+dlsym: unresolved glVertex4s
+dlsym: unresolved glVertex4s
+dlsym: unresolved _glVertex4s
+dlsym: unresolved glVertex4sv
+dlsym: unresolved glVertex4sv
+dlsym: unresolved glVertex4sv
+dlsym: unresolved _glVertex4sv
+dlsym: unresolved glColorSubTableEXT
+dlsym: unresolved glColorSubTableEXT
+dlsym: unresolved glColorSubTableEXT
+dlsym: unresolved _glColorSubTableEXT
+dlsym: unresolved glGetColorTableEXT
+dlsym: unresolved glGetColorTableEXT
+dlsym: unresolved glGetColorTableEXT
+dlsym: unresolved _glGetColorTableEXT
+EGL: eglGetProcAddress(glGetColorTableEXT) -> NULL
+dlsym: unresolved glGetColorTableEXT
+dlsym: unresolved glGetColorTableEXT
+dlsym: unresolved glGetColorTableEXT
+dlsym: unresolved glGetColorTableEXT
+dlsym: unresolved glGetColorTableParameterivEXT
+dlsym: unresolved glGetColorTableParameterivEXT
+dlsym: unresolved glGetColorTableParameterivEXT
+dlsym: unresolved _glGetColorTableParameterivEXT
+EGL: eglGetProcAddress(glGetColorTableParameterivEXT) -> NULL
+dlsym: unresolved glGetColorTableParameterivEXT
+dlsym: unresolved glGetColorTableParameterivEXT
+dlsym: unresolved glGetColorTableParameterivEXT
+dlsym: unresolved glGetColorTableParameterivEXT
+dlsym: unresolved glGetColorTableParameterfvEXT
+dlsym: unresolved glGetColorTableParameterfvEXT
+dlsym: unresolved glGetColorTableParameterfvEXT
+dlsym: unresolved _glGetColorTableParameterfvEXT
+EGL: eglGetProcAddress(glGetColorTableParameterfvEXT) -> NULL
+dlsym: unresolved glGetColorTableParameterfvEXT
+dlsym: unresolved glGetColorTableParameterfvEXT
+dlsym: unresolved glGetColorTableParameterfvEXT
+dlsym: unresolved glGetColorTableParameterfvEXT
+dlsym: unresolved glCompressedTexImage3DARB
+dlsym: unresolved glCompressedTexImage3DARB
+dlsym: unresolved glCompressedTexImage3DARB
+dlsym: unresolved _glCompressedTexImage3DARB
+dlsym: unresolved glCompressedTexImage1DARB
+dlsym: unresolved glCompressedTexImage1DARB
+dlsym: unresolved glCompressedTexImage1DARB
+dlsym: unresolved _glCompressedTexImage1DARB
+dlsym: unresolved glCompressedTexSubImage3DARB
+dlsym: unresolved glCompressedTexSubImage3DARB
+dlsym: unresolved glCompressedTexSubImage3DARB
+dlsym: unresolved _glCompressedTexSubImage3DARB
+dlsym: unresolved glCompressedTexSubImage1DARB
+dlsym: unresolved glCompressedTexSubImage1DARB
+dlsym: unresolved glCompressedTexSubImage1DARB
+dlsym: unresolved _glCompressedTexSubImage1DARB
+dlsym: unresolved glDepthBoundsEXT
+dlsym: unresolved glDepthBoundsEXT
+dlsym: unresolved glDepthBoundsEXT
+dlsym: unresolved _glDepthBoundsEXT
+dlsym: unresolved glLockArraysEXT
+dlsym: unresolved glLockArraysEXT
+dlsym: unresolved glLockArraysEXT
+dlsym: unresolved _glLockArraysEXT
+dlsym: unresolved glUnlockArraysEXT
+dlsym: unresolved glUnlockArraysEXT
+dlsym: unresolved glUnlockArraysEXT
+dlsym: unresolved _glUnlockArraysEXT
+dlsym: unresolved wglSwapIntervalEXT
+dlsym: unresolved wglSwapIntervalEXT
+dlsym: unresolved wglSwapIntervalEXT
+dlsym: unresolved _wglSwapIntervalEXT
+EGL: eglGetProcAddress(wglSwapIntervalEXT) -> NULL
+dlsym: unresolved wglSwapIntervalEXT
+dlsym: unresolved wglSwapIntervalEXT
+dlsym: unresolved wglSwapIntervalEXT
+dlsym: unresolved wglSwapIntervalEXT
+dlsym: unresolved wglGetPixelFormatAttribivARB
+dlsym: unresolved wglGetPixelFormatAttribivARB
+dlsym: unresolved wglGetPixelFormatAttribivARB
+dlsym: unresolved _wglGetPixelFormatAttribivARB
+EGL: eglGetProcAddress(wglGetPixelFormatAttribivARB) -> NULL
+dlsym: unresolved wglGetPixelFormatAttribivARB
+dlsym: unresolved wglGetPixelFormatAttribivARB
+dlsym: unresolved wglGetPixelFormatAttribivARB
+dlsym: unresolved wglGetPixelFormatAttribivARB
+dlsym: unresolved wglGetPixelFormatAttribfvARB
+dlsym: unresolved wglGetPixelFormatAttribfvARB
+dlsym: unresolved wglGetPixelFormatAttribfvARB
+dlsym: unresolved _wglGetPixelFormatAttribfvARB
+EGL: eglGetProcAddress(wglGetPixelFormatAttribfvARB) -> NULL
+dlsym: unresolved wglGetPixelFormatAttribfvARB
+dlsym: unresolved wglGetPixelFormatAttribfvARB
+dlsym: unresolved wglGetPixelFormatAttribfvARB
+dlsym: unresolved wglGetPixelFormatAttribfvARB
+dlsym: unresolved wglChoosePixelFormatARB
+dlsym: unresolved wglChoosePixelFormatARB
+dlsym: unresolved wglChoosePixelFormatARB
+dlsym: unresolved _wglChoosePixelFormatARB
+EGL: eglGetProcAddress(wglChoosePixelFormatARB) -> NULL
+dlsym: unresolved wglChoosePixelFormatARB
+dlsym: unresolved wglChoosePixelFormatARB
+dlsym: unresolved wglChoosePixelFormatARB
+dlsym: unresolved wglChoosePixelFormatARB
+dlsym: unresolved wglBindTexImageARB
+dlsym: unresolved wglBindTexImageARB
+dlsym: unresolved wglBindTexImageARB
+dlsym: unresolved _wglBindTexImageARB
+EGL: eglGetProcAddress(wglBindTexImageARB) -> NULL
+dlsym: unresolved wglBindTexImageARB
+dlsym: unresolved wglBindTexImageARB
+dlsym: unresolved wglBindTexImageARB
+dlsym: unresolved wglBindTexImageARB
+dlsym: unresolved wglReleaseTexImageARB
+dlsym: unresolved wglReleaseTexImageARB
+dlsym: unresolved wglReleaseTexImageARB
+dlsym: unresolved _wglReleaseTexImageARB
+EGL: eglGetProcAddress(wglReleaseTexImageARB) -> NULL
+dlsym: unresolved wglReleaseTexImageARB
+dlsym: unresolved wglReleaseTexImageARB
+dlsym: unresolved wglReleaseTexImageARB
+dlsym: unresolved wglReleaseTexImageARB
+dlsym: unresolved wglMakeContextCurrentARB
+dlsym: unresolved wglMakeContextCurrentARB
+dlsym: unresolved wglMakeContextCurrentARB
+dlsym: unresolved _wglMakeContextCurrentARB
+EGL: eglGetProcAddress(wglMakeContextCurrentARB) -> NULL
+dlsym: unresolved wglMakeContextCurrentARB
+dlsym: unresolved wglMakeContextCurrentARB
+dlsym: unresolved wglMakeContextCurrentARB
+dlsym: unresolved wglMakeContextCurrentARB
+dlsym: unresolved wglGetCurrentReadDCARB
+dlsym: unresolved wglGetCurrentReadDCARB
+dlsym: unresolved wglGetCurrentReadDCARB
+dlsym: unresolved _wglGetCurrentReadDCARB
+EGL: eglGetProcAddress(wglGetCurrentReadDCARB) -> NULL
+dlsym: unresolved wglGetCurrentReadDCARB
+dlsym: unresolved wglGetCurrentReadDCARB
+dlsym: unresolved wglGetCurrentReadDCARB
+dlsym: unresolved wglGetCurrentReadDCARB
+dlsym: unresolved glSampleCoverageARB
+dlsym: unresolved glSampleCoverageARB
+dlsym: unresolved glSampleCoverageARB
+dlsym: unresolved _glSampleCoverageARB
+dlsym: unresolved wglCreatePbufferARB
+dlsym: unresolved wglCreatePbufferARB
+dlsym: unresolved wglCreatePbufferARB
+dlsym: unresolved _wglCreatePbufferARB
+EGL: eglGetProcAddress(wglCreatePbufferARB) -> NULL
+dlsym: unresolved wglCreatePbufferARB
+dlsym: unresolved wglCreatePbufferARB
+dlsym: unresolved wglCreatePbufferARB
+dlsym: unresolved wglCreatePbufferARB
+dlsym: unresolved wglGetPbufferDCARB
+dlsym: unresolved wglGetPbufferDCARB
+dlsym: unresolved wglGetPbufferDCARB
+dlsym: unresolved _wglGetPbufferDCARB
+EGL: eglGetProcAddress(wglGetPbufferDCARB) -> NULL
+dlsym: unresolved wglGetPbufferDCARB
+dlsym: unresolved wglGetPbufferDCARB
+dlsym: unresolved wglGetPbufferDCARB
+dlsym: unresolved wglGetPbufferDCARB
+dlsym: unresolved wglReleasePbufferDCARB
+dlsym: unresolved wglReleasePbufferDCARB
+dlsym: unresolved wglReleasePbufferDCARB
+dlsym: unresolved _wglReleasePbufferDCARB
+EGL: eglGetProcAddress(wglReleasePbufferDCARB) -> NULL
+dlsym: unresolved wglReleasePbufferDCARB
+dlsym: unresolved wglReleasePbufferDCARB
+dlsym: unresolved wglReleasePbufferDCARB
+dlsym: unresolved wglReleasePbufferDCARB
+dlsym: unresolved wglDestroyPbufferARB
+dlsym: unresolved wglDestroyPbufferARB
+dlsym: unresolved wglDestroyPbufferARB
+dlsym: unresolved _wglDestroyPbufferARB
+EGL: eglGetProcAddress(wglDestroyPbufferARB) -> NULL
+dlsym: unresolved wglDestroyPbufferARB
+dlsym: unresolved wglDestroyPbufferARB
+dlsym: unresolved wglDestroyPbufferARB
+dlsym: unresolved wglDestroyPbufferARB
+dlsym: unresolved wglQueryPbufferARB
+dlsym: unresolved wglQueryPbufferARB
+dlsym: unresolved wglQueryPbufferARB
+dlsym: unresolved _wglQueryPbufferARB
+EGL: eglGetProcAddress(wglQueryPbufferARB) -> NULL
+dlsym: unresolved wglQueryPbufferARB
+dlsym: unresolved wglQueryPbufferARB
+dlsym: unresolved wglQueryPbufferARB
+dlsym: unresolved wglQueryPbufferARB
+dlsym: unresolved wglCreateBufferRegionARB
+dlsym: unresolved wglCreateBufferRegionARB
+dlsym: unresolved wglCreateBufferRegionARB
+dlsym: unresolved _wglCreateBufferRegionARB
+EGL: eglGetProcAddress(wglCreateBufferRegionARB) -> NULL
+dlsym: unresolved wglCreateBufferRegionARB
+dlsym: unresolved wglCreateBufferRegionARB
+dlsym: unresolved wglCreateBufferRegionARB
+dlsym: unresolved wglCreateBufferRegionARB
+dlsym: unresolved wglDeleteBufferRegionARB
+dlsym: unresolved wglDeleteBufferRegionARB
+dlsym: unresolved wglDeleteBufferRegionARB
+dlsym: unresolved _wglDeleteBufferRegionARB
+EGL: eglGetProcAddress(wglDeleteBufferRegionARB) -> NULL
+dlsym: unresolved wglDeleteBufferRegionARB
+dlsym: unresolved wglDeleteBufferRegionARB
+dlsym: unresolved wglDeleteBufferRegionARB
+dlsym: unresolved wglDeleteBufferRegionARB
+dlsym: unresolved wglSaveBufferRegionARB
+dlsym: unresolved wglSaveBufferRegionARB
+dlsym: unresolved wglSaveBufferRegionARB
+dlsym: unresolved _wglSaveBufferRegionARB
+EGL: eglGetProcAddress(wglSaveBufferRegionARB) -> NULL
+dlsym: unresolved wglSaveBufferRegionARB
+dlsym: unresolved wglSaveBufferRegionARB
+dlsym: unresolved wglSaveBufferRegionARB
+dlsym: unresolved wglSaveBufferRegionARB
+dlsym: unresolved wglRestoreBufferRegionARB
+dlsym: unresolved wglRestoreBufferRegionARB
+dlsym: unresolved wglRestoreBufferRegionARB
+dlsym: unresolved _wglRestoreBufferRegionARB
+EGL: eglGetProcAddress(wglRestoreBufferRegionARB) -> NULL
+dlsym: unresolved wglRestoreBufferRegionARB
+dlsym: unresolved wglRestoreBufferRegionARB
+dlsym: unresolved wglRestoreBufferRegionARB
+dlsym: unresolved wglRestoreBufferRegionARB
+dlsym: unresolved wglGetDeviceGammaRamp3DFX
+dlsym: unresolved wglGetDeviceGammaRamp3DFX
+dlsym: unresolved wglGetDeviceGammaRamp3DFX
+dlsym: unresolved _wglGetDeviceGammaRamp3DFX
+EGL: eglGetProcAddress(wglGetDeviceGammaRamp3DFX) -> NULL
+dlsym: unresolved wglGetDeviceGammaRamp3DFX
+dlsym: unresolved wglGetDeviceGammaRamp3DFX
+dlsym: unresolved wglGetDeviceGammaRamp3DFX
+dlsym: unresolved wglGetDeviceGammaRamp3DFX
+dlsym: unresolved wglSetDeviceGammaRamp3DFX
+dlsym: unresolved wglSetDeviceGammaRamp3DFX
+dlsym: unresolved wglSetDeviceGammaRamp3DFX
+dlsym: unresolved _wglSetDeviceGammaRamp3DFX
+EGL: eglGetProcAddress(wglSetDeviceGammaRamp3DFX) -> NULL
+dlsym: unresolved wglSetDeviceGammaRamp3DFX
+dlsym: unresolved wglSetDeviceGammaRamp3DFX
+dlsym: unresolved wglSetDeviceGammaRamp3DFX
+dlsym: unresolved wglSetDeviceGammaRamp3DFX
+dlsym: unresolved glMultiTexCoord1fARB
+dlsym: unresolved glMultiTexCoord1fARB
+dlsym: unresolved glMultiTexCoord1fARB
+dlsym: unresolved _glMultiTexCoord1fARB
+dlsym: unresolved glMultiTexCoord2fARB
+dlsym: unresolved glMultiTexCoord2fARB
+dlsym: unresolved glMultiTexCoord2fARB
+dlsym: unresolved _glMultiTexCoord2fARB
+dlsym: unresolved glMultiTexCoord3fARB
+dlsym: unresolved glMultiTexCoord3fARB
+dlsym: unresolved glMultiTexCoord3fARB
+dlsym: unresolved _glMultiTexCoord3fARB
+dlsym: unresolved glMultiTexCoord4fARB
+dlsym: unresolved glMultiTexCoord4fARB
+dlsym: unresolved glMultiTexCoord4fARB
+dlsym: unresolved _glMultiTexCoord4fARB
+dlsym: unresolved glMultiTexCoord1fvARB
+dlsym: unresolved glMultiTexCoord1fvARB
+dlsym: unresolved glMultiTexCoord1fvARB
+dlsym: unresolved _glMultiTexCoord1fvARB
+dlsym: unresolved glMultiTexCoord2fvARB
+dlsym: unresolved glMultiTexCoord2fvARB
+dlsym: unresolved glMultiTexCoord2fvARB
+dlsym: unresolved _glMultiTexCoord2fvARB
+dlsym: unresolved glMultiTexCoord3fvARB
+dlsym: unresolved glMultiTexCoord3fvARB
+dlsym: unresolved glMultiTexCoord3fvARB
+dlsym: unresolved _glMultiTexCoord3fvARB
+dlsym: unresolved glMultiTexCoord4fvARB
+dlsym: unresolved glMultiTexCoord4fvARB
+dlsym: unresolved glMultiTexCoord4fvARB
+dlsym: unresolved _glMultiTexCoord4fvARB
+dlsym: unresolved glActiveTextureARB
+dlsym: unresolved glActiveTextureARB
+dlsym: unresolved glActiveTextureARB
+dlsym: unresolved _glActiveTextureARB
+dlsym: unresolved glClientActiveTextureARB
+dlsym: unresolved glClientActiveTextureARB
+dlsym: unresolved glClientActiveTextureARB
+dlsym: unresolved _glClientActiveTextureARB
+dlsym: unresolved glPointParameterfEXT
+dlsym: unresolved glPointParameterfEXT
+dlsym: unresolved glPointParameterfEXT
+dlsym: unresolved _glPointParameterfEXT
+dlsym: unresolved glPointParameterfvEXT
+dlsym: unresolved glPointParameterfvEXT
+dlsym: unresolved glPointParameterfvEXT
+dlsym: unresolved _glPointParameterfvEXT
+dlsym: unresolved glCullParameterdvSGI
+dlsym: unresolved glCullParameterdvSGI
+dlsym: unresolved glCullParameterdvSGI
+dlsym: unresolved _glCullParameterdvSGI
+EGL: eglGetProcAddress(glCullParameterdvSGI) -> NULL
+dlsym: unresolved glCullParameterdvSGI
+dlsym: unresolved glCullParameterdvSGI
+dlsym: unresolved glCullParameterdvSGI
+dlsym: unresolved glCullParameterdvSGI
+dlsym: unresolved glCullParameterfvSGI
+dlsym: unresolved glCullParameterfvSGI
+dlsym: unresolved glCullParameterfvSGI
+dlsym: unresolved _glCullParameterfvSGI
+EGL: eglGetProcAddress(glCullParameterfvSGI) -> NULL
+dlsym: unresolved glCullParameterfvSGI
+dlsym: unresolved glCullParameterfvSGI
+dlsym: unresolved glCullParameterfvSGI
+dlsym: unresolved glCullParameterfvSGI
+dlsym: unresolved glVertexArrayRangeNV
+dlsym: unresolved glVertexArrayRangeNV
+dlsym: unresolved glVertexArrayRangeNV
+dlsym: unresolved _glVertexArrayRangeNV
+EGL: eglGetProcAddress(glVertexArrayRangeNV) -> NULL
+dlsym: unresolved glVertexArrayRangeNV
+dlsym: unresolved glVertexArrayRangeNV
+dlsym: unresolved glVertexArrayRangeNV
+dlsym: unresolved glVertexArrayRangeNV
+dlsym: unresolved glFlushVertexArrayRangeNV
+dlsym: unresolved glFlushVertexArrayRangeNV
+dlsym: unresolved glFlushVertexArrayRangeNV
+dlsym: unresolved _glFlushVertexArrayRangeNV
+EGL: eglGetProcAddress(glFlushVertexArrayRangeNV) -> NULL
+dlsym: unresolved glFlushVertexArrayRangeNV
+dlsym: unresolved glFlushVertexArrayRangeNV
+dlsym: unresolved glFlushVertexArrayRangeNV
+dlsym: unresolved glFlushVertexArrayRangeNV
+dlsym: unresolved wglAllocateMemoryNV
+dlsym: unresolved wglAllocateMemoryNV
+dlsym: unresolved wglAllocateMemoryNV
+dlsym: unresolved _wglAllocateMemoryNV
+EGL: eglGetProcAddress(wglAllocateMemoryNV) -> NULL
+dlsym: unresolved wglAllocateMemoryNV
+dlsym: unresolved wglAllocateMemoryNV
+dlsym: unresolved wglAllocateMemoryNV
+dlsym: unresolved wglAllocateMemoryNV
+dlsym: unresolved wglFreeMemoryNV
+dlsym: unresolved wglFreeMemoryNV
+dlsym: unresolved wglFreeMemoryNV
+dlsym: unresolved _wglFreeMemoryNV
+EGL: eglGetProcAddress(wglFreeMemoryNV) -> NULL
+dlsym: unresolved wglFreeMemoryNV
+dlsym: unresolved wglFreeMemoryNV
+dlsym: unresolved wglFreeMemoryNV
+dlsym: unresolved wglFreeMemoryNV
+dlsym: unresolved glDeleteFencesNV
+dlsym: unresolved glDeleteFencesNV
+dlsym: unresolved glDeleteFencesNV
+dlsym: unresolved _glDeleteFencesNV
+EGL: eglGetProcAddress(glDeleteFencesNV) -> NULL
+dlsym: unresolved glDeleteFencesNV
+dlsym: unresolved glDeleteFencesNV
+dlsym: unresolved glDeleteFencesNV
+dlsym: unresolved glDeleteFencesNV
+dlsym: unresolved glIsFenceNV
+dlsym: unresolved glIsFenceNV
+dlsym: unresolved glIsFenceNV
+dlsym: unresolved _glIsFenceNV
+EGL: eglGetProcAddress(glIsFenceNV) -> NULL
+dlsym: unresolved glIsFenceNV
+dlsym: unresolved glIsFenceNV
+dlsym: unresolved glIsFenceNV
+dlsym: unresolved glIsFenceNV
+dlsym: unresolved glGetFenceivNV
+dlsym: unresolved glGetFenceivNV
+dlsym: unresolved glGetFenceivNV
+dlsym: unresolved _glGetFenceivNV
+EGL: eglGetProcAddress(glGetFenceivNV) -> NULL
+dlsym: unresolved glGetFenceivNV
+dlsym: unresolved glGetFenceivNV
+dlsym: unresolved glGetFenceivNV
+dlsym: unresolved glGetFenceivNV
+dlsym: unresolved glSecondaryColor3bEXT
+dlsym: unresolved glSecondaryColor3bEXT
+dlsym: unresolved glSecondaryColor3bEXT
+dlsym: unresolved _glSecondaryColor3bEXT
+dlsym: unresolved glSecondaryColor3bvEXT
+dlsym: unresolved glSecondaryColor3bvEXT
+dlsym: unresolved glSecondaryColor3bvEXT
+dlsym: unresolved _glSecondaryColor3bvEXT
+dlsym: unresolved glSecondaryColor3dEXT
+dlsym: unresolved glSecondaryColor3dEXT
+dlsym: unresolved glSecondaryColor3dEXT
+dlsym: unresolved _glSecondaryColor3dEXT
+dlsym: unresolved glSecondaryColor3dvEXT
+dlsym: unresolved glSecondaryColor3dvEXT
+dlsym: unresolved glSecondaryColor3dvEXT
+dlsym: unresolved _glSecondaryColor3dvEXT
+dlsym: unresolved glSecondaryColor3fEXT
+dlsym: unresolved glSecondaryColor3fEXT
+dlsym: unresolved glSecondaryColor3fEXT
+dlsym: unresolved _glSecondaryColor3fEXT
+dlsym: unresolved glSecondaryColor3fvEXT
+dlsym: unresolved glSecondaryColor3fvEXT
+dlsym: unresolved glSecondaryColor3fvEXT
+dlsym: unresolved _glSecondaryColor3fvEXT
+dlsym: unresolved glSecondaryColor3iEXT
+dlsym: unresolved glSecondaryColor3iEXT
+dlsym: unresolved glSecondaryColor3iEXT
+dlsym: unresolved _glSecondaryColor3iEXT
+dlsym: unresolved glSecondaryColor3ivEXT
+dlsym: unresolved glSecondaryColor3ivEXT
+dlsym: unresolved glSecondaryColor3ivEXT
+dlsym: unresolved _glSecondaryColor3ivEXT
+dlsym: unresolved glSecondaryColor3sEXT
+dlsym: unresolved glSecondaryColor3sEXT
+dlsym: unresolved glSecondaryColor3sEXT
+dlsym: unresolved _glSecondaryColor3sEXT
+dlsym: unresolved glSecondaryColor3svEXT
+dlsym: unresolved glSecondaryColor3svEXT
+dlsym: unresolved glSecondaryColor3svEXT
+dlsym: unresolved _glSecondaryColor3svEXT
+dlsym: unresolved glSecondaryColor3ubEXT
+dlsym: unresolved glSecondaryColor3ubEXT
+dlsym: unresolved glSecondaryColor3ubEXT
+dlsym: unresolved _glSecondaryColor3ubEXT
+dlsym: unresolved glSecondaryColor3ubvEXT
+dlsym: unresolved glSecondaryColor3ubvEXT
+dlsym: unresolved glSecondaryColor3ubvEXT
+dlsym: unresolved _glSecondaryColor3ubvEXT
+dlsym: unresolved glSecondaryColor3uiEXT
+dlsym: unresolved glSecondaryColor3uiEXT
+dlsym: unresolved glSecondaryColor3uiEXT
+dlsym: unresolved _glSecondaryColor3uiEXT
+dlsym: unresolved glSecondaryColor3uivEXT
+dlsym: unresolved glSecondaryColor3uivEXT
+dlsym: unresolved glSecondaryColor3uivEXT
+dlsym: unresolved _glSecondaryColor3uivEXT
+dlsym: unresolved glSecondaryColor3usEXT
+dlsym: unresolved glSecondaryColor3usEXT
+dlsym: unresolved glSecondaryColor3usEXT
+dlsym: unresolved _glSecondaryColor3usEXT
+dlsym: unresolved glSecondaryColor3usvEXT
+dlsym: unresolved glSecondaryColor3usvEXT
+dlsym: unresolved glSecondaryColor3usvEXT
+dlsym: unresolved _glSecondaryColor3usvEXT
+dlsym: unresolved glSecondaryColorPointerEXT
+dlsym: unresolved glSecondaryColorPointerEXT
+dlsym: unresolved glSecondaryColorPointerEXT
+dlsym: unresolved _glSecondaryColorPointerEXT
+dlsym: unresolved glMultiDrawArraysEXT
+dlsym: unresolved glMultiDrawArraysEXT
+dlsym: unresolved glMultiDrawArraysEXT
+dlsym: unresolved _glMultiDrawArraysEXT
+dlsym: unresolved glMultiDrawElementsEXT
+dlsym: unresolved glMultiDrawElementsEXT
+dlsym: unresolved glMultiDrawElementsEXT
+dlsym: unresolved _glMultiDrawElementsEXT
+dlsym: unresolved glPointParameteriNV
+dlsym: unresolved glPointParameteriNV
+dlsym: unresolved glPointParameteriNV
+dlsym: unresolved _glPointParameteriNV
+dlsym: unresolved glPointParameterivNV
+dlsym: unresolved glPointParameterivNV
+dlsym: unresolved glPointParameterivNV
+dlsym: unresolved _glPointParameterivNV
+dlsym: unresolved glCombinerParameterfvNV
+dlsym: unresolved glCombinerParameterfvNV
+dlsym: unresolved glCombinerParameterfvNV
+dlsym: unresolved _glCombinerParameterfvNV
+EGL: eglGetProcAddress(glCombinerParameterfvNV) -> NULL
+dlsym: unresolved glCombinerParameterfvNV
+dlsym: unresolved glCombinerParameterfvNV
+dlsym: unresolved glCombinerParameterfvNV
+dlsym: unresolved glCombinerParameterfvNV
+dlsym: unresolved glCombinerParameterfNV
+dlsym: unresolved glCombinerParameterfNV
+dlsym: unresolved glCombinerParameterfNV
+dlsym: unresolved _glCombinerParameterfNV
+EGL: eglGetProcAddress(glCombinerParameterfNV) -> NULL
+dlsym: unresolved glCombinerParameterfNV
+dlsym: unresolved glCombinerParameterfNV
+dlsym: unresolved glCombinerParameterfNV
+dlsym: unresolved glCombinerParameterfNV
+dlsym: unresolved glCombinerParameterivNV
+dlsym: unresolved glCombinerParameterivNV
+dlsym: unresolved glCombinerParameterivNV
+dlsym: unresolved _glCombinerParameterivNV
+EGL: eglGetProcAddress(glCombinerParameterivNV) -> NULL
+dlsym: unresolved glCombinerParameterivNV
+dlsym: unresolved glCombinerParameterivNV
+dlsym: unresolved glCombinerParameterivNV
+dlsym: unresolved glCombinerParameterivNV
+dlsym: unresolved glCombinerParameteriNV
+dlsym: unresolved glCombinerParameteriNV
+dlsym: unresolved glCombinerParameteriNV
+dlsym: unresolved _glCombinerParameteriNV
+EGL: eglGetProcAddress(glCombinerParameteriNV) -> NULL
+dlsym: unresolved glCombinerParameteriNV
+dlsym: unresolved glCombinerParameteriNV
+dlsym: unresolved glCombinerParameteriNV
+dlsym: unresolved glCombinerParameteriNV
+dlsym: unresolved glCombinerInputNV
+dlsym: unresolved glCombinerInputNV
+dlsym: unresolved glCombinerInputNV
+dlsym: unresolved _glCombinerInputNV
+EGL: eglGetProcAddress(glCombinerInputNV) -> NULL
+dlsym: unresolved glCombinerInputNV
+dlsym: unresolved glCombinerInputNV
+dlsym: unresolved glCombinerInputNV
+dlsym: unresolved glCombinerInputNV
+dlsym: unresolved glCombinerOutputNV
+dlsym: unresolved glCombinerOutputNV
+dlsym: unresolved glCombinerOutputNV
+dlsym: unresolved _glCombinerOutputNV
+EGL: eglGetProcAddress(glCombinerOutputNV) -> NULL
+dlsym: unresolved glCombinerOutputNV
+dlsym: unresolved glCombinerOutputNV
+dlsym: unresolved glCombinerOutputNV
+dlsym: unresolved glCombinerOutputNV
+dlsym: unresolved glFinalCombinerInputNV
+dlsym: unresolved glFinalCombinerInputNV
+dlsym: unresolved glFinalCombinerInputNV
+dlsym: unresolved _glFinalCombinerInputNV
+EGL: eglGetProcAddress(glFinalCombinerInputNV) -> NULL
+dlsym: unresolved glFinalCombinerInputNV
+dlsym: unresolved glFinalCombinerInputNV
+dlsym: unresolved glFinalCombinerInputNV
+dlsym: unresolved glFinalCombinerInputNV
+dlsym: unresolved glGetCombinerInputParameterfvNV
+dlsym: unresolved glGetCombinerInputParameterfvNV
+dlsym: unresolved glGetCombinerInputParameterfvNV
+dlsym: unresolved _glGetCombinerInputParameterfvNV
+EGL: eglGetProcAddress(glGetCombinerInputParameterfvNV) -> NULL
+dlsym: unresolved glGetCombinerInputParameterfvNV
+dlsym: unresolved glGetCombinerInputParameterfvNV
+dlsym: unresolved glGetCombinerInputParameterfvNV
+dlsym: unresolved glGetCombinerInputParameterfvNV
+dlsym: unresolved glGetCombinerInputParameterivNV
+dlsym: unresolved glGetCombinerInputParameterivNV
+dlsym: unresolved glGetCombinerInputParameterivNV
+dlsym: unresolved _glGetCombinerInputParameterivNV
+EGL: eglGetProcAddress(glGetCombinerInputParameterivNV) -> NULL
+dlsym: unresolved glGetCombinerInputParameterivNV
+dlsym: unresolved glGetCombinerInputParameterivNV
+dlsym: unresolved glGetCombinerInputParameterivNV
+dlsym: unresolved glGetCombinerInputParameterivNV
+dlsym: unresolved glGetCombinerOutputParameterfvNV
+dlsym: unresolved glGetCombinerOutputParameterfvNV
+dlsym: unresolved glGetCombinerOutputParameterfvNV
+dlsym: unresolved _glGetCombinerOutputParameterfvNV
+EGL: eglGetProcAddress(glGetCombinerOutputParameterfvNV) -> NULL
+dlsym: unresolved glGetCombinerOutputParameterfvNV
+dlsym: unresolved glGetCombinerOutputParameterfvNV
+dlsym: unresolved glGetCombinerOutputParameterfvNV
+dlsym: unresolved glGetCombinerOutputParameterfvNV
+dlsym: unresolved glGetCombinerOutputParameterivNV
+dlsym: unresolved glGetCombinerOutputParameterivNV
+dlsym: unresolved glGetCombinerOutputParameterivNV
+dlsym: unresolved _glGetCombinerOutputParameterivNV
+EGL: eglGetProcAddress(glGetCombinerOutputParameterivNV) -> NULL
+dlsym: unresolved glGetCombinerOutputParameterivNV
+dlsym: unresolved glGetCombinerOutputParameterivNV
+dlsym: unresolved glGetCombinerOutputParameterivNV
+dlsym: unresolved glGetCombinerOutputParameterivNV
+dlsym: unresolved glGetFinalCombinerInputParameterfvNV
+dlsym: unresolved glGetFinalCombinerInputParameterfvNV
+dlsym: unresolved glGetFinalCombinerInputParameterfvNV
+dlsym: unresolved _glGetFinalCombinerInputParameterfvNV
+EGL: eglGetProcAddress(glGetFinalCombinerInputParameterfvNV) -> NULL
+dlsym: unresolved glGetFinalCombinerInputParameterfvNV
+dlsym: unresolved glGetFinalCombinerInputParameterfvNV
+dlsym: unresolved glGetFinalCombinerInputParameterfvNV
+dlsym: unresolved glGetFinalCombinerInputParameterfvNV
+dlsym: unresolved glGetFinalCombinerInputParameterivNV
+dlsym: unresolved glGetFinalCombinerInputParameterivNV
+dlsym: unresolved glGetFinalCombinerInputParameterivNV
+dlsym: unresolved _glGetFinalCombinerInputParameterivNV
+EGL: eglGetProcAddress(glGetFinalCombinerInputParameterivNV) -> NULL
+dlsym: unresolved glGetFinalCombinerInputParameterivNV
+dlsym: unresolved glGetFinalCombinerInputParameterivNV
+dlsym: unresolved glGetFinalCombinerInputParameterivNV
+dlsym: unresolved glGetFinalCombinerInputParameterivNV
+dlsym: unresolved glCombinerStageParameterfvNV
+dlsym: unresolved glCombinerStageParameterfvNV
+dlsym: unresolved glCombinerStageParameterfvNV
+dlsym: unresolved _glCombinerStageParameterfvNV
+EGL: eglGetProcAddress(glCombinerStageParameterfvNV) -> NULL
+dlsym: unresolved glCombinerStageParameterfvNV
+dlsym: unresolved glCombinerStageParameterfvNV
+dlsym: unresolved glCombinerStageParameterfvNV
+dlsym: unresolved glCombinerStageParameterfvNV
+dlsym: unresolved glGetCombinerStageParameterfvNV
+dlsym: unresolved glGetCombinerStageParameterfvNV
+dlsym: unresolved glGetCombinerStageParameterfvNV
+dlsym: unresolved _glGetCombinerStageParameterfvNV
+EGL: eglGetProcAddress(glGetCombinerStageParameterfvNV) -> NULL
+dlsym: unresolved glGetCombinerStageParameterfvNV
+dlsym: unresolved glGetCombinerStageParameterfvNV
+dlsym: unresolved glGetCombinerStageParameterfvNV
+dlsym: unresolved glGetCombinerStageParameterfvNV
+dlsym: unresolved glAreProgramsResidentNV
+dlsym: unresolved glAreProgramsResidentNV
+dlsym: unresolved glAreProgramsResidentNV
+dlsym: unresolved _glAreProgramsResidentNV
+EGL: eglGetProcAddress(glAreProgramsResidentNV) -> NULL
+dlsym: unresolved glAreProgramsResidentNV
+dlsym: unresolved glAreProgramsResidentNV
+dlsym: unresolved glAreProgramsResidentNV
+dlsym: unresolved glAreProgramsResidentNV
+dlsym: unresolved glBindProgramNV
+dlsym: unresolved glBindProgramNV
+dlsym: unresolved glBindProgramNV
+dlsym: unresolved _glBindProgramNV
+dlsym: unresolved glDeleteProgramsNV
+dlsym: unresolved glDeleteProgramsNV
+dlsym: unresolved glDeleteProgramsNV
+dlsym: unresolved _glDeleteProgramsNV
+dlsym: unresolved glExecuteProgramNV
+dlsym: unresolved glExecuteProgramNV
+dlsym: unresolved glExecuteProgramNV
+dlsym: unresolved _glExecuteProgramNV
+EGL: eglGetProcAddress(glExecuteProgramNV) -> NULL
+dlsym: unresolved glExecuteProgramNV
+dlsym: unresolved glExecuteProgramNV
+dlsym: unresolved glExecuteProgramNV
+dlsym: unresolved glExecuteProgramNV
+dlsym: unresolved glGenProgramsNV
+dlsym: unresolved glGenProgramsNV
+dlsym: unresolved glGenProgramsNV
+dlsym: unresolved _glGenProgramsNV
+dlsym: unresolved glGetProgramParameterdvNV
+dlsym: unresolved glGetProgramParameterdvNV
+dlsym: unresolved glGetProgramParameterdvNV
+dlsym: unresolved _glGetProgramParameterdvNV
+EGL: eglGetProcAddress(glGetProgramParameterdvNV) -> NULL
+dlsym: unresolved glGetProgramParameterdvNV
+dlsym: unresolved glGetProgramParameterdvNV
+dlsym: unresolved glGetProgramParameterdvNV
+dlsym: unresolved glGetProgramParameterdvNV
+dlsym: unresolved glGetProgramParameterfvNV
+dlsym: unresolved glGetProgramParameterfvNV
+dlsym: unresolved glGetProgramParameterfvNV
+dlsym: unresolved _glGetProgramParameterfvNV
+EGL: eglGetProcAddress(glGetProgramParameterfvNV) -> NULL
+dlsym: unresolved glGetProgramParameterfvNV
+dlsym: unresolved glGetProgramParameterfvNV
+dlsym: unresolved glGetProgramParameterfvNV
+dlsym: unresolved glGetProgramParameterfvNV
+dlsym: unresolved glGetProgramivNV
+dlsym: unresolved glGetProgramivNV
+dlsym: unresolved glGetProgramivNV
+dlsym: unresolved _glGetProgramivNV
+EGL: eglGetProcAddress(glGetProgramivNV) -> NULL
+dlsym: unresolved glGetProgramivNV
+dlsym: unresolved glGetProgramivNV
+dlsym: unresolved glGetProgramivNV
+dlsym: unresolved glGetProgramivNV
+dlsym: unresolved glGetProgramStringNV
+dlsym: unresolved glGetProgramStringNV
+dlsym: unresolved glGetProgramStringNV
+dlsym: unresolved _glGetProgramStringNV
+EGL: eglGetProcAddress(glGetProgramStringNV) -> NULL
+dlsym: unresolved glGetProgramStringNV
+dlsym: unresolved glGetProgramStringNV
+dlsym: unresolved glGetProgramStringNV
+dlsym: unresolved glGetProgramStringNV
+dlsym: unresolved glGetTrackMatrixivNV
+dlsym: unresolved glGetTrackMatrixivNV
+dlsym: unresolved glGetTrackMatrixivNV
+dlsym: unresolved _glGetTrackMatrixivNV
+EGL: eglGetProcAddress(glGetTrackMatrixivNV) -> NULL
+dlsym: unresolved glGetTrackMatrixivNV
+dlsym: unresolved glGetTrackMatrixivNV
+dlsym: unresolved glGetTrackMatrixivNV
+dlsym: unresolved glGetTrackMatrixivNV
+dlsym: unresolved glGetVertexAttribdvNV
+dlsym: unresolved glGetVertexAttribdvNV
+dlsym: unresolved glGetVertexAttribdvNV
+dlsym: unresolved _glGetVertexAttribdvNV
+EGL: eglGetProcAddress(glGetVertexAttribdvNV) -> NULL
+dlsym: unresolved glGetVertexAttribdvNV
+dlsym: unresolved glGetVertexAttribdvNV
+dlsym: unresolved glGetVertexAttribdvNV
+dlsym: unresolved glGetVertexAttribdvNV
+dlsym: unresolved glGetVertexAttribfvNV
+dlsym: unresolved glGetVertexAttribfvNV
+dlsym: unresolved glGetVertexAttribfvNV
+dlsym: unresolved _glGetVertexAttribfvNV
+EGL: eglGetProcAddress(glGetVertexAttribfvNV) -> NULL
+dlsym: unresolved glGetVertexAttribfvNV
+dlsym: unresolved glGetVertexAttribfvNV
+dlsym: unresolved glGetVertexAttribfvNV
+dlsym: unresolved glGetVertexAttribfvNV
+dlsym: unresolved glGetVertexAttribivNV
+dlsym: unresolved glGetVertexAttribivNV
+dlsym: unresolved glGetVertexAttribivNV
+dlsym: unresolved _glGetVertexAttribivNV
+EGL: eglGetProcAddress(glGetVertexAttribivNV) -> NULL
+dlsym: unresolved glGetVertexAttribivNV
+dlsym: unresolved glGetVertexAttribivNV
+dlsym: unresolved glGetVertexAttribivNV
+dlsym: unresolved glGetVertexAttribivNV
+dlsym: unresolved glIsProgramNV
+dlsym: unresolved glIsProgramNV
+dlsym: unresolved glIsProgramNV
+dlsym: unresolved _glIsProgramNV
+dlsym: unresolved glLoadProgramNV
+dlsym: unresolved glLoadProgramNV
+dlsym: unresolved glLoadProgramNV
+dlsym: unresolved _glLoadProgramNV
+EGL: eglGetProcAddress(glLoadProgramNV) -> NULL
+dlsym: unresolved glLoadProgramNV
+dlsym: unresolved glLoadProgramNV
+dlsym: unresolved glLoadProgramNV
+dlsym: unresolved glLoadProgramNV
+dlsym: unresolved glProgramParameter4dNV
+dlsym: unresolved glProgramParameter4dNV
+dlsym: unresolved glProgramParameter4dNV
+dlsym: unresolved _glProgramParameter4dNV
+dlsym: unresolved glProgramParameter4dvNV
+dlsym: unresolved glProgramParameter4dvNV
+dlsym: unresolved glProgramParameter4dvNV
+dlsym: unresolved _glProgramParameter4dvNV
+dlsym: unresolved glProgramParameter4fNV
+dlsym: unresolved glProgramParameter4fNV
+dlsym: unresolved glProgramParameter4fNV
+dlsym: unresolved _glProgramParameter4fNV
+dlsym: unresolved glProgramParameter4fvNV
+dlsym: unresolved glProgramParameter4fvNV
+dlsym: unresolved glProgramParameter4fvNV
+dlsym: unresolved _glProgramParameter4fvNV
+dlsym: unresolved glProgramParameters4dvNV
+dlsym: unresolved glProgramParameters4dvNV
+dlsym: unresolved glProgramParameters4dvNV
+dlsym: unresolved _glProgramParameters4dvNV
+EGL: eglGetProcAddress(glProgramParameters4dvNV) -> NULL
+dlsym: unresolved glProgramParameters4dvNV
+dlsym: unresolved glProgramParameters4dvNV
+dlsym: unresolved glProgramParameters4dvNV
+dlsym: unresolved glProgramParameters4dvNV
+dlsym: unresolved glProgramParameters4fvNV
+dlsym: unresolved glProgramParameters4fvNV
+dlsym: unresolved glProgramParameters4fvNV
+dlsym: unresolved _glProgramParameters4fvNV
+EGL: eglGetProcAddress(glProgramParameters4fvNV) -> NULL
+dlsym: unresolved glProgramParameters4fvNV
+dlsym: unresolved glProgramParameters4fvNV
+dlsym: unresolved glProgramParameters4fvNV
+dlsym: unresolved glProgramParameters4fvNV
+dlsym: unresolved glRequestResidentProgramsNV
+dlsym: unresolved glRequestResidentProgramsNV
+dlsym: unresolved glRequestResidentProgramsNV
+dlsym: unresolved _glRequestResidentProgramsNV
+EGL: eglGetProcAddress(glRequestResidentProgramsNV) -> NULL
+dlsym: unresolved glRequestResidentProgramsNV
+dlsym: unresolved glRequestResidentProgramsNV
+dlsym: unresolved glRequestResidentProgramsNV
+dlsym: unresolved glRequestResidentProgramsNV
+dlsym: unresolved glTrackMatrixNV
+dlsym: unresolved glTrackMatrixNV
+dlsym: unresolved glTrackMatrixNV
+dlsym: unresolved _glTrackMatrixNV
+EGL: eglGetProcAddress(glTrackMatrixNV) -> NULL
+dlsym: unresolved glTrackMatrixNV
+dlsym: unresolved glTrackMatrixNV
+dlsym: unresolved glTrackMatrixNV
+dlsym: unresolved glTrackMatrixNV
+dlsym: unresolved glVertexAttribPointerNV
+dlsym: unresolved glVertexAttribPointerNV
+dlsym: unresolved glVertexAttribPointerNV
+dlsym: unresolved _glVertexAttribPointerNV
+EGL: eglGetProcAddress(glVertexAttribPointerNV) -> NULL
+dlsym: unresolved glVertexAttribPointerNV
+dlsym: unresolved glVertexAttribPointerNV
+dlsym: unresolved glVertexAttribPointerNV
+dlsym: unresolved glVertexAttribPointerNV
+dlsym: unresolved glVertexAttrib1dNV
+dlsym: unresolved glVertexAttrib1dNV
+dlsym: unresolved glVertexAttrib1dNV
+dlsym: unresolved _glVertexAttrib1dNV
+dlsym: unresolved glVertexAttrib1dvNV
+dlsym: unresolved glVertexAttrib1dvNV
+dlsym: unresolved glVertexAttrib1dvNV
+dlsym: unresolved _glVertexAttrib1dvNV
+dlsym: unresolved glVertexAttrib1fNV
+dlsym: unresolved glVertexAttrib1fNV
+dlsym: unresolved glVertexAttrib1fNV
+dlsym: unresolved _glVertexAttrib1fNV
+dlsym: unresolved glVertexAttrib1fvNV
+dlsym: unresolved glVertexAttrib1fvNV
+dlsym: unresolved glVertexAttrib1fvNV
+dlsym: unresolved _glVertexAttrib1fvNV
+dlsym: unresolved glVertexAttrib1sNV
+dlsym: unresolved glVertexAttrib1sNV
+dlsym: unresolved glVertexAttrib1sNV
+dlsym: unresolved _glVertexAttrib1sNV
+dlsym: unresolved glVertexAttrib1svNV
+dlsym: unresolved glVertexAttrib1svNV
+dlsym: unresolved glVertexAttrib1svNV
+dlsym: unresolved _glVertexAttrib1svNV
+dlsym: unresolved glVertexAttrib2dNV
+dlsym: unresolved glVertexAttrib2dNV
+dlsym: unresolved glVertexAttrib2dNV
+dlsym: unresolved _glVertexAttrib2dNV
+dlsym: unresolved glVertexAttrib2dvNV
+dlsym: unresolved glVertexAttrib2dvNV
+dlsym: unresolved glVertexAttrib2dvNV
+dlsym: unresolved _glVertexAttrib2dvNV
+dlsym: unresolved glVertexAttrib2fNV
+dlsym: unresolved glVertexAttrib2fNV
+dlsym: unresolved glVertexAttrib2fNV
+dlsym: unresolved _glVertexAttrib2fNV
+dlsym: unresolved glVertexAttrib2fvNV
+dlsym: unresolved glVertexAttrib2fvNV
+dlsym: unresolved glVertexAttrib2fvNV
+dlsym: unresolved _glVertexAttrib2fvNV
+dlsym: unresolved glVertexAttrib2sNV
+dlsym: unresolved glVertexAttrib2sNV
+dlsym: unresolved glVertexAttrib2sNV
+dlsym: unresolved _glVertexAttrib2sNV
+dlsym: unresolved glVertexAttrib2svNV
+dlsym: unresolved glVertexAttrib2svNV
+dlsym: unresolved glVertexAttrib2svNV
+dlsym: unresolved _glVertexAttrib2svNV
+dlsym: unresolved glVertexAttrib3dNV
+dlsym: unresolved glVertexAttrib3dNV
+dlsym: unresolved glVertexAttrib3dNV
+dlsym: unresolved _glVertexAttrib3dNV
+dlsym: unresolved glVertexAttrib3dvNV
+dlsym: unresolved glVertexAttrib3dvNV
+dlsym: unresolved glVertexAttrib3dvNV
+dlsym: unresolved _glVertexAttrib3dvNV
+dlsym: unresolved glVertexAttrib3fNV
+dlsym: unresolved glVertexAttrib3fNV
+dlsym: unresolved glVertexAttrib3fNV
+dlsym: unresolved _glVertexAttrib3fNV
+dlsym: unresolved glVertexAttrib3fvNV
+dlsym: unresolved glVertexAttrib3fvNV
+dlsym: unresolved glVertexAttrib3fvNV
+dlsym: unresolved _glVertexAttrib3fvNV
+dlsym: unresolved glVertexAttrib3sNV
+dlsym: unresolved glVertexAttrib3sNV
+dlsym: unresolved glVertexAttrib3sNV
+dlsym: unresolved _glVertexAttrib3sNV
+dlsym: unresolved glVertexAttrib3svNV
+dlsym: unresolved glVertexAttrib3svNV
+dlsym: unresolved glVertexAttrib3svNV
+dlsym: unresolved _glVertexAttrib3svNV
+dlsym: unresolved glVertexAttrib4dNV
+dlsym: unresolved glVertexAttrib4dNV
+dlsym: unresolved glVertexAttrib4dNV
+dlsym: unresolved _glVertexAttrib4dNV
+dlsym: unresolved glVertexAttrib4dvNV
+dlsym: unresolved glVertexAttrib4dvNV
+dlsym: unresolved glVertexAttrib4dvNV
+dlsym: unresolved _glVertexAttrib4dvNV
+dlsym: unresolved glVertexAttrib4fNV
+dlsym: unresolved glVertexAttrib4fNV
+dlsym: unresolved glVertexAttrib4fNV
+dlsym: unresolved _glVertexAttrib4fNV
+dlsym: unresolved glVertexAttrib4fvNV
+dlsym: unresolved glVertexAttrib4fvNV
+dlsym: unresolved glVertexAttrib4fvNV
+dlsym: unresolved _glVertexAttrib4fvNV
+dlsym: unresolved glVertexAttrib4sNV
+dlsym: unresolved glVertexAttrib4sNV
+dlsym: unresolved glVertexAttrib4sNV
+dlsym: unresolved _glVertexAttrib4sNV
+dlsym: unresolved glVertexAttrib4svNV
+dlsym: unresolved glVertexAttrib4svNV
+dlsym: unresolved glVertexAttrib4svNV
+dlsym: unresolved _glVertexAttrib4svNV
+dlsym: unresolved glVertexAttrib4ubvNV
+dlsym: unresolved glVertexAttrib4ubvNV
+dlsym: unresolved glVertexAttrib4ubvNV
+dlsym: unresolved _glVertexAttrib4ubvNV
+dlsym: unresolved glVertexAttribs1dvNV
+dlsym: unresolved glVertexAttribs1dvNV
+dlsym: unresolved glVertexAttribs1dvNV
+dlsym: unresolved _glVertexAttribs1dvNV
+dlsym: unresolved glVertexAttribs1fvNV
+dlsym: unresolved glVertexAttribs1fvNV
+dlsym: unresolved glVertexAttribs1fvNV
+dlsym: unresolved _glVertexAttribs1fvNV
+dlsym: unresolved glVertexAttribs1svNV
+dlsym: unresolved glVertexAttribs1svNV
+dlsym: unresolved glVertexAttribs1svNV
+dlsym: unresolved _glVertexAttribs1svNV
+dlsym: unresolved glVertexAttribs2dvNV
+dlsym: unresolved glVertexAttribs2dvNV
+dlsym: unresolved glVertexAttribs2dvNV
+dlsym: unresolved _glVertexAttribs2dvNV
+dlsym: unresolved glVertexAttribs2fvNV
+dlsym: unresolved glVertexAttribs2fvNV
+dlsym: unresolved glVertexAttribs2fvNV
+dlsym: unresolved _glVertexAttribs2fvNV
+dlsym: unresolved glVertexAttribs2svNV
+dlsym: unresolved glVertexAttribs2svNV
+dlsym: unresolved glVertexAttribs2svNV
+dlsym: unresolved _glVertexAttribs2svNV
+dlsym: unresolved glVertexAttribs3dvNV
+dlsym: unresolved glVertexAttribs3dvNV
+dlsym: unresolved glVertexAttribs3dvNV
+dlsym: unresolved _glVertexAttribs3dvNV
+dlsym: unresolved glVertexAttribs3fvNV
+dlsym: unresolved glVertexAttribs3fvNV
+dlsym: unresolved glVertexAttribs3fvNV
+dlsym: unresolved _glVertexAttribs3fvNV
+dlsym: unresolved glVertexAttribs3svNV
+dlsym: unresolved glVertexAttribs3svNV
+dlsym: unresolved glVertexAttribs3svNV
+dlsym: unresolved _glVertexAttribs3svNV
+dlsym: unresolved glVertexAttribs4dvNV
+dlsym: unresolved glVertexAttribs4dvNV
+dlsym: unresolved glVertexAttribs4dvNV
+dlsym: unresolved _glVertexAttribs4dvNV
+dlsym: unresolved glVertexAttribs4fvNV
+dlsym: unresolved glVertexAttribs4fvNV
+dlsym: unresolved glVertexAttribs4fvNV
+dlsym: unresolved _glVertexAttribs4fvNV
+dlsym: unresolved glVertexAttribs4svNV
+dlsym: unresolved glVertexAttribs4svNV
+dlsym: unresolved glVertexAttribs4svNV
+dlsym: unresolved _glVertexAttribs4svNV
+dlsym: unresolved glVertexAttribs4ubvNV
+dlsym: unresolved glVertexAttribs4ubvNV
+dlsym: unresolved glVertexAttribs4ubvNV
+dlsym: unresolved _glVertexAttribs4ubvNV
+dlsym: unresolved glProgramNamedParameter4fNV
+dlsym: unresolved glProgramNamedParameter4fNV
+dlsym: unresolved glProgramNamedParameter4fNV
+dlsym: unresolved _glProgramNamedParameter4fNV
+EGL: eglGetProcAddress(glProgramNamedParameter4fNV) -> NULL
+dlsym: unresolved glProgramNamedParameter4fNV
+dlsym: unresolved glProgramNamedParameter4fNV
+dlsym: unresolved glProgramNamedParameter4fNV
+dlsym: unresolved glProgramNamedParameter4fNV
+dlsym: unresolved glProgramNamedParameter4dNV
+dlsym: unresolved glProgramNamedParameter4dNV
+dlsym: unresolved glProgramNamedParameter4dNV
+dlsym: unresolved _glProgramNamedParameter4dNV
+EGL: eglGetProcAddress(glProgramNamedParameter4dNV) -> NULL
+dlsym: unresolved glProgramNamedParameter4dNV
+dlsym: unresolved glProgramNamedParameter4dNV
+dlsym: unresolved glProgramNamedParameter4dNV
+dlsym: unresolved glProgramNamedParameter4dNV
+dlsym: unresolved glProgramNamedParameter4fvNV
+dlsym: unresolved glProgramNamedParameter4fvNV
+dlsym: unresolved glProgramNamedParameter4fvNV
+dlsym: unresolved _glProgramNamedParameter4fvNV
+EGL: eglGetProcAddress(glProgramNamedParameter4fvNV) -> NULL
+dlsym: unresolved glProgramNamedParameter4fvNV
+dlsym: unresolved glProgramNamedParameter4fvNV
+dlsym: unresolved glProgramNamedParameter4fvNV
+dlsym: unresolved glProgramNamedParameter4fvNV
+dlsym: unresolved glProgramNamedParameter4dvNV
+dlsym: unresolved glProgramNamedParameter4dvNV
+dlsym: unresolved glProgramNamedParameter4dvNV
+dlsym: unresolved _glProgramNamedParameter4dvNV
+EGL: eglGetProcAddress(glProgramNamedParameter4dvNV) -> NULL
+dlsym: unresolved glProgramNamedParameter4dvNV
+dlsym: unresolved glProgramNamedParameter4dvNV
+dlsym: unresolved glProgramNamedParameter4dvNV
+dlsym: unresolved glProgramNamedParameter4dvNV
+dlsym: unresolved glGetProgramNamedParameterfvNV
+dlsym: unresolved glGetProgramNamedParameterfvNV
+dlsym: unresolved glGetProgramNamedParameterfvNV
+dlsym: unresolved _glGetProgramNamedParameterfvNV
+EGL: eglGetProcAddress(glGetProgramNamedParameterfvNV) -> NULL
+dlsym: unresolved glGetProgramNamedParameterfvNV
+dlsym: unresolved glGetProgramNamedParameterfvNV
+dlsym: unresolved glGetProgramNamedParameterfvNV
+dlsym: unresolved glGetProgramNamedParameterfvNV
+dlsym: unresolved glGetProgramNamedParameterdvNV
+dlsym: unresolved glGetProgramNamedParameterdvNV
+dlsym: unresolved glGetProgramNamedParameterdvNV
+dlsym: unresolved _glGetProgramNamedParameterdvNV
+EGL: eglGetProcAddress(glGetProgramNamedParameterdvNV) -> NULL
+dlsym: unresolved glGetProgramNamedParameterdvNV
+dlsym: unresolved glGetProgramNamedParameterdvNV
+dlsym: unresolved glGetProgramNamedParameterdvNV
+dlsym: unresolved glGetProgramNamedParameterdvNV
+dlsym: unresolved glVertexAttrib1sARB
+dlsym: unresolved glVertexAttrib1sARB
+dlsym: unresolved glVertexAttrib1sARB
+dlsym: unresolved _glVertexAttrib1sARB
+dlsym: unresolved glVertexAttrib1fARB
+dlsym: unresolved glVertexAttrib1fARB
+dlsym: unresolved glVertexAttrib1fARB
+dlsym: unresolved _glVertexAttrib1fARB
+dlsym: unresolved glVertexAttrib1dARB
+dlsym: unresolved glVertexAttrib1dARB
+dlsym: unresolved glVertexAttrib1dARB
+dlsym: unresolved _glVertexAttrib1dARB
+dlsym: unresolved glVertexAttrib2sARB
+dlsym: unresolved glVertexAttrib2sARB
+dlsym: unresolved glVertexAttrib2sARB
+dlsym: unresolved _glVertexAttrib2sARB
+dlsym: unresolved glVertexAttrib2fARB
+dlsym: unresolved glVertexAttrib2fARB
+dlsym: unresolved glVertexAttrib2fARB
+dlsym: unresolved _glVertexAttrib2fARB
+dlsym: unresolved glVertexAttrib2dARB
+dlsym: unresolved glVertexAttrib2dARB
+dlsym: unresolved glVertexAttrib2dARB
+dlsym: unresolved _glVertexAttrib2dARB
+dlsym: unresolved glVertexAttrib3sARB
+dlsym: unresolved glVertexAttrib3sARB
+dlsym: unresolved glVertexAttrib3sARB
+dlsym: unresolved _glVertexAttrib3sARB
+dlsym: unresolved glVertexAttrib3fARB
+dlsym: unresolved glVertexAttrib3fARB
+dlsym: unresolved glVertexAttrib3fARB
+dlsym: unresolved _glVertexAttrib3fARB
+dlsym: unresolved glVertexAttrib3dARB
+dlsym: unresolved glVertexAttrib3dARB
+dlsym: unresolved glVertexAttrib3dARB
+dlsym: unresolved _glVertexAttrib3dARB
+dlsym: unresolved glVertexAttrib4sARB
+dlsym: unresolved glVertexAttrib4sARB
+dlsym: unresolved glVertexAttrib4sARB
+dlsym: unresolved _glVertexAttrib4sARB
+dlsym: unresolved glVertexAttrib4fARB
+dlsym: unresolved glVertexAttrib4fARB
+dlsym: unresolved glVertexAttrib4fARB
+dlsym: unresolved _glVertexAttrib4fARB
+dlsym: unresolved glVertexAttrib4dARB
+dlsym: unresolved glVertexAttrib4dARB
+dlsym: unresolved glVertexAttrib4dARB
+dlsym: unresolved _glVertexAttrib4dARB
+dlsym: unresolved glVertexAttrib4NubARB
+dlsym: unresolved glVertexAttrib4NubARB
+dlsym: unresolved glVertexAttrib4NubARB
+dlsym: unresolved _glVertexAttrib4NubARB
+dlsym: unresolved glVertexAttrib1svARB
+dlsym: unresolved glVertexAttrib1svARB
+dlsym: unresolved glVertexAttrib1svARB
+dlsym: unresolved _glVertexAttrib1svARB
+dlsym: unresolved glVertexAttrib1fvARB
+dlsym: unresolved glVertexAttrib1fvARB
+dlsym: unresolved glVertexAttrib1fvARB
+dlsym: unresolved _glVertexAttrib1fvARB
+dlsym: unresolved glVertexAttrib1dvARB
+dlsym: unresolved glVertexAttrib1dvARB
+dlsym: unresolved glVertexAttrib1dvARB
+dlsym: unresolved _glVertexAttrib1dvARB
+dlsym: unresolved glVertexAttrib2svARB
+dlsym: unresolved glVertexAttrib2svARB
+dlsym: unresolved glVertexAttrib2svARB
+dlsym: unresolved _glVertexAttrib2svARB
+dlsym: unresolved glVertexAttrib2fvARB
+dlsym: unresolved glVertexAttrib2fvARB
+dlsym: unresolved glVertexAttrib2fvARB
+dlsym: unresolved _glVertexAttrib2fvARB
+dlsym: unresolved glVertexAttrib2dvARB
+dlsym: unresolved glVertexAttrib2dvARB
+dlsym: unresolved glVertexAttrib2dvARB
+dlsym: unresolved _glVertexAttrib2dvARB
+dlsym: unresolved glVertexAttrib3svARB
+dlsym: unresolved glVertexAttrib3svARB
+dlsym: unresolved glVertexAttrib3svARB
+dlsym: unresolved _glVertexAttrib3svARB
+dlsym: unresolved glVertexAttrib3fvARB
+dlsym: unresolved glVertexAttrib3fvARB
+dlsym: unresolved glVertexAttrib3fvARB
+dlsym: unresolved _glVertexAttrib3fvARB
+dlsym: unresolved glVertexAttrib3dvARB
+dlsym: unresolved glVertexAttrib3dvARB
+dlsym: unresolved glVertexAttrib3dvARB
+dlsym: unresolved _glVertexAttrib3dvARB
+dlsym: unresolved glVertexAttrib4bvARB
+dlsym: unresolved glVertexAttrib4bvARB
+dlsym: unresolved glVertexAttrib4bvARB
+dlsym: unresolved _glVertexAttrib4bvARB
+dlsym: unresolved glVertexAttrib4svARB
+dlsym: unresolved glVertexAttrib4svARB
+dlsym: unresolved glVertexAttrib4svARB
+dlsym: unresolved _glVertexAttrib4svARB
+dlsym: unresolved glVertexAttrib4ivARB
+dlsym: unresolved glVertexAttrib4ivARB
+dlsym: unresolved glVertexAttrib4ivARB
+dlsym: unresolved _glVertexAttrib4ivARB
+dlsym: unresolved glVertexAttrib4ubvARB
+dlsym: unresolved glVertexAttrib4ubvARB
+dlsym: unresolved glVertexAttrib4ubvARB
+dlsym: unresolved _glVertexAttrib4ubvARB
+dlsym: unresolved glVertexAttrib4usvARB
+dlsym: unresolved glVertexAttrib4usvARB
+dlsym: unresolved glVertexAttrib4usvARB
+dlsym: unresolved _glVertexAttrib4usvARB
+dlsym: unresolved glVertexAttrib4uivARB
+dlsym: unresolved glVertexAttrib4uivARB
+dlsym: unresolved glVertexAttrib4uivARB
+dlsym: unresolved _glVertexAttrib4uivARB
+dlsym: unresolved glVertexAttrib4fvARB
+dlsym: unresolved glVertexAttrib4fvARB
+dlsym: unresolved glVertexAttrib4fvARB
+dlsym: unresolved _glVertexAttrib4fvARB
+dlsym: unresolved glVertexAttrib4dvARB
+dlsym: unresolved glVertexAttrib4dvARB
+dlsym: unresolved glVertexAttrib4dvARB
+dlsym: unresolved _glVertexAttrib4dvARB
+dlsym: unresolved glVertexAttrib4NbvARB
+dlsym: unresolved glVertexAttrib4NbvARB
+dlsym: unresolved glVertexAttrib4NbvARB
+dlsym: unresolved _glVertexAttrib4NbvARB
+dlsym: unresolved glVertexAttrib4NsvARB
+dlsym: unresolved glVertexAttrib4NsvARB
+dlsym: unresolved glVertexAttrib4NsvARB
+dlsym: unresolved _glVertexAttrib4NsvARB
+dlsym: unresolved glVertexAttrib4NivARB
+dlsym: unresolved glVertexAttrib4NivARB
+dlsym: unresolved glVertexAttrib4NivARB
+dlsym: unresolved _glVertexAttrib4NivARB
+dlsym: unresolved glVertexAttrib4NubvARB
+dlsym: unresolved glVertexAttrib4NubvARB
+dlsym: unresolved glVertexAttrib4NubvARB
+dlsym: unresolved _glVertexAttrib4NubvARB
+dlsym: unresolved glVertexAttrib4NusvARB
+dlsym: unresolved glVertexAttrib4NusvARB
+dlsym: unresolved glVertexAttrib4NusvARB
+dlsym: unresolved _glVertexAttrib4NusvARB
+dlsym: unresolved glVertexAttrib4NuivARB
+dlsym: unresolved glVertexAttrib4NuivARB
+dlsym: unresolved glVertexAttrib4NuivARB
+dlsym: unresolved _glVertexAttrib4NuivARB
+dlsym: unresolved glVertexAttribPointerARB
+dlsym: unresolved glVertexAttribPointerARB
+dlsym: unresolved glVertexAttribPointerARB
+dlsym: unresolved _glVertexAttribPointerARB
+dlsym: unresolved glEnableVertexAttribArrayARB
+dlsym: unresolved glEnableVertexAttribArrayARB
+dlsym: unresolved glEnableVertexAttribArrayARB
+dlsym: unresolved _glEnableVertexAttribArrayARB
+dlsym: unresolved glDisableVertexAttribArrayARB
+dlsym: unresolved glDisableVertexAttribArrayARB
+dlsym: unresolved glDisableVertexAttribArrayARB
+dlsym: unresolved _glDisableVertexAttribArrayARB
+dlsym: unresolved glProgramStringARB
+dlsym: unresolved glProgramStringARB
+dlsym: unresolved glProgramStringARB
+dlsym: unresolved _glProgramStringARB
+dlsym: unresolved glBindProgramARB
+dlsym: unresolved glBindProgramARB
+dlsym: unresolved glBindProgramARB
+dlsym: unresolved _glBindProgramARB
+dlsym: unresolved glDeleteProgramsARB
+dlsym: unresolved glDeleteProgramsARB
+dlsym: unresolved glDeleteProgramsARB
+dlsym: unresolved _glDeleteProgramsARB
+dlsym: unresolved glGenProgramsARB
+dlsym: unresolved glGenProgramsARB
+dlsym: unresolved glGenProgramsARB
+dlsym: unresolved _glGenProgramsARB
+dlsym: unresolved glProgramEnvParameter4dARB
+dlsym: unresolved glProgramEnvParameter4dARB
+dlsym: unresolved glProgramEnvParameter4dARB
+dlsym: unresolved _glProgramEnvParameter4dARB
+dlsym: unresolved glProgramEnvParameter4dvARB
+dlsym: unresolved glProgramEnvParameter4dvARB
+dlsym: unresolved glProgramEnvParameter4dvARB
+dlsym: unresolved _glProgramEnvParameter4dvARB
+dlsym: unresolved glProgramEnvParameter4fARB
+dlsym: unresolved glProgramEnvParameter4fARB
+dlsym: unresolved glProgramEnvParameter4fARB
+dlsym: unresolved _glProgramEnvParameter4fARB
+dlsym: unresolved glProgramEnvParameter4fvARB
+dlsym: unresolved glProgramEnvParameter4fvARB
+dlsym: unresolved glProgramEnvParameter4fvARB
+dlsym: unresolved _glProgramEnvParameter4fvARB
+dlsym: unresolved glProgramLocalParameter4dARB
+dlsym: unresolved glProgramLocalParameter4dARB
+dlsym: unresolved glProgramLocalParameter4dARB
+dlsym: unresolved _glProgramLocalParameter4dARB
+dlsym: unresolved glProgramLocalParameter4dvARB
+dlsym: unresolved glProgramLocalParameter4dvARB
+dlsym: unresolved glProgramLocalParameter4dvARB
+dlsym: unresolved _glProgramLocalParameter4dvARB
+dlsym: unresolved glProgramLocalParameter4fARB
+dlsym: unresolved glProgramLocalParameter4fARB
+dlsym: unresolved glProgramLocalParameter4fARB
+dlsym: unresolved _glProgramLocalParameter4fARB
+dlsym: unresolved glProgramLocalParameter4fvARB
+dlsym: unresolved glProgramLocalParameter4fvARB
+dlsym: unresolved glProgramLocalParameter4fvARB
+dlsym: unresolved _glProgramLocalParameter4fvARB
+dlsym: unresolved glGetProgramEnvParameterdvARB
+dlsym: unresolved glGetProgramEnvParameterdvARB
+dlsym: unresolved glGetProgramEnvParameterdvARB
+dlsym: unresolved _glGetProgramEnvParameterdvARB
+dlsym: unresolved glGetProgramEnvParameterfvARB
+dlsym: unresolved glGetProgramEnvParameterfvARB
+dlsym: unresolved glGetProgramEnvParameterfvARB
+dlsym: unresolved _glGetProgramEnvParameterfvARB
+dlsym: unresolved glGetProgramLocalParameterdvARB
+dlsym: unresolved glGetProgramLocalParameterdvARB
+dlsym: unresolved glGetProgramLocalParameterdvARB
+dlsym: unresolved _glGetProgramLocalParameterdvARB
+dlsym: unresolved glGetProgramLocalParameterfvARB
+dlsym: unresolved glGetProgramLocalParameterfvARB
+dlsym: unresolved glGetProgramLocalParameterfvARB
+dlsym: unresolved _glGetProgramLocalParameterfvARB
+dlsym: unresolved glGetProgramivARB
+dlsym: unresolved glGetProgramivARB
+dlsym: unresolved glGetProgramivARB
+dlsym: unresolved _glGetProgramivARB
+dlsym: unresolved glGetProgramStringARB
+dlsym: unresolved glGetProgramStringARB
+dlsym: unresolved glGetProgramStringARB
+dlsym: unresolved _glGetProgramStringARB
+dlsym: unresolved glGetVertexAttribdvARB
+dlsym: unresolved glGetVertexAttribdvARB
+dlsym: unresolved glGetVertexAttribdvARB
+dlsym: unresolved _glGetVertexAttribdvARB
+dlsym: unresolved glGetVertexAttribfvARB
+dlsym: unresolved glGetVertexAttribfvARB
+dlsym: unresolved glGetVertexAttribfvARB
+dlsym: unresolved _glGetVertexAttribfvARB
+dlsym: unresolved glGetVertexAttribivARB
+dlsym: unresolved glGetVertexAttribivARB
+dlsym: unresolved glGetVertexAttribivARB
+dlsym: unresolved _glGetVertexAttribivARB
+dlsym: unresolved glGetVertexAttribPointervARB
+dlsym: unresolved glGetVertexAttribPointervARB
+dlsym: unresolved glGetVertexAttribPointervARB
+dlsym: unresolved _glGetVertexAttribPointervARB
+dlsym: unresolved glIsProgramARB
+dlsym: unresolved glIsProgramARB
+dlsym: unresolved glIsProgramARB
+dlsym: unresolved _glIsProgramARB
+dlsym: unresolved glDeleteBuffersARB
+dlsym: unresolved glDeleteBuffersARB
+dlsym: unresolved glDeleteBuffersARB
+dlsym: unresolved _glDeleteBuffersARB
+dlsym: unresolved glIsBufferARB
+dlsym: unresolved glIsBufferARB
+dlsym: unresolved glIsBufferARB
+dlsym: unresolved _glIsBufferARB
+dlsym: unresolved glGetBufferSubDataARB
+dlsym: unresolved glGetBufferSubDataARB
+dlsym: unresolved glGetBufferSubDataARB
+dlsym: unresolved _glGetBufferSubDataARB
+dlsym: unresolved glMapBufferARB
+dlsym: unresolved glMapBufferARB
+dlsym: unresolved glMapBufferARB
+dlsym: unresolved _glMapBufferARB
+dlsym: unresolved glUnmapBufferARB
+dlsym: unresolved glUnmapBufferARB
+dlsym: unresolved glUnmapBufferARB
+dlsym: unresolved _glUnmapBufferARB
+dlsym: unresolved glGetBufferParameterivARB
+dlsym: unresolved glGetBufferParameterivARB
+dlsym: unresolved glGetBufferParameterivARB
+dlsym: unresolved _glGetBufferParameterivARB
+dlsym: unresolved glGetBufferPointervARB
+dlsym: unresolved glGetBufferPointervARB
+dlsym: unresolved glGetBufferPointervARB
+dlsym: unresolved _glGetBufferPointervARB
+dlsym: unresolved glTexSubImage3DEXT
+dlsym: unresolved glTexSubImage3DEXT
+dlsym: unresolved glTexSubImage3DEXT
+dlsym: unresolved _glTexSubImage3DEXT
+dlsym: unresolved glFogCoordPointerEXT
+dlsym: unresolved glFogCoordPointerEXT
+dlsym: unresolved glFogCoordPointerEXT
+dlsym: unresolved _glFogCoordPointerEXT
+dlsym: unresolved glFogCoordfEXT
+dlsym: unresolved glFogCoordfEXT
+dlsym: unresolved glFogCoordfEXT
+dlsym: unresolved _glFogCoordfEXT
+dlsym: unresolved glDrawRangeElementsEXT
+dlsym: unresolved glDrawRangeElementsEXT
+dlsym: unresolved glDrawRangeElementsEXT
+dlsym: unresolved _glDrawRangeElementsEXT
+dlsym: unresolved glGenOcclusionQueriesNV
+dlsym: unresolved glGenOcclusionQueriesNV
+dlsym: unresolved glGenOcclusionQueriesNV
+dlsym: unresolved _glGenOcclusionQueriesNV
+EGL: eglGetProcAddress(glGenOcclusionQueriesNV) -> NULL
+dlsym: unresolved glGenOcclusionQueriesNV
+dlsym: unresolved glGenOcclusionQueriesNV
+dlsym: unresolved glGenOcclusionQueriesNV
+dlsym: unresolved glGenOcclusionQueriesNV
+dlsym: unresolved glDeleteOcclusionQueriesNV
+dlsym: unresolved glDeleteOcclusionQueriesNV
+dlsym: unresolved glDeleteOcclusionQueriesNV
+dlsym: unresolved _glDeleteOcclusionQueriesNV
+EGL: eglGetProcAddress(glDeleteOcclusionQueriesNV) -> NULL
+dlsym: unresolved glDeleteOcclusionQueriesNV
+dlsym: unresolved glDeleteOcclusionQueriesNV
+dlsym: unresolved glDeleteOcclusionQueriesNV
+dlsym: unresolved glDeleteOcclusionQueriesNV
+dlsym: unresolved glIsOcclusionQueryNV
+dlsym: unresolved glIsOcclusionQueryNV
+dlsym: unresolved glIsOcclusionQueryNV
+dlsym: unresolved _glIsOcclusionQueryNV
+EGL: eglGetProcAddress(glIsOcclusionQueryNV) -> NULL
+dlsym: unresolved glIsOcclusionQueryNV
+dlsym: unresolved glIsOcclusionQueryNV
+dlsym: unresolved glIsOcclusionQueryNV
+dlsym: unresolved glIsOcclusionQueryNV
+dlsym: unresolved glBeginOcclusionQueryNV
+dlsym: unresolved glBeginOcclusionQueryNV
+dlsym: unresolved glBeginOcclusionQueryNV
+dlsym: unresolved _glBeginOcclusionQueryNV
+EGL: eglGetProcAddress(glBeginOcclusionQueryNV) -> NULL
+dlsym: unresolved glBeginOcclusionQueryNV
+dlsym: unresolved glBeginOcclusionQueryNV
+dlsym: unresolved glBeginOcclusionQueryNV
+dlsym: unresolved glBeginOcclusionQueryNV
+dlsym: unresolved glEndOcclusionQueryNV
+dlsym: unresolved glEndOcclusionQueryNV
+dlsym: unresolved glEndOcclusionQueryNV
+dlsym: unresolved _glEndOcclusionQueryNV
+EGL: eglGetProcAddress(glEndOcclusionQueryNV) -> NULL
+dlsym: unresolved glEndOcclusionQueryNV
+dlsym: unresolved glEndOcclusionQueryNV
+dlsym: unresolved glEndOcclusionQueryNV
+dlsym: unresolved glEndOcclusionQueryNV
+dlsym: unresolved glGetOcclusionQueryivNV
+dlsym: unresolved glGetOcclusionQueryivNV
+dlsym: unresolved glGetOcclusionQueryivNV
+dlsym: unresolved _glGetOcclusionQueryivNV
+EGL: eglGetProcAddress(glGetOcclusionQueryivNV) -> NULL
+dlsym: unresolved glGetOcclusionQueryivNV
+dlsym: unresolved glGetOcclusionQueryivNV
+dlsym: unresolved glGetOcclusionQueryivNV
+dlsym: unresolved glGetOcclusionQueryivNV
+dlsym: unresolved glGetOcclusionQueryuivNV
+dlsym: unresolved glGetOcclusionQueryuivNV
+dlsym: unresolved glGetOcclusionQueryuivNV
+dlsym: unresolved _glGetOcclusionQueryuivNV
+EGL: eglGetProcAddress(glGetOcclusionQueryuivNV) -> NULL
+dlsym: unresolved glGetOcclusionQueryuivNV
+dlsym: unresolved glGetOcclusionQueryuivNV
+dlsym: unresolved glGetOcclusionQueryuivNV
+dlsym: unresolved glGetOcclusionQueryuivNV
+dlsym: unresolved glGenFragmentShadersATI
+dlsym: unresolved glGenFragmentShadersATI
+dlsym: unresolved glGenFragmentShadersATI
+dlsym: unresolved _glGenFragmentShadersATI
+dlsym: unresolved glBindFragmentShaderATI
+dlsym: unresolved glBindFragmentShaderATI
+dlsym: unresolved glBindFragmentShaderATI
+dlsym: unresolved _glBindFragmentShaderATI
+dlsym: unresolved glDeleteFragmentShaderATI
+dlsym: unresolved glDeleteFragmentShaderATI
+dlsym: unresolved glDeleteFragmentShaderATI
+dlsym: unresolved _glDeleteFragmentShaderATI
+dlsym: unresolved glBeginFragmentShaderATI
+dlsym: unresolved glBeginFragmentShaderATI
+dlsym: unresolved glBeginFragmentShaderATI
+dlsym: unresolved _glBeginFragmentShaderATI
+dlsym: unresolved glEndFragmentShaderATI
+dlsym: unresolved glEndFragmentShaderATI
+dlsym: unresolved glEndFragmentShaderATI
+dlsym: unresolved _glEndFragmentShaderATI
+dlsym: unresolved glPassTexCoordATI
+dlsym: unresolved glPassTexCoordATI
+dlsym: unresolved glPassTexCoordATI
+dlsym: unresolved _glPassTexCoordATI
+dlsym: unresolved glSampleMapATI
+dlsym: unresolved glSampleMapATI
+dlsym: unresolved glSampleMapATI
+dlsym: unresolved _glSampleMapATI
+dlsym: unresolved glColorFragmentOp1ATI
+dlsym: unresolved glColorFragmentOp1ATI
+dlsym: unresolved glColorFragmentOp1ATI
+dlsym: unresolved _glColorFragmentOp1ATI
+dlsym: unresolved glColorFragmentOp2ATI
+dlsym: unresolved glColorFragmentOp2ATI
+dlsym: unresolved glColorFragmentOp2ATI
+dlsym: unresolved _glColorFragmentOp2ATI
+dlsym: unresolved glColorFragmentOp3ATI
+dlsym: unresolved glColorFragmentOp3ATI
+dlsym: unresolved glColorFragmentOp3ATI
+dlsym: unresolved _glColorFragmentOp3ATI
+dlsym: unresolved glAlphaFragmentOp1ATI
+dlsym: unresolved glAlphaFragmentOp1ATI
+dlsym: unresolved glAlphaFragmentOp1ATI
+dlsym: unresolved _glAlphaFragmentOp1ATI
+dlsym: unresolved glAlphaFragmentOp2ATI
+dlsym: unresolved glAlphaFragmentOp2ATI
+dlsym: unresolved glAlphaFragmentOp2ATI
+dlsym: unresolved _glAlphaFragmentOp2ATI
+dlsym: unresolved glAlphaFragmentOp3ATI
+dlsym: unresolved glAlphaFragmentOp3ATI
+dlsym: unresolved glAlphaFragmentOp3ATI
+dlsym: unresolved _glAlphaFragmentOp3ATI
+dlsym: unresolved glSetFragmentShaderConstantATI
+dlsym: unresolved glSetFragmentShaderConstantATI
+dlsym: unresolved glSetFragmentShaderConstantATI
+dlsym: unresolved _glSetFragmentShaderConstantATI
+[CryEngine] ****** OpenGL Driver Stats ******
+
+[CryEngine]   ...using GL_ARB_texture_compression
+
+fopen FAIL: textures/red.dds (mode=rb)
+fopen FAIL: textures/red.tga (mode=rb)
+fopen FAIL: textures/red.jpg (mode=rb)
+fopen FAIL: textures/white.dds (mode=rb)
+fopen FAIL: textures/white.tga (mode=rb)
+fopen FAIL: textures/white.jpg (mode=rb)
+fopen FAIL: textures/white_ddn.dds (mode=rb)
+fopen FAIL: textures/white_ddn.tga (mode=rb)
+fopen FAIL: textures/white_ddn.jpg (mode=rb)
+fopen FAIL: textures/defaults/pointlight2d.dds (mode=rb)
+fopen FAIL: textures/defaults/pointlight2d.tga (mode=rb)
+fopen FAIL: textures/defaults/pointlight2d.jpg (mode=rb)
+fopen FAIL: textures/grad14.dds (mode=rb)
+fopen FAIL: textures/grad14.tga (mode=rb)
+fopen FAIL: textures/grad14.jpg (mode=rb)
+fopen FAIL: ./grad14.dds (mode=rb)
+fopen FAIL: ./grad14.tga (mode=rb)
+fopen FAIL: ./grad14.jpg (mode=rb)
+fopen FAIL: textures/grey.dds (mode=rb)
+fopen FAIL: textures/grey.tga (mode=rb)
+fopen FAIL: textures/grey.jpg (mode=rb)
+fopen FAIL: ./grey.dds (mode=rb)
+fopen FAIL: ./grey.tga (mode=rb)
+fopen FAIL: ./grey.jpg (mode=rb)
+fopen FAIL: textures/flashbangflash.dds (mode=rb)
+fopen FAIL: textures/flashbangflash.tga (mode=rb)
+fopen FAIL: textures/flashbangflash.jpg (mode=rb)
+fopen FAIL: textures/screennoise.dds (mode=rb)
+fopen FAIL: textures/screennoise.tga (mode=rb)
+fopen FAIL: textures/screennoise.jpg (mode=rb)
+fopen FAIL: textures/defaults/palletteheat.dds (mode=rb)
+fopen FAIL: textures/defaults/palletteheat.tga (mode=rb)
+fopen FAIL: textures/defaults/palletteheat.jpg (mode=rb)
+fopen FAIL: textures/fogenter.dds (mode=rb)
+fopen FAIL: textures/fogenter.tga (mode=rb)
+fopen FAIL: textures/fogenter.jpg (mode=rb)
+fopen FAIL: Shaders/Aliases.txt (mode=r)
+fopen FAIL: Shaders/CustomAliases.txt (mode=r)
+[CryEngine] WARNING: Warning: Shaders couldn't be found in directory 'Shaders/Scripts/'
+fopen FAIL: Shaders/statenocull.ext (mode=rb)
+fopen FAIL: Shaders/hdrprocess.ext (mode=rb)
+fopen FAIL: Shaders/sunflares.ext (mode=rb)
+fopen FAIL: Shaders/lightstyles.ext (mode=rb)
+fopen FAIL: Shaders/glare.ext (mode=rb)
+fopen FAIL: Shaders/cgvprogramms.ext (mode=rb)
+fopen FAIL: Shaders/cgpshaders.ext (mode=rb)
+fopen FAIL: Shaders/templfog.ext (mode=rb)
+fopen FAIL: Shaders/templvfog.ext (mode=rb)
+fopen FAIL: Shaders/templfog_fp.ext (mode=rb)
+fopen FAIL: Shaders/templfogcaustics.ext (mode=rb)
+fopen FAIL: Shaders/templvfogcaustics.ext (mode=rb)
+fopen FAIL: Shaders/templfogcaustics_fp.ext (mode=rb)
+fopen FAIL: Shaders/white.ext (mode=rb)
+fopen FAIL: Shaders/whiteshadow.ext (mode=rb)
+fopen FAIL: Shaders/templdecal.ext (mode=rb)
+fopen FAIL: Shaders/templheatvis_sources.ext (mode=rb)
+fopen FAIL: Shaders/templinvlight.ext (mode=rb)
+fopen FAIL: Shaders/templdof.ext (mode=rb)
+fopen FAIL: Shaders/HWScripts/Declarations/CGPShaders/CGRCDetailAtten.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGPShaders/CGRCHeat_TreesSprites.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGPShaders/CGRCTreeSprites_FV.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGPShaders/CGRCTreeSprites.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGPShaders/CGRCSun.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGPShaders/CGRCFog.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGVShaders/CGVProgDetail.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGVShaders/CGVProgFog.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGVShaders/CGVProgTransformTexture.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGVShaders/CGVProgSimple_Plant_Bended_Sprite.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGVShaders/CGVProgSimple_Plant_Bended_Sprite_FV.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGPShaders/CGRCBlur.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGVShaders/CGVProgBlur.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGVShaders/CGVProgFur_NormGen.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGVShaders/CGVProgFur_OffsGen.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGPShaders/CGRCFur_NormGen.crycg (mode=r)
+fopen FAIL: Shaders/HWScripts/Declarations/CGPShaders/CGRCFur_OffsGen.crycg (mode=r)
+[CryEngine] WARNING: Couldn't find pixel shader 'CGRCFur_OffsGen'
+fopen FAIL: textures/console/defaultconsole.dds (mode=rb)
+fopen FAIL: textures/console/defaultconsole.tga (mode=rb)
+fopen FAIL: textures/console/defaultconsole.jpg (mode=rb)
+dlopen: libCryInput.so already loaded → 0x5ba19b040
+JNI CallStaticBooleanMethodV: supportsRelativeMouse → false
+dlopen: libCrySoundSystem.so already loaded → 0x5ba613040
+fopen FAIL: /etc/openal/alsoft.conf (mode=re)
+fopen FAIL: /etc/xdg/alsoft.conf (mode=re)
+fopen FAIL: /switch/NearChuckle_nx/game/.alsoftrc (mode=re)
+fopen FAIL: /switch/NearChuckle_nx/game/.config/alsoft.conf (mode=re)
+OpenSL: slCreateEngine → not supported, game will use its Java audio path
+pthread_once: calling fn @0xbd1e94ef0
+pthread_key_create → key=2 dtor=0xbd1e94f2c
+pthread_once: fn returned
+pthread_getspecific(key=2) → scratch buf (first use)
+realloc: unowned ptr 0x354724890 — returning fresh block
+pthread_setspecific(key=2, val=0x5c0c5eaa0)
+game stdio[tid=0x35475e770]: terminating with uncaught exception of type al::backend_exception: Failed to initialize OpenSL device: 0x0000000c
+android_abort_message: terminating with uncaught exception of type al::backend_exception: Failed to initialize OpenSL device: 0x0000000c
+openlog: libc++abi
+terminating with uncaught exception of type al::backend_exception: Failed to initialize OpenSL device: 0x0000000c
+game called abort()
+abort called from /switch/NearChuckle_nx/game/lib/libopenal.so +0x10f548 sym=0x10f548
+  bt[0]: /switch/NearChuckle_nx/game/lib/libopenal.so +0x10f548 sym=0x10f548
+  bt[1]: /switch/NearChuckle_nx/game/lib/libopenal.so +0x10f734 sym=0x10f734
+  bt[2]: /switch/NearChuckle_nx/game/lib/libopenal.so +0x10f5e4 sym=0x10f5e4
+  bt[3]: /switch/NearChuckle_nx/game/lib/libopenal.so +0x10eec8 sym=0x10eec8
+  bt[4]: /switch/NearChuckle_nx/game/lib/libopenal.so +0x10ee20 sym=0x10ee20
+  bt[5]: /switch/NearChuckle_nx/game/lib/libopenal.so +0xca26c sym=0xca26c
+  bt[6]: /switch/NearChuckle_nx/game/lib/libopenal.so +0xa5870 sym=alcOpenDevice+0x1e0
+  bt[7]: /switch/NearChuckle_nx/game/lib/libCrySoundSystem.so +0x423e4 sym=CS_Init+0x10
+  bt[8]: /switch/NearChuckle_nx/game/lib/libCrySoundSystem.so +0x32ee4 sym=_ZN12CSoundSystemC1EP7ISystemPv+0x46c
+  bt[9]: /switch/NearChuckle_nx/game/lib/libCrySoundSystem.so +0x201cc sym=CreateSoundSystem+0x38
+  bt[10]: /switch/NearChuckle_nx/game/lib/libCrySystem.so +0xb576c sym=_ZN7CSystem9InitSoundEPv+0x4c
+  bt[11]: /switch/NearChuckle_nx/game/lib/libCrySystem.so +0xb79a4 sym=_ZN7CSystem4InitERK17SSystemInitParams+0x8b8
+  bt[12]: /switch/NearChuckle_nx/game/lib/libCrySystem.so +0x70c48 sym=CreateSystemInterface+0x3c
+  bt[13]: /switch/NearChuckle_nx/game/lib/libFarCry.so +0x369c sym=_Z7RunGameiPPc+0x314
+  bt[14]: /switch/NearChuckle_nx/game/lib/libFarCry.so +0x3378 sym=SDL_main+0x24
+  bt[15]: host+0x9b7f0
+  bt[16]: host+0x99d9c
+  bt[17]: host+0x998c0
+  bt[18]: 0x7a219760 (unknown)
