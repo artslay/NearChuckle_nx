@@ -240,6 +240,10 @@ void*        compatUnityReleaseWindow();
 void         compatLog(const char* msg);
 void         compatLogFmt(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void         compatLogFlush(void);
+// Close the current log file without disabling future logging. The next
+// compatLog/compatLogFmt call reopens the same file in append mode, preserving
+// the already-written startup diagnostics.
+void         compatLogClose(void);
 
 // Lock-free logger for crash-forensics paths only (see loader.cpp) — never
 // use this for normal logging, it can interleave with concurrent compatLog
