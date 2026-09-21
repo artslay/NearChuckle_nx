@@ -1966,6 +1966,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         (shaderPathHasExt(ioPath, ".csl") ||
          shaderPathHasExt(ioPath, ".csi") ||
          shaderPathHasExt(ioPath, ".crycg"));
+    static unsigned g_shader_cache_miss_logs = 0;
+    const bool shaderCacheIo = shaderIo && isShaderCacheLookupPath(ioPath);
     if (shaderSourceIo)
         compatLogFmt("fopen SHADER REQUEST: path=%s mode=%s",
                      ioPath ? ioPath : "?", mode ? mode : "?");
@@ -2077,7 +2079,16 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (shaderSourceIo)
             compatLogFmt("fopen SHADER FINAL FAIL: path=%s mode=%s",
                          ioPath ? ioPath : "?", mode ? mode : "?");
-        compatLogFmt("fopen FAIL: %s (mode=%s)", ioPath ? ioPath : "?", mode ? mode : "?");
+
+        if (!shaderCacheIo || g_shader_cache_miss_logs < 64) {
+            compatLogFmt("fopen FAIL: %s (mode=%s)",
+                         ioPath ? ioPath : "?", mode ? mode : "?");
+            if (shaderCacheIo) {
+                ++g_shader_cache_miss_logs;
+                if (g_shader_cache_miss_logs == 64)
+                    compatLog("further shader cache misses are no longer logged");
+            }
+        }
         return f;
     }
 
