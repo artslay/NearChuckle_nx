@@ -1722,6 +1722,8 @@ static std::string pakAssetRelativeName(const char* requested) {
     return wanted;
 }
 
+static void traceClassRegistryFile(FILE* f, const char* requested);
+
 static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (!requested || !mode || mode[0] != 'r')
         return nullptr;
