@@ -1924,6 +1924,37 @@ static void logShaderScriptDiagnostics(FILE* f, const char* path) {
 // directory-enumeration helpers below, after stub_fopen().
 static bool isShaderPathForDiag(const char* path);
 
+// Shader cache files are generated/runtime cache artifacts, not language assets.
+// When a cache file is missing, sending the request through tryOpenFromLanguagePaks()
+// makes every lookup scan every FCData PAK and emit an entry-not-found message for
+// each archive. With shader compilation disabled there is nothing to extract from
+// a PAK for these paths, so let the normal filesystem miss fall through directly
+// to the renderer's embedded shader fallback.
+static bool isShaderCacheLookupPath(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string normalized(path);
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+        else
+            c = (char)std::tolower((unsigned char)c);
+    }
+
+    const size_t cachePos = normalized.find("shaders/cache/");
+    if (cachePos == std::string::npos)
+        return false;
+
+    const size_t ext = normalized.rfind('.');
+    if (ext == std::string::npos)
+        return false;
+
+    return normalized.compare(ext, std::string::npos, ".cgasm") == 0 ||
+           normalized.compare(ext, std::string::npos, ".cgps") == 0 ||
+           normalized.compare(ext, std::string::npos, ".cgvp") == 0;
+}
+
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
@@ -1985,9 +2016,14 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     }
 
     if (!f) {
-        FILE* pakFile = tryOpenFromLanguagePaks(ioPath, mode);
-        if (pakFile)
-            return pakFile;
+        // Shader cache entries are never language-pack assets. In particular,
+        // do not scan FCData PAKs for them: a cache miss should reach the
+        // renderer's embedded fallback immediately.
+        if (!isShaderCacheLookupPath(ioPath)) {
+            FILE* pakFile = tryOpenFromLanguagePaks(ioPath, mode);
+            if (pakFile)
+                return pakFile;
+        }
 
         // Missing PAKs are not fatal packaging artifacts on Switch. Return
         // a valid zero-entry ZIP so CryPak can register the archive and continue.
