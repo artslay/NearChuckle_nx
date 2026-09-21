@@ -489,12 +489,17 @@ static int run_farcry(LoadedSo* game_so) {
     char arg4[] = "r_Fullscreen 1";
     char arg5[64];
     char arg6[] = "r_VSync 1";
+    char arg7[] = "r_ShadersAllowCompilation 0";
+    char arg8[] = "r_ShadersAsyncCompiling 0";
+    char arg9[] = "r_ShadersRemoteCompiler 0";
+    char arg10[] = "r_ShadersSubmitRequestline 0";
+    char arg11[] = "r_ShadersCompileAutoActivate 0";
 
     std::snprintf(arg2, sizeof(arg2), "r_Width %d", config.screen_width);
     std::snprintf(arg3, sizeof(arg3), "r_Height %d", config.screen_height);
     std::snprintf(arg5, sizeof(arg5), "game_fov %d", config.fov);
 
-    char* argv[7];
+    char* argv[12];
     argv[0] = arg0;
     argv[1] = arg1;
     argv[2] = arg2;
@@ -504,8 +509,18 @@ static int run_farcry(LoadedSo* game_so) {
 
     int argc = 6;
     if (config.vsync) {
-        argv[6] = arg6;
-        argc = 7;
+        argv[argc++] = arg6;
+    }
+
+    if (config.disable_shader_compilation) {
+        argv[argc++] = arg7;
+        argv[argc++] = arg8;
+        argv[argc++] = arg9;
+        argv[argc++] = arg10;
+        argv[argc++] = arg11;
+
+        compatLog("Shader compilation disabled by config");
+        compatLog("Shader CVars: AllowCompilation=0 AsyncCompiling=0 RemoteCompiler=0 SubmitRequestline=0 CompileAutoActivate=0");
     }
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
