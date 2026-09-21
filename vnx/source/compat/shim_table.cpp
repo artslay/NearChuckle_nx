@@ -4475,6 +4475,7 @@ static size_t  chk_strlen(const char* s, size_t)               { return strlen(s
 static void*   chk_memcpy(void* d, const void* s, size_t n, size_t)   { return memcpy(d,s,n); }
 static void*   chk_memmove(void* d, const void* s, size_t n, size_t)  { return memmove(d,s,n); }
 static char*   chk_strcat(char* d, const char* s, size_t)     { return strcat(d,s); }
+static char*   chk_strncat(char* d, const char* s, size_t n, size_t) { return strncat(d,s,n); }
 static char*   chk_strcpy(char* d, const char* s, size_t)     { return strcpy(d,s); }
 static char*   chk_strncpy(char* d, const char* s, size_t n, size_t, size_t) { return strncpy(d,s,n); }
 static int     chk_vsprintf(char* d, int, size_t, const char* f, va_list v)  { return vsprintf(d,f,v); }
@@ -6142,6 +6143,7 @@ static const ShimEntry g_shims[] = {
     {"__memcpy_chk",    (void*)chk_memcpy},
     {"__memmove_chk",   (void*)chk_memmove},
     {"__strcat_chk",    (void*)chk_strcat},
+    {"__strncat_chk",   (void*)chk_strncat},
     {"__strcpy_chk",    (void*)chk_strcpy},
     {"__strncpy_chk2",  (void*)chk_strncpy},
     {"__vsprintf_chk",  (void*)chk_vsprintf},
