@@ -81,6 +81,7 @@ extern "C" {
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <unordered_map>
 
 static std::string asciiLower(std::string value);
 
@@ -3586,6 +3587,37 @@ static bool directoryHasVisibleEntries(const char* path) {
     return hasEntry;
 }
 
+static std::unordered_map<DIR*, std::string> g_readdirPaths;
+static std::unordered_map<DIR*, unsigned> g_readdirCounts;
+
+static struct dirent* stub_readdir(DIR* dir) {
+    if (!dir)
+        return nullptr;
+
+    struct dirent* ent = ::readdir(dir);
+    if (!ent)
+        return nullptr;
+
+    auto it = g_readdirPaths.find(dir);
+    if (it != g_readdirPaths.end()) {
+        unsigned& count = g_readdirCounts[dir];
+        if (count < 32) {
+            compatLogFmt("readdir[%u] %s -> %s",
+                         count, it->second.c_str(), ent->d_name);
+        }
+        ++count;
+    }
+    return ent;
+}
+
+static int stub_closedir(DIR* dir) {
+    if (!dir)
+        return -1;
+    g_readdirPaths.erase(dir);
+    g_readdirCounts.erase(dir);
+    return ::closedir(dir);
+}
+
 static DIR* stub_opendir(const char* path) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
@@ -3594,13 +3626,30 @@ static DIR* stub_opendir(const char* path) {
         compatLogFmt("path NORMALIZE: opendir %s -> %s", path, ioPathStorage.c_str());
 
     DIR* d = opendir(ioPath);
-    if (d)
+    if (d) {
+        std::string low = ioPath ? asciiLower(ioPath) : std::string();
+        if (low.find("/fcdata") != std::string::npos ||
+            low == "fcdata" ||
+            low.find("/localized") != std::string::npos) {
+            g_readdirPaths[d] = ioPath;
+            g_readdirCounts[d] = 0;
+        }
         return d;
+    }
 
     std::string resolved;
     if (resolvePathCaseInsensitive(ioPath, resolved)) {
         d = opendir(resolved.c_str());
         if (d) {
+            if (ioPath) {
+                std::string low = asciiLower(ioPath);
+                if (low.find("/fcdata") != std::string::npos ||
+                    low == "fcdata" ||
+                    low.find("/localized") != std::string::npos) {
+                    g_readdirPaths[d] = resolved;
+                    g_readdirCounts[d] = 0;
+                }
+            }
             compatLogFmt("opendir CASEFIX: %s -> %s",
                          ioPath ? ioPath : "?", resolved.c_str());
             return d;
@@ -4990,8 +5039,8 @@ static const ShimEntry g_shims[] = {
     {"fstat64",      (void*)stub_fstat64},
     {"mkdir",       (void*)mkdir},
     {"opendir",     (void*)stub_opendir},
-    {"readdir",     (void*)readdir},
-    {"closedir",    (void*)closedir},
+    {"readdir",     (void*)stub_readdir},
+    {"closedir",    (void*)stub_closedir},
     {"_findfirst64", (void*)stub_findfirst64},
     {"_findnext64",  (void*)stub_findnext64},
     {"_findclose",   (void*)stub_findclose64},
