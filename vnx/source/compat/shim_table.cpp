@@ -1186,7 +1186,8 @@ static bool pakInflateRaw(const unsigned char* src, size_t srcSize,
 
 static bool pakFindEntry(FILE* pak, const std::string& wanted,
                          uint32_t& localOffset, uint32_t& compressedSize,
-                         uint32_t& uncompressedSize, uint16_t& method) {
+                         uint32_t& uncompressedSize, uint16_t& method,
+                         uint32_t& expectedCrc) {
     if (!pak || fseek(pak, 0, SEEK_END) != 0)
         return false;
 
@@ -1240,6 +1241,7 @@ static bool pakFindEntry(FILE* pak, const std::string& wanted,
             method = pakRd16(h + 10);
             compressedSize = pakRd32(h + 20);
             uncompressedSize = pakRd32(h + 24);
+            expectedCrc = pakRd32(h + 16);
             localOffset = pakRd32(h + 42);
             return true;
         }
@@ -1263,9 +1265,10 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     }
 
     uint32_t localOffset = 0, compressedSize = 0, uncompressedSize = 0;
+    uint32_t expectedCrc = 0;
     uint16_t method = 0;
     if (!pakFindEntry(pak, wanted, localOffset, compressedSize,
-                      uncompressedSize, method)) {
+                      uncompressedSize, method, expectedCrc)) {
         if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : entry-not-found",
                      outPath.c_str(), wanted.c_str());
         fclose(pak);
@@ -1368,6 +1371,30 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
                      outPath.c_str(), wanted.c_str(), (unsigned)method,
                      (unsigned)compressedSize, (unsigned)uncompressedSize,
                      (unsigned)localFlags, (unsigned)firstBytes);
+        return false;
+    }
+
+    const uint32_t actualCrc =
+        (uint32_t)crc32(0, plain.data(), (unsigned int)plain.size());
+    const bool classRegistryEntry =
+        normalizedWanted == "scripts/classregistry.lua";
+
+    if (classRegistryEntry) {
+        compatLogFmt("PAK CLASSREG CRC: %s <- %s expected=0x%08x actual=0x%08x %s",
+                     wanted.c_str(), pakPath.c_str(),
+                     (unsigned)expectedCrc, (unsigned)actualCrc,
+                     expectedCrc == actualCrc ? "MATCH" : "MISMATCH");
+        compatLogFmt("PAK CLASSREG DATA: %s <- %s method=%u comp=%u uncomp=%u local=%u flags=0x%04x",
+                     wanted.c_str(), pakPath.c_str(),
+                     (unsigned)method, (unsigned)compressedSize,
+                     (unsigned)uncompressedSize, (unsigned)localOffset,
+                     (unsigned)localFlags);
+    }
+
+    if (actualCrc != expectedCrc) {
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : crc-mismatch expected=0x%08x actual=0x%08x",
+                     outPath.c_str(), wanted.c_str(),
+                     (unsigned)expectedCrc, (unsigned)actualCrc);
         return false;
     }
 
@@ -1706,7 +1733,7 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     // v2 intentionally bypasses caches produced by earlier PAK path/lookup implementations.
     // All PAK assets still use the same resolver; this only prevents stale extracted
     // files from hiding whether the current archive reader produced valid data.
-    const std::string cacheRoot = "_pakcache_v2";
+    const std::string cacheRoot = "_pakcache_v3";
     std::string safeName = wanted;
     for (char& c : safeName)
         if (c == '/') c = '_';
@@ -1719,6 +1746,7 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
         FILE* f = fopen(outPath.c_str(), mode);
         if (f) {
             compatLogFmt("pak CACHE: %s", requested);
+            traceClassRegistryFile(f, requested);
             return f;
         }
     }
@@ -1768,6 +1796,7 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
                 FILE* f = fopen(outPath.c_str(), mode);
                 if (f) {
                     compatLogFmt("pak EXTRACT: %s <- %s", requested, pakPath.c_str());
+                    traceClassRegistryFile(f, requested);
                     closedir(dir);
                     return f;
                 }
@@ -2194,6 +2223,68 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     setvbuf(f, nullptr, _IOFBF, 64 * 1024);
     return f;
 }
+static FILE* g_classregistry_trace_file = nullptr;
+static unsigned g_classregistry_fread_logs = 0;
+static unsigned g_classregistry_fgetc_logs = 0;
+
+static bool isClassRegistryPath(const char* path) {
+    if (!path)
+        return false;
+
+    std::string normalized = pakNormalizeName(path);
+    static const char kClassRegistrySuffix[] = "/scripts/classregistry.lua";
+    const size_t suffixLen = sizeof(kClassRegistrySuffix) - 1;
+
+    return normalized == "scripts/classregistry.lua" ||
+           (normalized.size() > suffixLen &&
+            normalized.compare(normalized.size() - suffixLen, suffixLen,
+                               kClassRegistrySuffix) == 0);
+}
+
+static void traceClassRegistryFile(FILE* f, const char* requested) {
+    if (!f || !isClassRegistryPath(requested))
+        return;
+
+    g_classregistry_trace_file = f;
+    g_classregistry_fread_logs = 0;
+    g_classregistry_fgetc_logs = 0;
+
+    const long saved = ftell(f);
+    if (saved < 0 || fseek(f, 0, SEEK_END) != 0) {
+        compatLogFmt("CLASSREG STREAM: file=%p path=%s seek-failed",
+                     (void*)f, requested ? requested : "?");
+        if (saved >= 0)
+            fseek(f, saved, SEEK_SET);
+        return;
+    }
+
+    const long fileSize = ftell(f);
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        compatLogFmt("CLASSREG STREAM: file=%p path=%s rewind-failed size=%ld",
+                     (void*)f, requested ? requested : "?", fileSize);
+        return;
+    }
+
+    unsigned char first[64] = {};
+    const size_t got = fread(first, 1, sizeof(first), f);
+
+    char hex[sizeof(first) * 3 + 1] = {};
+    size_t hp = 0;
+    for (size_t i = 0; i < got && hp + 3 < sizeof(hex); ++i)
+        hp += (size_t)snprintf(hex + hp, sizeof(hex) - hp,
+                               "%02x%s", (unsigned)first[i],
+                               (i + 1 < got) ? " " : "");
+
+    compatLogFmt("CLASSREG STREAM: file=%p path=%s size=%ld first_bytes=%zu",
+                 (void*)f, requested ? requested : "?", fileSize, got);
+    compatLogFmt("CLASSREG FIRST64: %s", hex[0] ? hex : "<empty>");
+
+    if (saved >= 0)
+        fseek(f, saved, SEEK_SET);
+    else
+        rewind(f);
+}
+
 // ─── Cached APK stream ───────────────────────────────────────────────────────
 // cocos2d-x reads the game's assets straight out of the .apk it was handed, and
 // minizip's access pattern — thousands of tiny reads plus a fresh walk of the
@@ -2202,32 +2293,83 @@ static FILE* stub_fopen(const char* path, const char* mode) {
 // route a cached stream through compat/apkcache.h and leave every other file
 // exactly as it was.
 static size_t sh_fread(void* p, size_t sz, size_t n, FILE* f) {
-    if (apkcache::owns(f)) return apkcache::read(f, p, sz, n);
-    return fread(p, sz, n, f);
+    size_t rc;
+    if (apkcache::owns(f))
+        rc = apkcache::read(f, p, sz, n);
+    else
+        rc = fread(p, sz, n, f);
+
+    if (f == g_classregistry_trace_file && g_classregistry_fread_logs < 32) {
+        ++g_classregistry_fread_logs;
+        compatLogFmt("CLASSREG FREAD[%u]: file=%p size=%zu count=%zu -> %zu pos=%ld",
+                     g_classregistry_fread_logs, (void*)f, sz, n, rc, ftell(f));
+    }
+    return rc;
 }
 static int sh_fseek(FILE* f, long off, int whence) {
-    if (apkcache::owns(f)) return apkcache::seek(f, (int64_t)off, whence);
-    return fseek(f, off, whence);
+    int rc;
+    if (apkcache::owns(f))
+        rc = apkcache::seek(f, (int64_t)off, whence);
+    else
+        rc = fseek(f, off, whence);
+
+    if (f == g_classregistry_trace_file)
+        compatLogFmt("CLASSREG FSEEK: file=%p off=%ld whence=%d -> %d pos=%ld",
+                     (void*)f, off, whence, rc, ftell(f));
+    return rc;
 }
 static long sh_ftell(FILE* f) {
     if (apkcache::owns(f)) return (long)apkcache::tell(f);
     return ftell(f);
 }
 static int sh_fgetc(FILE* f) {
-    if (apkcache::owns(f)) return apkcache::getc(f);
-    return fgetc(f);
+    int rc;
+    if (apkcache::owns(f))
+        rc = apkcache::getc(f);
+    else
+        rc = fgetc(f);
+
+    if (f == g_classregistry_trace_file && g_classregistry_fgetc_logs < 32) {
+        ++g_classregistry_fgetc_logs;
+        compatLogFmt("CLASSREG FGETC[%u]: file=%p -> 0x%02x pos=%ld",
+                     g_classregistry_fgetc_logs, (void*)f,
+                     rc == EOF ? 0xff : (unsigned)(rc & 0xff), ftell(f));
+    }
+    return rc;
 }
 static int sh_feof(FILE* f) {
-    if (apkcache::owns(f)) return apkcache::eof(f);
-    return feof(f);
+    int rc;
+    if (apkcache::owns(f))
+        rc = apkcache::eof(f);
+    else
+        rc = feof(f);
+
+    if (f == g_classregistry_trace_file)
+        compatLogFmt("CLASSREG FEOF: file=%p -> %d pos=%ld",
+                     (void*)f, rc, ftell(f));
+    return rc;
 }
 static void sh_rewind(FILE* f) {
     if (apkcache::owns(f)) { apkcache::seek(f, 0, SEEK_SET); return; }
     rewind(f);
 }
 static int sh_fclose(FILE* f) {
+    if (f == g_classregistry_trace_file) {
+        compatLogFmt("CLASSREG FCLOSE: file=%p", (void*)f);
+        g_classregistry_trace_file = nullptr;
+        g_classregistry_fread_logs = 0;
+        g_classregistry_fgetc_logs = 0;
+    }
     apkcache::close(f);   // no-op unless this stream was cached
     return fclose(f);
+}
+
+static int sh_ungetc(int c, FILE* f) {
+    int rc = ungetc(c, f);
+    if (f == g_classregistry_trace_file)
+        compatLogFmt("CLASSREG UNGETC: file=%p char=0x%02x -> %d pos=%ld",
+                     (void*)f, (unsigned)(c & 0xff), rc, ftell(f));
+    return rc;
 }
 
 // open() wrapper — logs every call so we can trace early constructor I/O
@@ -3685,10 +3827,12 @@ static void probeShaderPakEntries() {
                 uint32_t localOffset = 0;
                 uint32_t compressedSize = 0;
                 uint32_t uncompressedSize = 0;
+                uint32_t expectedCrc = 0;
                 uint16_t method = 0;
 
                 if (pakFindEntry(pak, normalized, localOffset,
-                                 compressedSize, uncompressedSize, method)) {
+                                 compressedSize, uncompressedSize, method,
+                                 expectedCrc)) {
                     compatLogFmt("PAK PROBE: %s <- %s", wanted[w], pakPath.c_str());
                     found = true;
                 }
@@ -5535,7 +5679,7 @@ static const ShimEntry g_shims[] = {
     {"fputc",       (void*)sh_fputc},
     {"getc",        (void*)sh_fgetc},
     {"putc",        (void*)putc},
-    {"ungetc",      (void*)ungetc},
+    {"ungetc",      (void*)sh_ungetc},
     {"open",        (void*)stub_open},
     {"close",       (void*)sh_close},
     {"read",        (void*)sh_read},
