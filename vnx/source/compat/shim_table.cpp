@@ -1116,12 +1116,22 @@ static bool pakInflateRaw(const unsigned char* src, size_t srcSize,
     if (!version || inflateInit2_(&zs, -15, version, (int)sizeof(z_stream)) != 0)
         return false;
 
-    int rc = Z_OK;
-    while (rc == Z_OK && zs.avail_out > 0)
-        rc = inflate(&zs, Z_FINISH);
+    // Keep these zlib status/action values local because this source intentionally
+    // declares the zlib ABI itself and does not depend on zlib.h being installed.
+    constexpr int kZOk = 0;
+    constexpr int kZStreamEnd = 1;
+    constexpr int kZBufError = -5;
+    constexpr int kZFinish = 4;
 
-    const bool ok = (rc == Z_STREAM_END &&
-                     zs.total_out == dstSize);
+    int rc = kZOk;
+    while (rc == kZOk && zs.avail_out > 0)
+        rc = inflate(&zs, kZFinish);
+
+    // Z_BUF_ERROR can be returned when the output buffer is exactly full before
+    // zlib gets a chance to report stream end. Treat that as success only when
+    // all requested output bytes were produced; otherwise the stream is bad.
+    const bool ok = (zs.total_out == dstSize) &&
+                    (rc == kZStreamEnd || rc == kZBufError);
     if (!ok) {
         compatLogFmt("PAK INFLATE FAIL: src=%u dst=%u rc=%d avail_in=%u avail_out=%u total_in=%lu total_out=%lu msg=%s",
                      (unsigned)srcSize, (unsigned)dstSize, rc,
@@ -2102,7 +2112,7 @@ static int stub_open(const char* path, int flags, ...) {
     }
 
     if (fd < 0) compatLogFmt("open FAIL: %s flags=0x%x", ioPath ? ioPath : "?", flags);
-    else        compatLogFmt("open OK:   %s flags=0x%x fd=%d", ioPath ? ioPath : "?", flags);
+    else        compatLogFmt("open OK:   %s flags=0x%x fd=%d", ioPath ? ioPath : "?", flags, fd);
     return fd;
 }
 
