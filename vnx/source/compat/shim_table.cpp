@@ -997,30 +997,27 @@ static bool cdataMappedPathExists(const char* path, std::string& mapped) {
     return ::stat(mapped.c_str(), &st) == 0;
 }
 
-// Far Cry's Android build expects english1.pak/english2.pak during
-// OpenLanguagePak(), but these auxiliary English archives are intentionally
-// absent when a complete localization is supplied through english.pak (which
-// is also how common Far Cry Russian-localization installs are arranged).
-// The original CryPak treats a missing optional language archive as non-fatal,
-// while this Android build reaches ZipDir::CacheFactory3::New with the missing
-// file and lets the resulting exception escape. Give ZipDir a real, valid
-// zero-entry ZIP archive instead of NULL. Only do this after the real file open
-// failed, so an existing english1.pak/english2.pak is never shadowed.
-static bool isOptionalLanguagePak(const char* path) {
+// Missing PAK compatibility.
+// CryPak can throw ZipDir::Error when an Android-packaging path requests a
+// PAK that is not present on the Switch filesystem. Treat every missing PAK as
+// an empty, valid ZIP archive instead of allowing the exception to escape.
+// Only read-mode opens are handled here; existing PAK files are never changed.
+static bool isPakArchivePath(const char* path) {
     if (!path || !*path)
-        return false;
-
-    const char* dir = std::strstr(path, "FCData/Localized/");
-    if (!dir)
         return false;
 
     const char* base = std::strrchr(path, '/');
     base = base ? base + 1 : path;
 
-    return std::strcmp(base, "english1.pak") == 0;
+    const size_t len = std::strlen(base);
+    return len >= 4 &&
+           std::tolower((unsigned char)base[len - 4]) == '.' &&
+           std::tolower((unsigned char)base[len - 3]) == 'p' &&
+           std::tolower((unsigned char)base[len - 2]) == 'a' &&
+           std::tolower((unsigned char)base[len - 1]) == 'k';
 }
 
-static FILE* makeEmptyLanguagePak(const char* path, const char* mode) {
+static FILE* makeEmptyPak(const char* path, const char* mode) {
     // Standard ZIP End Of Central Directory for an archive with zero entries.
     // CryEngine's ZipDir reader accepts PAK files through this ZIP structure.
     static const unsigned char empty_zip_eocd[] = {
@@ -1053,7 +1050,7 @@ static FILE* makeEmptyLanguagePak(const char* path, const char* mode) {
         return nullptr;
 
     setvbuf(f, nullptr, _IOFBF, 16 * 1024);
-    compatLogFmt("fopen FALLBACK: %s -> created empty optional language pak", path);
+    compatLogFmt("fopen FALLBACK: %s -> created empty PAK", path);
     return f;
 }
 
@@ -1933,8 +1930,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (pakFile)
             return pakFile;
 
-        if (mode && mode[0] == 'r' && isOptionalLanguagePak(ioPath)) {
-            FILE* fallback = makeEmptyLanguagePak(ioPath, mode);
+        // Missing PAKs are not fatal packaging artifacts on Switch. Return
+        // a valid zero-entry ZIP so CryPak can register the archive and continue.
+        if (mode && mode[0] == 'r' && ioPath && isPakArchivePath(ioPath)) {
+            FILE* fallback = makeEmptyPak(ioPath, mode);
             if (fallback)
                 return fallback;
         }
@@ -1971,7 +1970,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                     mkdir("CData", 0755);
                 }
 
-                FILE* fallback = makeEmptyLanguagePak(ioPath, mode);
+                FILE* fallback = makeEmptyPak(ioPath, mode);
                 if (fallback) {
                     compatLogFmt("fopen FALLBACK: %s -> empty ZIP for Android startup compatibility",
                                  ioPath);
