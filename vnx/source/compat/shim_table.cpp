@@ -2122,15 +2122,33 @@ static int stub_open(const char* path, int flags, ...) {
         if (mfd >= 0) return mfd;
     }
 
+    const bool shaderSourceOpen =
+        ioPath &&
+        (shaderPathHasExt(ioPath, ".csl") ||
+         shaderPathHasExt(ioPath, ".csi") ||
+         shaderPathHasExt(ioPath, ".crycg"));
+    if (shaderSourceOpen)
+        compatLogFmt("open SHADER REQUEST: path=%s flags=0x%x",
+                     ioPath, flags);
+
     int fd = doOpen(ioPath);
+    if (shaderSourceOpen)
+        compatLogFmt("open SHADER DIRECT: path=%s result=%s fd=%d",
+                     ioPath, fd >= 0 ? "OK" : "FAIL", fd);
     if (fd < 0 && ioPath) {
         std::string resolved;
         if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath) {
             int rfd = doOpen(resolved.c_str());
             if (rfd >= 0) {
                 compatLogFmt("open CASEFIX: %s -> %s fd=%d", ioPath, resolved.c_str(), rfd);
+                if (shaderSourceOpen)
+                    compatLogFmt("open SHADER CASEFIX: requested=%s resolved=%s result=OK fd=%d",
+                                 ioPath, resolved.c_str(), rfd);
                 return rfd;
             }
+            if (shaderSourceOpen)
+                compatLogFmt("open SHADER CASEFIX: requested=%s resolved=%s result=FAIL",
+                             ioPath, resolved.c_str());
         }
     }
 
