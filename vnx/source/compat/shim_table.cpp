@@ -1196,7 +1196,7 @@ static bool pakFindEntry(FILE* pak, const std::string& wanted,
             break;
 
         std::string name((const char*)h + 46, nameLen);
-        if (pakNormalizeName(name.c_str()) == wanted) {
+        if (pakNormalizeName(name.c_str()) == pakNormalizeName(wanted.c_str())) {
             method = pakRd16(h + 10);
             compressedSize = pakRd32(h + 20);
             uncompressedSize = pakRd32(h + 24);
