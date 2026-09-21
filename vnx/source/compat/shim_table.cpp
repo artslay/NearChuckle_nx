@@ -3566,6 +3566,16 @@ static std::string findDirPart(const char* pattern, std::string& filePattern) {
 static bool findPatternMatches(const std::string& pattern, const char* name) {
     const std::string pat = asciiLower(pattern.empty() ? "*" : pattern);
     const std::string item = asciiLower(name ? name : "");
+
+    // CryEngine/CryPak uses the Windows-style "*.*" enumeration pattern for
+    // recursive directory scans. POSIX fnmatch() treats "*.*" literally and
+    // therefore does NOT match directory names such as "Declarations" that
+    // contain no dot. That prevents mfLoadSubdir() from descending into
+    // Shaders/HWScripts/Declarations and also makes Shaders/Scripts appear empty.
+    // Match "*.*" as Windows does: every visible name.
+    if (pat == "*.*")
+        return true;
+
     return fnmatch(pat.c_str(), item.c_str(), 0) == 0;
 }
 
