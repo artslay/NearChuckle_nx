@@ -910,10 +910,48 @@ static void sh_free(void* p) {
 static void* sh_realloc(void* p, size_t n) {
     g_sh_realloc_calls++;
     arenaGate("realloc");
-    if (p && (!memIsHeap(p) || !looksLikeNewlibChunk(p))) {
-        compatLogFmt("realloc: unowned ptr %p — returning fresh block", p);
+
+    if (!p)
+        return malloc(n);
+
+    if (!memIsHeap(p) || !looksLikeNewlibChunk(p)) {
+        // Some guest components hand libc realloc a pointer owned by another
+        // allocator. Returning a blank block loses the contents that realloc
+        // is required to preserve and can corrupt parser/input state later.
+        // When the pointer is inside the Switch heap, recover the readable
+        // payload from newlib's reported usable size and keep the old block
+        // untouched. This is intentionally a leak on the foreign-pointer path:
+        // preserving data is safer than passing an unknown owner back to free().
+        size_t oldUsable = 0;
+        if (memIsHeap(p))
+            oldUsable = malloc_usable_size(p);
+
+        if (oldUsable > 0 && oldUsable <= (256u * 1024u * 1024u)) {
+            const size_t copySize = oldUsable < n ? oldUsable : n;
+            void* fresh = malloc(n);
+            if (!fresh) {
+                compatLogFmt("realloc: recover failed ptr=%p size=%zu old_usable=%zu",
+                             p, n, oldUsable);
+                return nullptr;
+            }
+
+            if (copySize > 0) {
+                // The destination size is exactly n; the source is constrained
+                // by malloc_usable_size(). Both addresses are in the process heap.
+                memcpy(fresh, p, copySize);
+            }
+
+            compatLogFmt("realloc: recovered foreign ptr=%p new=%p size=%zu "
+                         "copied=%zu old_usable=%zu",
+                         p, fresh, n, copySize, oldUsable);
+            return fresh;
+        }
+
+        compatLogFmt("realloc: unrecoverable foreign ptr=%p size=%zu old_usable=%zu",
+                     p, n, oldUsable);
         return malloc(n);
     }
+
     return realloc(p, n);
 }
 
