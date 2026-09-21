@@ -87,6 +87,9 @@ static std::string asciiLower(std::string value);
 // Case-insensitive filesystem resolver used by file wrappers below.
 static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
 
+static bool compatIsPakPath(const char* path);
+static void compatLogPakOpenState(FILE* f, const char* path);
+
 // Normalize Switch virtual-device paths before they reach newlib's POSIX I/O.
 //
 // libnx normally accepts paths such as "sdmc:/switch/Foo". The guest Android
@@ -1904,6 +1907,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         return f;
     }
 
+    if (compatIsPakPath(ioPath)) {
+        compatLogPakOpenState(f, ioPath);
+    }
+
     logShaderScriptDiagnostics(f, ioPath);
 
     if (apkcache::adopt(f, ioPath)) {
@@ -3404,6 +3411,76 @@ static void probeShaderPakEntries() {
         if (!found)
             compatLogFmt("PAK PROBE: %s -> NOT FOUND", wanted[w]);
     }
+}
+
+void compatProbePakArchives(const char* dataRoot) {
+    const std::string root = dataRoot ? dataRoot : "";
+    std::string fcdata = root;
+    if (!fcdata.empty())
+        fcdata += "/FCData";
+
+    compatLogFmt("PAK BIND MODEL: Android uses an empty bind root for FCData/*.pak; expected virtual root=%s",
+                 root.empty() ? "<cwd>" : root.c_str());
+    compatLogFmt("PAK BIND MODEL: physical FCData=%s",
+                 fcdata.empty() ? "FCData" : fcdata.c_str());
+}
+
+static bool compatIsPakPath(const char* path) {
+    if (!path)
+        return false;
+    const std::string p = asciiLower(path);
+    return p.size() >= 4 && p.compare(p.size() - 4, 4, ".pak") == 0;
+}
+
+static void compatLogPakOpenState(FILE* f, const char* path) {
+    if (!f || !compatIsPakPath(path))
+        return;
+
+    const long saved = ftell(f);
+    if (saved < 0 || fseek(f, 0, SEEK_END) != 0) {
+        compatLogFmt("PAK OPEN DIAG: %s size=UNKNOWN seek=FAIL",
+                     path ? path : "?");
+        if (saved >= 0)
+            fseek(f, saved, SEEK_SET);
+        return;
+    }
+
+    const long fileSize = ftell(f);
+    bool zipValid = false;
+    uint16_t entries = 0;
+    uint32_t cdSize = 0;
+    uint32_t cdOffset = 0;
+
+    if (fileSize >= 22) {
+        const size_t tailSize =
+            (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
+        std::vector<unsigned char> tail(tailSize);
+        if (fseek(f, fileSize - (long)tailSize, SEEK_SET) == 0 &&
+            pakReadExact(f, tail.data(), tail.size())) {
+            size_t eocd = tail.size();
+            while (eocd >= 22) {
+                --eocd;
+                if (eocd + 4 <= tail.size() &&
+                    pakRd32(tail.data() + eocd) == 0x06054b50u)
+                    break;
+            }
+            if (eocd + 22 <= tail.size()) {
+                entries = pakRd16(tail.data() + eocd + 10);
+                cdSize = pakRd32(tail.data() + eocd + 12);
+                cdOffset = pakRd32(tail.data() + eocd + 16);
+                zipValid = cdOffset <= (uint32_t)fileSize &&
+                           cdSize <= (uint32_t)fileSize &&
+                           (uint64_t)cdOffset + (uint64_t)cdSize <= (uint64_t)fileSize;
+            }
+        }
+    }
+
+    compatLogFmt("PAK OPEN DIAG: %s size=%ld zip=%d entries=%u cd_size=%u cd_offset=%u",
+                 path ? path : "?", fileSize, zipValid ? 1 : 0,
+                 (unsigned)entries, (unsigned)cdSize, (unsigned)cdOffset);
+
+    if (saved >= 0)
+        fseek(f, saved, SEEK_SET);
 }
 
 void compatPrepareShaderDirectories(const char* dataRoot) {
