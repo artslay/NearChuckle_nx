@@ -1923,6 +1923,16 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
+    const bool shaderIo = isShaderPathForDiag(ioPath);
+    const bool shaderSourceIo =
+        shaderIo &&
+        (shaderPathHasExt(ioPath, ".csl") ||
+         shaderPathHasExt(ioPath, ".csi") ||
+         shaderPathHasExt(ioPath, ".crycg"));
+    if (shaderSourceIo)
+        compatLogFmt("fopen SHADER REQUEST: path=%s mode=%s",
+                     ioPath ? ioPath : "?", mode ? mode : "?");
+
     if (path && ioPathStorage != path)
         compatLogFmt("path NORMALIZE: fopen %s -> %s", path, ioPathStorage.c_str());
 
@@ -1937,12 +1947,18 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         compatLogFmt("PAK FOPEN REQUEST: %s", ioPath);
 
     FILE* f = fopen(ioPath, mode);
+    if (shaderSourceIo)
+        compatLogFmt("fopen SHADER DIRECT: path=%s result=%s",
+                     ioPath ? ioPath : "?", f ? "OK" : "FAIL");
     if (!f && ioPath) {
         std::string resolved;
         if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
                 compatLogFmt("fopen CASEFIX: %s -> %s", ioPath, resolved.c_str());
+                if (shaderSourceIo)
+                    compatLogFmt("fopen SHADER CASEFIX: requested=%s resolved=%s result=OK",
+                                 ioPath, resolved.c_str());
                 f = rf;
             }
         }
@@ -2016,6 +2032,9 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             }
         }
 
+        if (shaderSourceIo)
+            compatLogFmt("fopen SHADER FINAL FAIL: path=%s mode=%s",
+                         ioPath ? ioPath : "?", mode ? mode : "?");
         compatLogFmt("fopen FAIL: %s (mode=%s)", ioPath ? ioPath : "?", mode ? mode : "?");
         return f;
     }
