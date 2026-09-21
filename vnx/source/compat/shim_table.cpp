@@ -1116,9 +1116,22 @@ static bool pakInflateRaw(const unsigned char* src, size_t srcSize,
     if (!version || inflateInit2_(&zs, -15, version, (int)sizeof(z_stream)) != 0)
         return false;
 
-    const int rc = inflate(&zs, 4);
+    int rc = Z_OK;
+    while (rc == Z_OK && zs.avail_out > 0)
+        rc = inflate(&zs, Z_FINISH);
+
+    const bool ok = (rc == Z_STREAM_END &&
+                     zs.total_out == dstSize);
+    if (!ok) {
+        compatLogFmt("PAK INFLATE FAIL: src=%u dst=%u rc=%d avail_in=%u avail_out=%u total_in=%lu total_out=%lu msg=%s",
+                     (unsigned)srcSize, (unsigned)dstSize, rc,
+                     (unsigned)zs.avail_in, (unsigned)zs.avail_out,
+                     (unsigned long)zs.total_in, (unsigned long)zs.total_out,
+                     zs.msg ? zs.msg : "-");
+    }
+
     inflateEnd(&zs);
-    return rc == 1 && zs.total_out == dstSize;
+    return ok;
 }
 
 static bool pakFindEntry(FILE* pak, const std::string& wanted,
@@ -1188,18 +1201,29 @@ static bool pakFindEntry(FILE* pak, const std::string& wanted,
 static bool pakExtractEntry(const std::string& pakPath, const std::string& wanted,
                             const std::string& outPath) {
     FILE* pak = fopen(pakPath.c_str(), "rb");
-    if (!pak) return false;
+    if (!pak) {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : fopen errno=%d",
+                     outPath.c_str(), pakPath.c_str(), errno);
+        return false;
+    }
 
     uint32_t localOffset = 0, compressedSize = 0, uncompressedSize = 0;
     uint16_t method = 0;
     if (!pakFindEntry(pak, wanted, localOffset, compressedSize,
                       uncompressedSize, method)) {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : entry-not-found",
+                     outPath.c_str(), wanted.c_str());
         fclose(pak);
         return false;
     }
+
     if (!compressedSize || !uncompressedSize ||
         compressedSize > 128 * 1024 * 1024u ||
         uncompressedSize > 128 * 1024 * 1024u) {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : bad-size comp=%u uncomp=%u method=%u local=%u",
+                     outPath.c_str(), wanted.c_str(),
+                     (unsigned)compressedSize, (unsigned)uncompressedSize,
+                     (unsigned)method, (unsigned)localOffset);
         fclose(pak);
         return false;
     }
@@ -1208,14 +1232,48 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     if (fseek(pak, (long)localOffset, SEEK_SET) != 0 ||
         !pakReadExact(pak, local, sizeof(local)) ||
         pakRd32(local) != 0x04034b50u) {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : bad-local-header offset=%u",
+                     outPath.c_str(), wanted.c_str(), (unsigned)localOffset);
         fclose(pak);
         return false;
     }
 
+    const uint16_t localFlags = pakRd16(local + 6);
+    const uint16_t localMethod = pakRd16(local + 8);
     const uint16_t nameLen = pakRd16(local + 26);
     const uint16_t extraLen = pakRd16(local + 28);
     const long dataOffset = (long)localOffset + 30L + nameLen + extraLen;
+
+    if (method != localMethod) {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : method-mismatch c=%u l=%u flags=0x%04x",
+                     outPath.c_str(), wanted.c_str(),
+                     (unsigned)method, (unsigned)localMethod,
+                     (unsigned)localFlags);
+        fclose(pak);
+        return false;
+    }
+
+    if (fseek(pak, 0, SEEK_END) != 0) {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : seek-end",
+                     outPath.c_str(), wanted.c_str());
+        fclose(pak);
+        return false;
+    }
+    const long fileSize = ftell(pak);
+    if (fileSize < 0 ||
+        dataOffset < 0 ||
+        (uint64_t)dataOffset + (uint64_t)compressedSize > (uint64_t)fileSize) {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : data-range file=%ld offset=%ld comp=%u local=%u name=%u extra=%u",
+                     outPath.c_str(), wanted.c_str(), fileSize, dataOffset,
+                     (unsigned)compressedSize, (unsigned)localOffset,
+                     (unsigned)nameLen, (unsigned)extraLen);
+        fclose(pak);
+        return false;
+    }
+
     if (fseek(pak, dataOffset, SEEK_SET) != 0) {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : seek-data offset=%ld",
+                     outPath.c_str(), wanted.c_str(), dataOffset);
         fclose(pak);
         return false;
     }
@@ -1224,7 +1282,16 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     std::vector<unsigned char> plain(uncompressedSize);
     const bool readOk = pakReadExact(pak, compressed.data(), compressed.size());
     fclose(pak);
-    if (!readOk) return false;
+    if (!readOk) {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : read-data",
+                     outPath.c_str(), wanted.c_str());
+        return false;
+    }
+
+    const uint32_t firstBytes =
+        compressed.size() >= 4
+            ? pakRd32(compressed.data())
+            : 0;
 
     bool ok = false;
     if (method == 0 && compressedSize == uncompressedSize) {
@@ -1233,8 +1300,21 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     } else if (method == 8) {
         ok = pakInflateRaw(compressed.data(), compressed.size(),
                            plain.data(), plain.size());
+    } else {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : unsupported-method=%u comp=%u uncomp=%u flags=0x%04x first=0x%08x",
+                     outPath.c_str(), wanted.c_str(), (unsigned)method,
+                     (unsigned)compressedSize, (unsigned)uncompressedSize,
+                     (unsigned)localFlags, (unsigned)firstBytes);
+        return false;
     }
-    if (!ok) return false;
+
+    if (!ok) {
+        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : decode method=%u comp=%u uncomp=%u flags=0x%04x first=0x%08x",
+                     outPath.c_str(), wanted.c_str(), (unsigned)method,
+                     (unsigned)compressedSize, (unsigned)uncompressedSize,
+                     (unsigned)localFlags, (unsigned)firstBytes);
+        return false;
+    }
 
     size_t slash = outPath.find_last_of('/');
     if (slash != std::string::npos) {
