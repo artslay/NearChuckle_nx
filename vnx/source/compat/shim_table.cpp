@@ -3618,6 +3618,30 @@ static int stub_closedir(DIR* dir) {
     return ::closedir(dir);
 }
 
+// Android/Bionic also exposes the 64-bit directory iterator as readdir64.
+// On AArch64 the returned directory-entry layout is compatible with the
+// newlib dirent used by this compatibility layer, so route it through the
+// same native iterator while keeping a distinct diagnostic tag.
+static struct dirent* stub_readdir64(DIR* dir) {
+    if (!dir)
+        return nullptr;
+
+    struct dirent* ent = ::readdir(dir);
+    if (!ent)
+        return nullptr;
+
+    auto it = g_readdirPaths.find(dir);
+    if (it != g_readdirPaths.end()) {
+        unsigned& count = g_readdirCounts[dir];
+        if (count < 32) {
+            compatLogFmt("readdir64[%u] %s -> %s",
+                         count, it->second.c_str(), ent->d_name);
+        }
+        ++count;
+    }
+    return ent;
+}
+
 static DIR* stub_opendir(const char* path) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
@@ -5040,6 +5064,7 @@ static const ShimEntry g_shims[] = {
     {"mkdir",       (void*)mkdir},
     {"opendir",     (void*)stub_opendir},
     {"readdir",     (void*)stub_readdir},
+    {"readdir64",   (void*)stub_readdir64},
     {"closedir",    (void*)stub_closedir},
     {"_findfirst64", (void*)stub_findfirst64},
     {"_findnext64",  (void*)stub_findnext64},
