@@ -1212,9 +1212,14 @@ static bool pakFindEntry(FILE* pak, const std::string& wanted,
 
 static bool pakExtractEntry(const std::string& pakPath, const std::string& wanted,
                             const std::string& outPath) {
+    const std::string normalizedWanted = pakNormalizeName(wanted.c_str());
+    const bool shaderEntry =
+        normalizedWanted == "shaders" ||
+        normalizedWanted.rfind("shaders/", 0) == 0;
+
     FILE* pak = fopen(pakPath.c_str(), "rb");
     if (!pak) {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : fopen errno=%d",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : fopen errno=%d",
                      outPath.c_str(), pakPath.c_str(), errno);
         return false;
     }
@@ -1223,7 +1228,7 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     uint16_t method = 0;
     if (!pakFindEntry(pak, wanted, localOffset, compressedSize,
                       uncompressedSize, method)) {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : entry-not-found",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : entry-not-found",
                      outPath.c_str(), wanted.c_str());
         fclose(pak);
         return false;
@@ -1232,7 +1237,7 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     if (!compressedSize || !uncompressedSize ||
         compressedSize > 128 * 1024 * 1024u ||
         uncompressedSize > 128 * 1024 * 1024u) {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : bad-size comp=%u uncomp=%u method=%u local=%u",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : bad-size comp=%u uncomp=%u method=%u local=%u",
                      outPath.c_str(), wanted.c_str(),
                      (unsigned)compressedSize, (unsigned)uncompressedSize,
                      (unsigned)method, (unsigned)localOffset);
@@ -1244,7 +1249,7 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     if (fseek(pak, (long)localOffset, SEEK_SET) != 0 ||
         !pakReadExact(pak, local, sizeof(local)) ||
         pakRd32(local) != 0x04034b50u) {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : bad-local-header offset=%u",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : bad-local-header offset=%u",
                      outPath.c_str(), wanted.c_str(), (unsigned)localOffset);
         fclose(pak);
         return false;
@@ -1257,7 +1262,7 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     const long dataOffset = (long)localOffset + 30L + nameLen + extraLen;
 
     if (method != localMethod) {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : method-mismatch c=%u l=%u flags=0x%04x",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : method-mismatch c=%u l=%u flags=0x%04x",
                      outPath.c_str(), wanted.c_str(),
                      (unsigned)method, (unsigned)localMethod,
                      (unsigned)localFlags);
@@ -1266,7 +1271,7 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     }
 
     if (fseek(pak, 0, SEEK_END) != 0) {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : seek-end",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : seek-end",
                      outPath.c_str(), wanted.c_str());
         fclose(pak);
         return false;
@@ -1275,7 +1280,7 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     if (fileSize < 0 ||
         dataOffset < 0 ||
         (uint64_t)dataOffset + (uint64_t)compressedSize > (uint64_t)fileSize) {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : data-range file=%ld offset=%ld comp=%u local=%u name=%u extra=%u",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : data-range file=%ld offset=%ld comp=%u local=%u name=%u extra=%u",
                      outPath.c_str(), wanted.c_str(), fileSize, dataOffset,
                      (unsigned)compressedSize, (unsigned)localOffset,
                      (unsigned)nameLen, (unsigned)extraLen);
@@ -1284,7 +1289,7 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     }
 
     if (fseek(pak, dataOffset, SEEK_SET) != 0) {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : seek-data offset=%ld",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : seek-data offset=%ld",
                      outPath.c_str(), wanted.c_str(), dataOffset);
         fclose(pak);
         return false;
@@ -1295,7 +1300,7 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     const bool readOk = pakReadExact(pak, compressed.data(), compressed.size());
     fclose(pak);
     if (!readOk) {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : read-data",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : read-data",
                      outPath.c_str(), wanted.c_str());
         return false;
     }
@@ -1313,7 +1318,7 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
         ok = pakInflateRaw(compressed.data(), compressed.size(),
                            plain.data(), plain.size());
     } else {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : unsupported-method=%u comp=%u uncomp=%u flags=0x%04x first=0x%08x",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : unsupported-method=%u comp=%u uncomp=%u flags=0x%04x first=0x%08x",
                      outPath.c_str(), wanted.c_str(), (unsigned)method,
                      (unsigned)compressedSize, (unsigned)uncompressedSize,
                      (unsigned)localFlags, (unsigned)firstBytes);
@@ -1321,7 +1326,7 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     }
 
     if (!ok) {
-        compatLogFmt("PAK EXTRACT FAIL: %s <- %s : decode method=%u comp=%u uncomp=%u flags=0x%04x first=0x%08x",
+        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : decode method=%u comp=%u uncomp=%u flags=0x%04x first=0x%08x",
                      outPath.c_str(), wanted.c_str(), (unsigned)method,
                      (unsigned)compressedSize, (unsigned)uncompressedSize,
                      (unsigned)localFlags, (unsigned)firstBytes);
