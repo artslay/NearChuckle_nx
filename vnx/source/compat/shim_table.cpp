@@ -2443,18 +2443,48 @@ static void* fake_dlopen(const char* path, int) {
     compatLogFmt("dlopen: %s not resolvable to a loaded .so — sentinel handle", path);
     return (void*)0xDEAD;
 }
+static bool isCryAllocatorSym(const char* n) {
+    if (!n) return false;
+    return strcmp(n, "CryMalloc") == 0 ||
+           strcmp(n, "CryRealloc") == 0 ||
+           strcmp(n, "CryReallocSize") == 0 ||
+           strcmp(n, "CryFree") == 0 ||
+           strcmp(n, "CryFreeSize") == 0 ||
+           strcmp(n, "CryModuleMalloc") == 0 ||
+           strcmp(n, "CryModuleRealloc") == 0 ||
+           strcmp(n, "CryModuleReallocSize") == 0 ||
+           strcmp(n, "CryModuleFree") == 0 ||
+           strcmp(n, "CryModuleFreeSize") == 0;
+}
+
 static void* fake_dlsym(void* handle, const char* sym) {
     if (!sym) return nullptr;
+    const bool trace = isCryAllocatorSym(sym);
+
     // Handle-scoped lookup when dlopen returned a real LoadedSo*.
     if (handle && handle != (void*)0xDEAD) {
-        void* p = ((LoadedSo*)handle)->findSym(sym);
-        if (p) return p;
+        LoadedSo* so = (LoadedSo*)handle;
+        void* p = so->findSym(sym);
+        if (p) {
+            if (trace)
+                compatLogFmt("dlsym: %s -> %s %p",
+                             sym, so->path.c_str(), p);
+            return p;
+        }
         // Fall through to the global resolver — Unity libs reference plenty of
         // libc/GLES symbols our shim table owns, not just their own exports.
     }
+
     void* p = shimResolve(sym);
-    if (!p) compatLogFmt("dlsym: unresolved %s", sym ? sym : "?");
-    return p;
+    if (p) {
+        if (trace)
+            compatLogFmt("dlsym: %s -> global/shim %p", sym, p);
+        return p;
+    }
+
+    if (trace || sym[0] == '_')
+        compatLogFmt("dlsym: unresolved %s", sym);
+    return nullptr;
 }
 static int fake_dlclose(void*) { return 0; }
 static const char* fake_dlerror(void) { return nullptr; }
