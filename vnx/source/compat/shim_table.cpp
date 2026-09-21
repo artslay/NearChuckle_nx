@@ -1173,11 +1173,10 @@ static bool pakInflateRaw(const unsigned char* src, size_t srcSize,
     const bool ok = (zs.total_out == dstSize) &&
                     (rc == kZStreamEnd || rc == kZBufError);
     if (!ok) {
-        compatLogFmt("PAK INFLATE FAIL: src=%u dst=%u rc=%d avail_in=%u avail_out=%u total_in=%lu total_out=%lu msg=%s",
-                     (unsigned)srcSize, (unsigned)dstSize, rc,
-                     (unsigned)zs.avail_in, (unsigned)zs.avail_out,
-                     (unsigned long)zs.total_in, (unsigned long)zs.total_out,
-                     zs.msg ? zs.msg : "-");
+        (void)srcSize;
+        (void)dstSize;
+        (void)rc;
+        (void)zs;
     }
 
     inflateEnd(&zs);
@@ -1581,15 +1580,9 @@ static bool tryMaterializeUniquePakBasename(const char* targetPath) {
 
     if (!pakExtractEntry(
             uniquePak, uniqueEntry, targetPath)) {
-        compatLogFmt(
-            "PAK BASENAME EXTRACT FAILED: %s <- %s :: %s",
-            targetPath, uniquePak.c_str(), uniqueEntry.c_str());
         return false;
     }
 
-    compatLogFmt(
-        "PAK BASENAME MATERIALIZED: %s <- %s :: %s",
-        targetPath, uniquePak.c_str(), uniqueEntry.c_str());
     return true;
 }
 
@@ -1679,8 +1672,6 @@ static std::string pakAssetRelativeName(const char* requested) {
     return wanted;
 }
 
-static void traceClassRegistryFile(FILE* f, const char* requested);
-
 static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (!requested || !mode || mode[0] != 'r')
         return nullptr;
@@ -1703,7 +1694,6 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (::stat(outPath.c_str(), &cached) == 0 && S_ISREG(cached.st_mode)) {
         FILE* f = fopen(outPath.c_str(), mode);
         if (f) {
-            traceClassRegistryFile(f, requested);
             return f;
         }
     }
@@ -1752,7 +1742,6 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
             if (pakExtractEntry(pakPath, wanted, outPath)) {
                 FILE* f = fopen(outPath.c_str(), mode);
                 if (f) {
-                    traceClassRegistryFile(f, requested);
                     closedir(dir);
                     return f;
                 }
@@ -2179,68 +2168,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     setvbuf(f, nullptr, _IOFBF, 64 * 1024);
     return f;
 }
-static FILE* g_classregistry_trace_file = nullptr;
-static unsigned g_classregistry_fread_logs = 0;
-static unsigned g_classregistry_fgetc_logs = 0;
-
-static bool isClassRegistryPath(const char* path) {
-    if (!path)
-        return false;
-
-    std::string normalized = pakNormalizeName(path);
-    static const char kClassRegistrySuffix[] = "/scripts/classregistry.lua";
-    const size_t suffixLen = sizeof(kClassRegistrySuffix) - 1;
-
-    return normalized == "scripts/classregistry.lua" ||
-           (normalized.size() > suffixLen &&
-            normalized.compare(normalized.size() - suffixLen, suffixLen,
-                               kClassRegistrySuffix) == 0);
-}
-
-static void traceClassRegistryFile(FILE* f, const char* requested) {
-    if (!f || !isClassRegistryPath(requested))
-        return;
-
-    g_classregistry_trace_file = f;
-    g_classregistry_fread_logs = 0;
-    g_classregistry_fgetc_logs = 0;
-
-    const long saved = ftell(f);
-    if (saved < 0 || fseek(f, 0, SEEK_END) != 0) {
-        compatLogFmt("CLASSREG STREAM: file=%p path=%s seek-failed",
-                     (void*)f, requested ? requested : "?");
-        if (saved >= 0)
-            fseek(f, saved, SEEK_SET);
-        return;
-    }
-
-    const long fileSize = ftell(f);
-    if (fseek(f, 0, SEEK_SET) != 0) {
-        compatLogFmt("CLASSREG STREAM: file=%p path=%s rewind-failed size=%ld",
-                     (void*)f, requested ? requested : "?", fileSize);
-        return;
-    }
-
-    unsigned char first[64] = {};
-    const size_t got = fread(first, 1, sizeof(first), f);
-
-    char hex[sizeof(first) * 3 + 1] = {};
-    size_t hp = 0;
-    for (size_t i = 0; i < got && hp + 3 < sizeof(hex); ++i)
-        hp += (size_t)snprintf(hex + hp, sizeof(hex) - hp,
-                               "%02x%s", (unsigned)first[i],
-                               (i + 1 < got) ? " " : "");
-
-    compatLogFmt("CLASSREG STREAM: file=%p path=%s size=%ld first_bytes=%zu",
-                 (void*)f, requested ? requested : "?", fileSize, got);
-    compatLogFmt("CLASSREG FIRST64: %s", hex[0] ? hex : "<empty>");
-
-    if (saved >= 0)
-        fseek(f, saved, SEEK_SET);
-    else
-        rewind(f);
-}
-
 // ─── Cached APK stream ───────────────────────────────────────────────────────
 // cocos2d-x reads the game's assets straight out of the .apk it was handed, and
 // minizip's access pattern — thousands of tiny reads plus a fresh walk of the
@@ -2318,14 +2245,6 @@ static int sh_fclose(FILE* f) {
     }
     apkcache::close(f);   // no-op unless this stream was cached
     return fclose(f);
-}
-
-static int sh_ungetc(int c, FILE* f) {
-    int rc = ungetc(c, f);
-    if (f == g_classregistry_trace_file)
-        compatLogFmt("CLASSREG UNGETC: file=%p char=0x%02x -> %d pos=%ld",
-                     (void*)f, (unsigned)(c & 0xff), rc, ftell(f));
-    return rc;
 }
 
 // open() wrapper — logs every call so we can trace early constructor I/O
@@ -5635,7 +5554,7 @@ static const ShimEntry g_shims[] = {
     {"fputc",       (void*)sh_fputc},
     {"getc",        (void*)sh_fgetc},
     {"putc",        (void*)putc},
-    {"ungetc",      (void*)sh_ungetc},
+    {"ungetc",      (void*)ungetc},
     {"open",        (void*)stub_open},
     {"close",       (void*)sh_close},
     {"read",        (void*)sh_read},
