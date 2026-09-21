@@ -216,35 +216,49 @@ static char* stub_realpath(const char* p, char* out) {
     if (!p || !*p)
         return nullptr;
 
-    compatLogFmt("realpath REQUEST: %s", p);
-
-    // CryPak's Linux path code relies on POSIX realpath() semantics:
-    // existing paths are returned as absolute paths, while wildcard/nonexistent
-    // paths fail so AdjustFileName() can fall back to realpath(".") and append
-    // the original relative path itself. The old stub returned the input
-    // unchanged for every call, which broke OpenPacksCommon(): its PAK scan
-    // then constructed paths from "." and never registered the FCData archives.
+    // CryPak's Linux implementation expects normal POSIX absolute paths.
+    // The Switch C runtime reports the current directory as "sdmc:/...", but
+    // the rest of this compatibility layer canonicalizes that namespace to
+    // "/switch/...". Returning the sdmc-prefixed form breaks the path model
+    // used by OpenPacksCommon/OpenPackCommon and can prevent root FCData PAKs
+    // from reaching ZipDir at all.
     bool callerOwnsBuffer = (out != nullptr);
     if (!out) {
         out = (char*)malloc(PATH_MAX);
-        if (!out) return nullptr;
+        if (!out)
+            return nullptr;
     }
 
+    auto writeCanonical = [&](const std::string& value) -> char* {
+        const std::string canonical = normalizeSwitchFsPath(value.c_str());
+        if (canonical.size() >= PATH_MAX) {
+            errno = ENAMETOOLONG;
+            if (!callerOwnsBuffer)
+                free(out);
+            return nullptr;
+        }
+        memcpy(out, canonical.c_str(), canonical.size() + 1);
+        compatLogFmt("realpath RESULT: %s -> %s", p, out);
+        return out;
+    };
+
     if (strcmp(p, ".") == 0 || strcmp(p, "./") == 0) {
-        if (!::getcwd(out, PATH_MAX)) {
-            if (!callerOwnsBuffer) free(out);
+        char cwd[PATH_MAX];
+        if (!::getcwd(cwd, sizeof(cwd))) {
+            if (!callerOwnsBuffer)
+                free(out);
             compatLogFmt("realpath RESULT: %s -> FAIL errno=%d", p, errno);
             return nullptr;
         }
-        compatLogFmt("realpath RESULT: %s -> %s", p, out);
-        return out;
+        return writeCanonical(cwd);
     }
 
     // Wildcards are deliberately not resolved. CryPak passes patterns such as
-    // "FCData/*.pak" here; returning failure is what makes AdjustFileName()
-    // construct the correct absolute wildcard path.
+    // "FCData/*.pak" here; returning failure makes AdjustFileName() construct
+    // the absolute wildcard path from realpath(".").
     if (strpbrk(p, "*?[]") != nullptr) {
-        if (!callerOwnsBuffer) free(out);
+        if (!callerOwnsBuffer)
+            free(out);
         errno = ENOENT;
         return nullptr;
     }
@@ -252,27 +266,25 @@ static char* stub_realpath(const char* p, char* out) {
     struct stat st = {};
     if (::stat(p, &st) == 0) {
         if (p[0] == '/') {
-            strncpy(out, p, PATH_MAX - 1);
-            out[PATH_MAX - 1] = '\0';
-            compatLogFmt("realpath RESULT: %s -> %s", p, out);
-            return out;
+            return writeCanonical(p);
         }
 
         char cwd[PATH_MAX];
         if (!::getcwd(cwd, sizeof(cwd))) {
-            if (!callerOwnsBuffer) free(out);
+            if (!callerOwnsBuffer)
+                free(out);
             return nullptr;
         }
-        if (snprintf(out, PATH_MAX, "%s/%s", cwd, p) >= PATH_MAX) {
-            if (!callerOwnsBuffer) free(out);
-            errno = ENAMETOOLONG;
-            return nullptr;
-        }
-        compatLogFmt("realpath RESULT: %s -> %s", p, out);
-        return out;
+
+        std::string absolute = cwd;
+        if (!absolute.empty() && absolute.back() != '/')
+            absolute += '/';
+        absolute += p;
+        return writeCanonical(absolute);
     }
 
-    if (!callerOwnsBuffer) free(out);
+    if (!callerOwnsBuffer)
+        free(out);
     errno = ENOENT;
     compatLogFmt("realpath RESULT: %s -> FAIL errno=%d", p, errno);
     return nullptr;
