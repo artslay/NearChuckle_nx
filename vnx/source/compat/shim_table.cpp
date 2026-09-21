@@ -3639,6 +3639,9 @@ static void compatLogPakOpenState(FILE* f, const char* path) {
         fseek(f, saved, SEEK_SET);
 }
 
+static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
+                                                  const char* programPath);
+
 void compatPrepareShaderDirectories(const char* dataRoot) {
     const char* dirs[] = {
         "Shaders/HWScripts/Declarations",
@@ -3693,7 +3696,7 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     // the guest loader has successfully registered CGVProgramms.csl.
     // Materialize the exact declaration tree and make the macro self-contained
     // so the shared script is available regardless of the guest loader path.
-    const commonPatch = patchCommonSubroutinesIntoShaderMacro(
+    const bool commonPatch = patchCommonSubroutinesIntoShaderMacro(
         "Shaders/HWScripts/Declarations/CGVPMacro.csi",
         "Shaders/HWScripts/Declarations/CGVProgramms.csl");
     compatLogFmt("shader common patch result: %s",
