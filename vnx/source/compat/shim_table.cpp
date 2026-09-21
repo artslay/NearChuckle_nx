@@ -1615,38 +1615,48 @@ static void prepareShaderSourceFiles(const char* /*dataRoot*/) {
     compatLogFmt("shader loose files: %d/24", foundCount);
 }
 
-static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
-    if (!requested || !mode || mode[0] != 'r')
-        return nullptr;
+static std::string pakAssetRelativeName(const char* requested) {
+    if (!requested || !*requested)
+        return std::string();
 
-    // CryPak stores asset names relative to the PAK root (for example
-    // "scripts/classregistry.lua"). stub_fopen() normalizes guest paths to
-    // absolute Switch paths such as "/switch/NearChuckle_nx/game/scripts/...".
-    // Strip the current game root before matching the PAK central directory.
-    // Without this, every ordinary absolute asset lookup can miss even when
-    // the file is present in Scripts.pak/other FCData archives.
     std::string wanted = pakNormalizeName(requested);
 
-    char cwd[PATH_MAX];
-    if (::getcwd(cwd, sizeof(cwd))) {
-        std::string cwdNorm = pakNormalizeName(cwd);
-        while (cwdNorm.size() > 1 && cwdNorm.back() == '/')
-            cwdNorm.pop_back();
+    // Prefer the explicit game root marker. This remains reliable even when
+    // CryPak changes the process CWD or passes an already-absolute Switch path.
+    const std::string gameMarker = "/game/";
+    const size_t gamePos = wanted.find(gameMarker);
+    if (gamePos != std::string::npos)
+        wanted.erase(0, gamePos + gameMarker.size());
 
-        if (wanted == cwdNorm) {
-            wanted.clear();
-        } else {
+    // Fall back to the actual CWD when the request did not contain /game/.
+    if (wanted.size() && wanted[0] == '/') {
+        char cwd[PATH_MAX];
+        if (::getcwd(cwd, sizeof(cwd))) {
+            std::string cwdNorm = pakNormalizeName(cwd);
+            while (cwdNorm.size() > 1 && cwdNorm.back() == '/')
+                cwdNorm.pop_back();
+
             const std::string prefix = cwdNorm + "/";
             if (wanted.rfind(prefix, 0) == 0)
                 wanted.erase(0, prefix.size());
         }
     }
 
-    // Requests can explicitly name the FCData mount. PAK entries are still
-    // relative to the archive root, so do not include "FCData/" in the lookup.
+    // Explicit FCData paths are virtual mount paths, not PAK entry prefixes.
     if (wanted.rfind("fcdata/", 0) == 0)
         wanted.erase(0, 7);
 
+    while (wanted.rfind("./", 0) == 0)
+        wanted.erase(0, 2);
+
+    return wanted;
+}
+
+static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
+    if (!requested || !mode || mode[0] != 'r')
+        return nullptr;
+
+    const std::string wanted = pakAssetRelativeName(requested);
     if (wanted.empty())
         return nullptr;
 
@@ -1656,12 +1666,45 @@ static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
         if (c == '/') c = '_';
     const std::string outPath = cacheRoot + "/" + safeName;
 
+    compatLogFmt("PAK LOOKUP: %s -> %s", requested, wanted.c_str());
+
     struct stat cached = {};
     if (::stat(outPath.c_str(), &cached) == 0 && S_ISREG(cached.st_mode)) {
         FILE* f = fopen(outPath.c_str(), mode);
         if (f) {
             compatLogFmt("pak CACHE: %s", requested);
             return f;
+        }
+    }
+
+    // Scripts are critical to CryGame startup. Give the primary Scripts.pak a
+    // deterministic first chance instead of depending on directory enumeration
+    // order or the process CWD. Entry names inside the archive are relative,
+    // e.g. "scripts/classregistry.lua".
+    const bool scriptsAsset = wanted.rfind("scripts/", 0) == 0;
+    if (scriptsAsset) {
+        const char* scriptPaks[] = {
+            "FCData/Scripts.pak",
+            "FCData/scripts.pak",
+            "fcdata/Scripts.pak",
+            "fcdata/scripts.pak",
+            nullptr
+        };
+
+        for (size_t i = 0; scriptPaks[i]; ++i) {
+            struct stat st = {};
+            if (::stat(scriptPaks[i], &st) != 0 || !S_ISREG(st.st_mode))
+                continue;
+
+            compatLogFmt("PAK SCRIPT TRY: %s <- %s", wanted.c_str(), scriptPaks[i]);
+            if (pakExtractEntry(scriptPaks[i], wanted, outPath)) {
+                FILE* f = fopen(outPath.c_str(), mode);
+                if (f) {
+                    compatLogFmt("PAK SCRIPT EXTRACT: %s <- %s",
+                                 requested, scriptPaks[i]);
+                    return f;
+                }
+            }
         }
     }
 
