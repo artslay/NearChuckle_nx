@@ -1453,149 +1453,12 @@ static bool tryMaterializeUniquePakBasename(const char* targetPath) {
 
 
 
-// ─── Shader source discovery outside FCData/*.pak ────────────────────────────
-//
-// Android packages commonly keep game data below assets/ or inside a secondary
-// ZIP/OBB container. The CryPak archives we have under FCData are not sufficient
-// for the renderer's system shader files, so search the complete game tree for
-// loose files and Android-style archives as well.
-
-static bool copyFileBinary(const std::string& srcPath, const std::string& dstPath) {
-    FILE* src = fopen(srcPath.c_str(), "rb");
-    if (!src)
-        return false;
-
-    FILE* dst = fopen(dstPath.c_str(), "wb");
-    if (!dst) {
-        fclose(src);
-        return false;
-    }
-
-    unsigned char buf[64 * 1024];
-    bool ok = true;
-    for (;;) {
-        const size_t got = fread(buf, 1, sizeof(buf), src);
-        if (got) {
-            if (fwrite(buf, 1, got, dst) != got) {
-                ok = false;
-                break;
-            }
-        }
-        if (got < sizeof(buf)) {
-            if (ferror(src))
-                ok = false;
-            break;
-        }
-    }
-
-    fclose(dst);
-    fclose(src);
-    return ok;
-}
-
-static bool ensureParentDirectories(const std::string& path) {
-    const size_t slash = path.find_last_of('/');
-    if (slash == std::string::npos)
-        return true;
-
-    const std::string dir = path.substr(0, slash);
-    if (dir.empty())
-        return true;
-
-    std::string cur;
-    size_t pos = 0;
-    while (pos <= dir.size()) {
-        size_t end = dir.find('/', pos);
-        std::string part = dir.substr(
-            pos, end == std::string::npos ? dir.size() - pos : end - pos);
-
-        if (!part.empty()) {
-            if (!cur.empty())
-                cur += "/";
-            cur += part;
-            mkdir(cur.c_str(), 0755);
-        }
-
-        if (end == std::string::npos)
-            break;
-        pos = end + 1;
-    }
-
-    return true;
-}
-
-static bool pathEndsWithShaderName(const std::string& path,
-                                   const std::string& wanted) {
-    const std::string p = pakNormalizeName(path.c_str());
-    const std::string w = pakNormalizeName(wanted.c_str());
-    if (p == w)
-        return true;
-    if (p.size() <= w.size())
-        return false;
-
-    const size_t off = p.size() - w.size();
-    return p[off - 1] == '/' && p.compare(off, w.size(), w) == 0;
-}
-
-static bool findLooseShaderSourceRecursive(const std::string& directory,
-                                           const std::string& wanted,
-                                           std::string& result,
-                                           int depth,
-                                           int& visited) {
-    if (depth > 12 || visited > 12000)
-        return false;
-
-    DIR* d = opendir(directory.c_str());
-    if (!d)
-        return false;
-
-    while (dirent* ent = readdir(d)) {
-        const char* name = ent->d_name;
-        if (!name || !*name || !std::strcmp(name, ".") || !std::strcmp(name, ".."))
-            continue;
-
-        ++visited;
-
-        std::string full = directory;
-        if (full.empty() || full == ".")
-            full = name;
-        else if (full == "/")
-            full += name;
-        else {
-            full += "/";
-            full += name;
-        }
-
-        struct stat st = {};
-        if (stat(full.c_str(), &st) != 0)
-            continue;
-
-        if (S_ISDIR(st.st_mode)) {
-            const std::string lower = asciiLower(name);
-            if (lower == "_pakcache" || lower == "shadercache" ||
-                lower == "profiles")
-                continue;
-
-            if (findLooseShaderSourceRecursive(full, wanted, result,
-                                               depth + 1, visited)) {
-                closedir(d);
-                return true;
-            }
-            continue;
-        }
-
-        if (S_ISREG(st.st_mode) && pathEndsWithShaderName(full, wanted)) {
-            result = full;
-            closedir(d);
-            return true;
-        }
-    }
-
-    closedir(d);
-    return false;
-}
-
-static void prepareShaderSourceFiles(const char* dataRoot) {
+// ─── Shader source discovery ────────────────────────────────────────────────
+// Only check the expected loose paths. The old recursive scan walked the entire
+// game tree (~12k entries) on every launch just to report that these files were
+// not loose. CryPak can load shader content from PAKs, so a full-tree crawl is
+// unnecessary for runtime and is kept out of startup.
+static void prepareShaderSourceFiles(const char* /*dataRoot*/) {
     const char* wanted[] = {
         "Shaders/statenocull.ext",
         "Shaders/hdrprocess.ext",
@@ -1623,42 +1486,18 @@ static void prepareShaderSourceFiles(const char* dataRoot) {
         nullptr
     };
 
-    const char* root = (dataRoot && *dataRoot) ? dataRoot : ".";
-    int looseVisited = 0;
     int foundCount = 0;
-
     for (size_t i = 0; wanted[i]; ++i) {
-        const std::string target = wanted[i];
+        std::string resolved;
+        if (!resolvePathCaseInsensitive(wanted[i], resolved))
+            continue;
 
-        std::string existing;
-        if (resolvePathCaseInsensitive(target.c_str(), existing)) {
-            struct stat st = {};
-            if (stat(existing.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
-                ++foundCount;
-                compatLogFmt("shader source: %s <- loose %s",
-                             target.c_str(), existing.c_str());
-                continue;
-            }
-        }
-
-        std::string loose;
-        if (findLooseShaderSourceRecursive(root, target, loose,
-                                           0, looseVisited)) {
-            ensureParentDirectories(target);
-            if (copyFileBinary(loose, target)) {
-                ++foundCount;
-                compatLogFmt("shader source: %s <- loose %s",
-                             target.c_str(), loose.c_str());
-                continue;
-            }
-        }
-
-        compatLogFmt("shader source: %s -> NOT FOUND in loose tree",
-                     target.c_str());
+        struct stat st = {};
+        if (stat(resolved.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+            ++foundCount;
     }
 
-    compatLogFmt("shader source scan: found=%d/%d loose_visited=%d",
-                 foundCount, 24u, looseVisited);
+    compatLogFmt("shader loose files: %d/24", foundCount);
 }
 
 static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
@@ -3491,41 +3330,34 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
         nullptr
     };
 
-    // Check only the loose game tree for critical system shader files.
-    // Do not crawl APK/OBB/ZIP/JAR/Pak containers here; FCData PAK presence is
-    // handled by the explicit PAK probes below.
     prepareShaderSourceFiles(dataRoot);
 
-    // The PC Far Cry layout separates the compiled shader cache from the
-    // source declarations. Do not blindly unpack the potentially very large
-    // Cache tree yet; first report exactly which FCData PAK contains it.
-    probeShaderPakPrefix("Shaders/Cache");
-
-    // CryEngine's Cg backend looks up shader declarations below:
-    //   Shaders/HWScripts/Declarations/CGVShaders/
-    //   Shaders/HWScripts/Declarations/CGPShaders/
-    // Materialize that tree explicitly before the broader HWScripts tree.
     for (size_t i = 0; dirs[i]; ++i) {
-        if (tryMaterializePakDirectory(dirs[i]))
-            compatLogFmt("pak DIR READY: %s", dirs[i]);
-        logShaderScriptInventory(dirs[i]);
+        const bool ready = tryMaterializePakDirectory(dirs[i]);
+        int cslCount = 0;
+        int csiCount = 0;
+
+        if (ready) {
+            std::string resolved = dirs[i];
+            if (!resolvePathCaseInsensitive(dirs[i], resolved))
+                resolved = dirs[i];
+            countShaderScriptsRecursive(resolved, cslCount, csiCount);
+        }
+
+        compatLogFmt("shader dir: %s ready=%d csl=%d csi=%d",
+                     dirs[i], ready ? 1 : 0, cslCount, csiCount);
     }
 
-    // CommonSubroutines is referenced by the GL Cg shader loader by logical
-    // name, and its archive path is not guaranteed to match the runtime path.
-    // Only materialize it when there is exactly one basename match across all
-    // FCData PAKs, so a duplicate name never gets chosen arbitrarily.
-    tryMaterializeUniquePakBasename(
-        "Shaders/Scripts/CommonSubroutines.csl");
-    tryMaterializeUniquePakBasename(
-        "Shaders/Scripts/CommonSubroutines.csi");
+    const bool commonCsl =
+        tryMaterializeUniquePakBasename(
+            "Shaders/Scripts/CommonSubroutines.csl");
+    const bool commonCsi =
+        tryMaterializeUniquePakBasename(
+            "Shaders/Scripts/CommonSubroutines.csi");
 
-    // Also report the declaration tree independently. This is useful when a
-    // package contains HWScripts but stores Declarations in another PAK.
-    probeShaderPakPrefix("Shaders/HWScripts/Declarations");
-
-    // Probe the actual FCData PAK set directly.
-    probeShaderPakEntries();
+    compatLogFmt("shader common: csl=%s csi=%s",
+                 commonCsl ? "ready" : "missing",
+                 commonCsi ? "ready" : "missing");
 }
 
 static bool isShaderEnumerationDirectory(const char* path) {
