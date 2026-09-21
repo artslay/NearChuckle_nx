@@ -3432,6 +3432,30 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
                      dirs[i], ready ? 1 : 0, cslCount, csiCount);
     }
 
+    // The Android CryPak implementation used by the guest shader loader can
+    // enumerate the physical directory without reproducing the ZIP directory
+    // tree exactly as desktop CryPak does. In particular, the two declaration
+    // CSL files live below HWScripts/Declarations and are required to register
+    // logical Cg scripts such as CommonSubroutines. Materialize these few
+    // declaration sources at the HWScripts root as a compatibility fallback.
+    //
+    // CGVProgramms.csl includes CGVPMacro.csi with a relative include, so both
+    // files must be present together at the fallback location.
+    const bool rootCgvProgramms =
+        tryMaterializeUniquePakBasename(
+            "Shaders/HWScripts/CGVProgramms.csl");
+    const bool rootCgvMacro =
+        tryMaterializeUniquePakBasename(
+            "Shaders/HWScripts/CGVPMacro.csi");
+    const bool rootCgpShaders =
+        tryMaterializeUniquePakBasename(
+            "Shaders/HWScripts/CGPShaders.csl");
+
+    compatLogFmt("shader root fallback: CGVProgramms=%s CGVPMacro=%s CGPShaders=%s",
+                 rootCgvProgramms ? "ready" : "missing",
+                 rootCgvMacro ? "ready" : "missing",
+                 rootCgpShaders ? "ready" : "missing");
+
     const bool commonCsl =
         tryMaterializeUniquePakBasename(
             "Shaders/Scripts/CommonSubroutines.csl");
