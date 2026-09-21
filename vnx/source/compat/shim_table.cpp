@@ -1723,6 +1723,88 @@ static void startupShaderOverlay(const char* state, const char* path) {
     svcSleepThread(20000000ULL);
 }
 
+// Compact shader-loader diagnostics. We inspect only shader script files and only
+// report the tokens relevant to CommonSubroutines. This avoids the old full-tree
+// scan while showing whether the source that should register the script was read.
+static bool shaderPathHasExt(const char* path, const char* ext) {
+    if (!path || !ext)
+        return false;
+
+    const size_t pathLen = std::strlen(path);
+    const size_t extLen = std::strlen(ext);
+    if (pathLen < extLen)
+        return false;
+
+    const char* p = path + pathLen - extLen;
+    for (size_t i = 0; i < extLen; ++i) {
+        if (std::tolower((unsigned char)p[i]) !=
+            std::tolower((unsigned char)ext[i]))
+            return false;
+    }
+    return true;
+}
+
+static void logShaderScriptDiagnostics(FILE* f, const char* path) {
+    if (!f || !path)
+        return;
+
+    const bool isCsl = shaderPathHasExt(path, ".csl");
+    const bool isCsi = shaderPathHasExt(path, ".csi");
+    const bool isCrycg = shaderPathHasExt(path, ".crycg");
+    if (!isCsl && !isCsi && !isCrycg)
+        return;
+
+    const long saved = ftell(f);
+    if (saved < 0 || fseek(f, 0, SEEK_END) != 0) {
+        return;
+    }
+
+    const long fileSize = ftell(f);
+    if (fileSize < 0 || fseek(f, 0, SEEK_SET) != 0) {
+        fseek(f, saved, SEEK_SET);
+        return;
+    }
+
+    // Shader control files are small. Cap the diagnostic read so a malformed
+    // asset can never turn logging into a large allocation/read operation.
+    const size_t maxRead = 256 * 1024;
+    const size_t toRead = static_cast<size_t>(
+        fileSize > static_cast<long>(maxRead) ? maxRead : fileSize);
+    std::vector<char> buf(toRead + 1, '\0');
+    const size_t got = toRead ? fread(buf.data(), 1, toRead, f) : 0;
+    buf[got] = '\0';
+    fseek(f, saved, SEEK_SET);
+
+    if (!got)
+        return;
+
+    const std::string lower = asciiLower(std::string(buf.data(), got));
+    const bool hasCommon = lower.find("commonsubroutines") != std::string::npos;
+    const bool hasSubrScript = lower.find("subrscript") != std::string::npos;
+    const bool hasDeclareCommon =
+        lower.find("declarecgscript") != std::string::npos && hasCommon;
+    const bool hasShaderCgvProgramms =
+        lower.find("shader 'cgvprogramms'") != std::string::npos;
+
+    if (isCsi && hasCommon) {
+        compatLogFmt("shader csi: %s size=%ld SubrScript(CommonSubroutines)=%d",
+                     path, fileSize, hasSubrScript ? 1 : 0);
+        return;
+    }
+
+    if (isCsl && (hasDeclareCommon || hasShaderCgvProgramms)) {
+        compatLogFmt("shader csl: %s size=%ld CGVProgramms=%d DeclareCGScript(CommonSubroutines)=%d",
+                     path, fileSize, hasShaderCgvProgramms ? 1 : 0,
+                     hasDeclareCommon ? 1 : 0);
+        return;
+    }
+
+    if (isCrycg && hasCommon) {
+        compatLogFmt("shader crycg: %s size=%ld CommonSubroutines=1",
+                     path, fileSize);
+    }
+}
+
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
@@ -1821,6 +1903,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         compatLogFmt("fopen FAIL: %s (mode=%s)", ioPath ? ioPath : "?", mode ? mode : "?");
         return f;
     }
+
+    logShaderScriptDiagnostics(f, ioPath);
 
     if (apkcache::adopt(f, ioPath)) {
         setvbuf(f, nullptr, _IOFBF, 16 * 1024);
