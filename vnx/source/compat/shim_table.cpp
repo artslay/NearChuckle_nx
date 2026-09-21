@@ -1660,7 +1660,10 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (wanted.empty())
         return nullptr;
 
-    const std::string cacheRoot = "_pakcache";
+    // v2 intentionally bypasses caches produced by earlier PAK path/lookup implementations.
+    // All PAK assets still use the same resolver; this only prevents stale extracted
+    // files from hiding whether the current archive reader produced valid data.
+    const std::string cacheRoot = "_pakcache_v2";
     std::string safeName = wanted;
     for (char& c : safeName)
         if (c == '/') c = '_';
