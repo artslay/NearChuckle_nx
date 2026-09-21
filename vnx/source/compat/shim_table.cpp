@@ -3699,6 +3699,21 @@ static bool directoryHasVisibleEntries(const char* path) {
     return hasEntry;
 }
 
+static bool isShaderPathForDiag(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string p = asciiLower(path);
+    for (char& c : p)
+        if ((unsigned char)c == 92)
+            c = '/';
+
+    return p.find("shaders/") != std::string::npos ||
+           p.find("/shaders/") != std::string::npos ||
+           p == "shaders" ||
+           p == "/shaders";
+}
+
 static std::unordered_map<DIR*, std::string> g_readdirPaths;
 static std::unordered_map<DIR*, unsigned> g_readdirCounts;
 
@@ -3766,10 +3781,13 @@ static DIR* stub_opendir(const char* path) {
         std::string low = ioPath ? asciiLower(ioPath) : std::string();
         if (low.find("/fcdata") != std::string::npos ||
             low == "fcdata" ||
-            low.find("/localized") != std::string::npos) {
+            low.find("/localized") != std::string::npos ||
+            isShaderPathForDiag(ioPath)) {
             g_readdirPaths[d] = ioPath;
             g_readdirCounts[d] = 0;
         }
+        if (isShaderPathForDiag(ioPath))
+            compatLogFmt("opendir SHADER OK: requested=%s", ioPath);
         return d;
     }
 
@@ -3781,11 +3799,15 @@ static DIR* stub_opendir(const char* path) {
                 std::string low = asciiLower(ioPath);
                 if (low.find("/fcdata") != std::string::npos ||
                     low == "fcdata" ||
-                    low.find("/localized") != std::string::npos) {
+                    low.find("/localized") != std::string::npos ||
+                    isShaderPathForDiag(ioPath)) {
                     g_readdirPaths[d] = resolved;
                     g_readdirCounts[d] = 0;
                 }
             }
+            if (isShaderPathForDiag(ioPath))
+                compatLogFmt("opendir SHADER CASEFIX: requested=%s resolved=%s",
+                             ioPath ? ioPath : "?", resolved.c_str());
             compatLogFmt("opendir CASEFIX: %s -> %s",
                          ioPath ? ioPath : "?", resolved.c_str());
             return d;
@@ -3800,11 +3822,15 @@ static DIR* stub_opendir(const char* path) {
                 d = opendir(dirResolved.c_str());
         }
         if (d) {
+            if (isShaderPathForDiag(ioPath))
+                compatLogFmt("opendir SHADER PAK: %s", ioPath);
             compatLogFmt("opendir PAK: %s", ioPath);
             return d;
         }
     }
 
+    if (isShaderPathForDiag(ioPath))
+        compatLogFmt("opendir SHADER FAIL: %s", ioPath ? ioPath : "?");
     compatLogFmt("opendir FAIL: %s", ioPath ? ioPath : "?");
     return nullptr;
 }
@@ -3925,6 +3951,10 @@ static intptr_t stub_findfirst64(const char* pattern, NearFindData64* out) {
 
     std::string filePattern;
     std::string directory = findDirPart(pattern, filePattern);
+
+    if (isShaderPathForDiag(pattern))
+        compatLogFmt("findfirst64 SHADER REQUEST: pattern=%s dir=%s filePattern=%s",
+                     pattern, directory.c_str(), filePattern.c_str());
 
     // Do NOT bypass stub_opendir() here. CryPak commonly asks for a lowercase
     // shader directory on the case-sensitive Switch filesystem. stub_opendir()
