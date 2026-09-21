@@ -10,6 +10,7 @@
 static CompatLayer g_compat = {};
 static Mutex g_log_lock;
 static FILE* g_log = nullptr;
+static bool g_log_initialized = false;
 static LoadedSo* g_game_so = nullptr;
 
 static bool g_boot_console = false;
@@ -62,7 +63,11 @@ static char g_android_tls_sub[512] __attribute__((aligned(16)));
 static void log_open() {
     if (g_log)
         return;
-    g_log = std::fopen("/switch/NearChuckle_nx/nearchuckle_debug.log", "w");
+
+    const char* mode = g_log_initialized ? "a" : "w";
+    g_log = std::fopen("/switch/NearChuckle_nx/nearchuckle_debug.log", mode);
+    if (g_log)
+        g_log_initialized = true;
 }
 
 static void log_write(const char* text) {
@@ -123,6 +128,16 @@ void compatLogFlush() {
     log_open();
     if (g_log)
         std::fflush(g_log);
+    mutexUnlock(&g_log_lock);
+}
+
+void compatLogClose() {
+    mutexLock(&g_log_lock);
+    if (g_log) {
+        std::fflush(g_log);
+        std::fclose(g_log);
+        g_log = nullptr;
+    }
     mutexUnlock(&g_log_lock);
 }
 
