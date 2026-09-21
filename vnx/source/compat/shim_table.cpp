@@ -216,6 +216,8 @@ static char* stub_realpath(const char* p, char* out) {
     if (!p || !*p)
         return nullptr;
 
+    compatLogFmt("realpath REQUEST: %s", p);
+
     // CryPak's Linux path code relies on POSIX realpath() semantics:
     // existing paths are returned as absolute paths, while wildcard/nonexistent
     // paths fail so AdjustFileName() can fall back to realpath(".") and append
@@ -231,8 +233,10 @@ static char* stub_realpath(const char* p, char* out) {
     if (strcmp(p, ".") == 0 || strcmp(p, "./") == 0) {
         if (!::getcwd(out, PATH_MAX)) {
             if (!callerOwnsBuffer) free(out);
+            compatLogFmt("realpath RESULT: %s -> FAIL errno=%d", p, errno);
             return nullptr;
         }
+        compatLogFmt("realpath RESULT: %s -> %s", p, out);
         return out;
     }
 
@@ -250,6 +254,7 @@ static char* stub_realpath(const char* p, char* out) {
         if (p[0] == '/') {
             strncpy(out, p, PATH_MAX - 1);
             out[PATH_MAX - 1] = '\0';
+            compatLogFmt("realpath RESULT: %s -> %s", p, out);
             return out;
         }
 
@@ -263,11 +268,13 @@ static char* stub_realpath(const char* p, char* out) {
             errno = ENAMETOOLONG;
             return nullptr;
         }
+        compatLogFmt("realpath RESULT: %s -> %s", p, out);
         return out;
     }
 
     if (!callerOwnsBuffer) free(out);
     errno = ENOENT;
+    compatLogFmt("realpath RESULT: %s -> FAIL errno=%d", p, errno);
     return nullptr;
 }
 static int stub_readlink(const char*, char* buf, size_t sz) {
@@ -1823,6 +1830,9 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                      mapped.c_str(), mf ? "ok" : "still not there");
         if (mf) { setvbuf(mf, nullptr, _IOFBF, 64 * 1024); return mf; }
     }
+
+    if (ioPath && compatIsPakPath(ioPath))
+        compatLogFmt("PAK FOPEN REQUEST: %s", ioPath);
 
     FILE* f = fopen(ioPath, mode);
     if (!f && ioPath) {
