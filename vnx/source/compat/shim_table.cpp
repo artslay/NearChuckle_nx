@@ -1967,7 +1967,7 @@ static void logShaderScriptDiagnostics(FILE* f, const char* path) {
 static bool isShaderPathForDiag(const char* path);
 
 // Shader cache files are generated/runtime cache artifacts, not language assets.
-// When a cache file is missing, sending the request through tryOpenFromLanguagePaks()
+// When a cache file is missing, sending the request through tryOpenFromPaks()
 // makes every lookup scan every FCData PAK and emit an entry-not-found message for
 // each archive. With shader compilation disabled there is nothing to extract from
 // a PAK for these paths, so let the normal filesystem miss fall through directly
@@ -2064,7 +2064,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         // do not scan FCData PAKs for them: a cache miss should reach the
         // renderer's embedded fallback immediately.
         if (!isShaderCacheLookupPath(ioPath)) {
-            FILE* pakFile = tryOpenFromLanguagePaks(ioPath, mode);
+            FILE* pakFile = tryOpenFromPaks(ioPath, mode);
             if (pakFile)
                 return pakFile;
         }
