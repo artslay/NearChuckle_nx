@@ -89,6 +89,8 @@ static std::string asciiLower(std::string value);
 static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
 
 static bool compatIsPakPath(const char* path);
+static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
+                                                  const char* programPath);
 static void compatLogPakOpenState(FILE* f, const char* path);
 
 // Normalize Switch virtual-device paths before they reach newlib's POSIX I/O.
