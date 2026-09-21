@@ -1619,7 +1619,34 @@ static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
     if (!requested || !mode || mode[0] != 'r')
         return nullptr;
 
-    const std::string wanted = pakNormalizeName(requested);
+    // CryPak stores asset names relative to the PAK root (for example
+    // "scripts/classregistry.lua"). stub_fopen() normalizes guest paths to
+    // absolute Switch paths such as "/switch/NearChuckle_nx/game/scripts/...".
+    // Strip the current game root before matching the PAK central directory.
+    // Without this, every ordinary absolute asset lookup can miss even when
+    // the file is present in Scripts.pak/other FCData archives.
+    std::string wanted = pakNormalizeName(requested);
+
+    char cwd[PATH_MAX];
+    if (::getcwd(cwd, sizeof(cwd))) {
+        std::string cwdNorm = pakNormalizeName(cwd);
+        while (cwdNorm.size() > 1 && cwdNorm.back() == '/')
+            cwdNorm.pop_back();
+
+        if (wanted == cwdNorm) {
+            wanted.clear();
+        } else {
+            const std::string prefix = cwdNorm + "/";
+            if (wanted.rfind(prefix, 0) == 0)
+                wanted.erase(0, prefix.size());
+        }
+    }
+
+    // Requests can explicitly name the FCData mount. PAK entries are still
+    // relative to the archive root, so do not include "FCData/" in the lookup.
+    if (wanted.rfind("fcdata/", 0) == 0)
+        wanted.erase(0, 7);
+
     if (wanted.empty())
         return nullptr;
 
