@@ -1051,14 +1051,6 @@ static std::string cdataToFcdata(const char* path) {
     return "";
 }
 
-static bool cdataMappedPathExists(const char* path, std::string& mapped) {
-    mapped = cdataToFcdata(path);
-    if (mapped.empty())
-        return false;
-
-    struct stat st = {};
-    return ::stat(mapped.c_str(), &st) == 0;
-}
 
 // Missing PAK compatibility.
 // CryPak can throw ZipDir::Error when an Android-packaging path requests a
@@ -1252,10 +1244,6 @@ static bool pakFindEntry(FILE* pak, const std::string& wanted,
 static bool pakExtractEntry(const std::string& pakPath, const std::string& wanted,
                             const std::string& outPath) {
     const std::string normalizedWanted = pakNormalizeName(wanted.c_str());
-    const bool shaderEntry =
-        normalizedWanted == "shaders" ||
-        normalizedWanted.rfind("shaders/", 0) == 0;
-
     FILE* pak = fopen(pakPath.c_str(), "rb");
     if (!pak) {
         return false;
@@ -1285,7 +1273,6 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
         return false;
     }
 
-    const uint16_t localFlags = pakRd16(local + 6);
     const uint16_t localMethod = pakRd16(local + 8);
     const uint16_t nameLen = pakRd16(local + 26);
     const uint16_t extraLen = pakRd16(local + 28);
@@ -1320,11 +1307,6 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     if (!readOk) {
         return false;
     }
-
-    const uint32_t firstBytes =
-        compressed.size() >= 4
-            ? pakRd32(compressed.data())
-            : 0;
 
     bool ok = false;
     if (method == 0 && compressedSize == uncompressedSize) {
@@ -1838,67 +1820,6 @@ static void startupDrawText(float x, float y, float scale, const char* text) {
     glEnd();
 }
 
-static void startupShaderOverlay(const char* state, const char* path) {
-    if (!path || !*path || g_shader_overlay_events >= 64) return;
-    if (eglGetCurrentContext() == EGL_NO_CONTEXT ||
-        eglGetCurrentSurface(EGL_DRAW) == EGL_NO_SURFACE) return;
-
-    GLint vp[4] = {};
-    glGetIntegerv(GL_VIEWPORT, vp);
-    const int w = vp[2] > 0 ? vp[2] : 1280;
-    const int h = vp[3] > 0 ? vp[3] : 720;
-
-    char cleanPath[96];
-    std::snprintf(cleanPath, sizeof(cleanPath), "%s", path);
-    for (char* p = cleanPath; *p; ++p)
-        if (*p == '\\') *p = '/';
-
-    const size_t len = std::strlen(cleanPath);
-    if (len > 72) {
-        std::memmove(cleanPath, cleanPath + (len - 72), 72);
-        cleanPath[72] = '\0';
-    }
-
-    char line[110];
-    std::snprintf(line, sizeof(line), "%s %s", state ? state : "OPEN", cleanPath);
-
-    glPushAttrib(GL_ALL_ATTRIB_BITS);
-    glMatrixMode(GL_PROJECTION);
-    glPushMatrix();
-    glLoadIdentity();
-    glOrtho(0, w, h, 0, -1, 1);
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-    glLoadIdentity();
-    glDisable(GL_TEXTURE_2D);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDisable(GL_LIGHTING);
-    glDisable(GL_BLEND);
-
-    glColor3f(0.02f, 0.02f, 0.02f);
-    glBegin(GL_QUADS);
-    glVertex2f(0, 0); glVertex2f((float)w, 0);
-    glVertex2f((float)w, (float)h); glVertex2f(0, (float)h);
-    glEnd();
-
-    glColor3f(0.95f, 0.95f, 0.95f);
-    startupDrawText(28, 24, 3, "NEARCHUCKLE_NX");
-    glColor3f(0.55f, 0.80f, 1.0f);
-    startupDrawText(28, 52, 2, "CRYPAK SHADER LOOKUP");
-    glColor3f(1.0f, 1.0f, 1.0f);
-    startupDrawText(28, 84, 2, line);
-
-    glPopMatrix();
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-    glMatrixMode(GL_MODELVIEW);
-    glPopAttrib();
-
-    ++g_shader_overlay_events;
-    eglSwapBuffers(eglGetCurrentDisplay(), eglGetCurrentSurface(EGL_DRAW));
-    svcSleepThread(20000000ULL);
-}
 
 // Compact shader-loader diagnostics. We inspect only shader script files and only
 // report the tokens relevant to CommonSubroutines. This avoids the old full-tree
@@ -2181,12 +2102,6 @@ static size_t sh_fread(void* p, size_t sz, size_t n, FILE* f) {
         rc = apkcache::read(f, p, sz, n);
     else
         rc = fread(p, sz, n, f);
-
-    if (f == g_classregistry_trace_file && g_classregistry_fread_logs < 32) {
-        ++g_classregistry_fread_logs;
-        compatLogFmt("CLASSREG FREAD[%u]: file=%p size=%zu count=%zu -> %zu pos=%ld",
-                     g_classregistry_fread_logs, (void*)f, sz, n, rc, ftell(f));
-    }
     return rc;
 }
 static int sh_fseek(FILE* f, long off, int whence) {
@@ -2195,10 +2110,6 @@ static int sh_fseek(FILE* f, long off, int whence) {
         rc = apkcache::seek(f, (int64_t)off, whence);
     else
         rc = fseek(f, off, whence);
-
-    if (f == g_classregistry_trace_file)
-        compatLogFmt("CLASSREG FSEEK: file=%p off=%ld whence=%d -> %d pos=%ld",
-                     (void*)f, off, whence, rc, ftell(f));
     return rc;
 }
 static long sh_ftell(FILE* f) {
@@ -2211,13 +2122,6 @@ static int sh_fgetc(FILE* f) {
         rc = apkcache::getc(f);
     else
         rc = fgetc(f);
-
-    if (f == g_classregistry_trace_file && g_classregistry_fgetc_logs < 32) {
-        ++g_classregistry_fgetc_logs;
-        compatLogFmt("CLASSREG FGETC[%u]: file=%p -> 0x%02x pos=%ld",
-                     g_classregistry_fgetc_logs, (void*)f,
-                     rc == EOF ? 0xff : (unsigned)(rc & 0xff), ftell(f));
-    }
     return rc;
 }
 static int sh_feof(FILE* f) {
@@ -2226,10 +2130,6 @@ static int sh_feof(FILE* f) {
         rc = apkcache::eof(f);
     else
         rc = feof(f);
-
-    if (f == g_classregistry_trace_file)
-        compatLogFmt("CLASSREG FEOF: file=%p -> %d pos=%ld",
-                     (void*)f, rc, ftell(f));
     return rc;
 }
 static void sh_rewind(FILE* f) {
@@ -2237,12 +2137,6 @@ static void sh_rewind(FILE* f) {
     rewind(f);
 }
 static int sh_fclose(FILE* f) {
-    if (f == g_classregistry_trace_file) {
-        compatLogFmt("CLASSREG FCLOSE: file=%p", (void*)f);
-        g_classregistry_trace_file = nullptr;
-        g_classregistry_fread_logs = 0;
-        g_classregistry_fgetc_logs = 0;
-    }
     apkcache::close(f);   // no-op unless this stream was cached
     return fclose(f);
 }
@@ -3431,150 +3325,8 @@ static void countShaderScriptsRecursive(const std::string& directory,
     closedir(d);
 }
 
-static void logShaderScriptInventory(const char* requestedPath) {
-    if (!requestedPath || !*requestedPath)
-        return;
-
-    std::string normalized = requestedPath;
-    for (char& c : normalized) {
-        if ((unsigned char)c == 92)
-            c = '/';
-    }
-
-    std::string resolved;
-    if (!resolvePathCaseInsensitive(normalized.c_str(), resolved))
-        resolved = normalized;
-
-    int cslCount = 0;
-    int csiCount = 0;
-    countShaderScriptsRecursive(resolved, cslCount, csiCount);
-    compatLogFmt("pak DIR CONTENT: %s csl=%d csi=%d",
-                 requestedPath, cslCount, csiCount);
-}
 
 
-static bool probeShaderPakPrefix(const char* prefix, int maxMatches = 16) {
-    if (!prefix || !*prefix)
-        return false;
-
-    const std::string wantedPrefix = pakNormalizeName(prefix);
-    bool anyFound = false;
-    int totalMatches = 0;
-
-    std::string resolvedRoot;
-    if (!resolvePathCaseInsensitive("FCData", resolvedRoot))
-        return false;
-
-    DIR* root = opendir(resolvedRoot.c_str());
-    if (!root)
-        return false;
-
-    for (struct dirent* ent = readdir(root); ent; ent = readdir(root)) {
-        const char* name = ent->d_name;
-        const size_t len = std::strlen(name);
-        if (len < 4 ||
-            std::tolower((unsigned char)name[len - 4]) != '.' ||
-            std::tolower((unsigned char)name[len - 3]) != 'p' ||
-            std::tolower((unsigned char)name[len - 2]) != 'a' ||
-            std::tolower((unsigned char)name[len - 1]) != 'k')
-            continue;
-
-        const std::string pakPath = resolvedRoot + "/" + name;
-        FILE* pak = fopen(pakPath.c_str(), "rb");
-        if (!pak)
-            continue;
-
-        if (fseek(pak, 0, SEEK_END) != 0) {
-            fclose(pak);
-            continue;
-        }
-
-        const long fileSize = ftell(pak);
-        if (fileSize < 22) {
-            fclose(pak);
-            continue;
-        }
-
-        const size_t tailSize =
-            (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
-        std::vector<unsigned char> tail(tailSize);
-        if (fseek(pak, fileSize - (long)tailSize, SEEK_SET) != 0 ||
-            !pakReadExact(pak, tail.data(), tail.size())) {
-            fclose(pak);
-            continue;
-        }
-
-        size_t eocd = tail.size();
-        while (eocd >= 22) {
-            --eocd;
-            if (eocd + 4 <= tail.size() &&
-                pakRd32(tail.data() + eocd) == 0x06054b50u)
-                break;
-        }
-        if (eocd + 22 > tail.size()) {
-            fclose(pak);
-            continue;
-        }
-
-        const uint16_t entries = pakRd16(tail.data() + eocd + 10);
-        const uint32_t cdSize = pakRd32(tail.data() + eocd + 12);
-        const uint32_t cdOffset = pakRd32(tail.data() + eocd + 16);
-        if (!entries || !cdSize || cdSize > 128 * 1024 * 1024u) {
-            fclose(pak);
-            continue;
-        }
-
-        std::vector<unsigned char> cd(cdSize);
-        if (fseek(pak, (long)cdOffset, SEEK_SET) != 0 ||
-            !pakReadExact(pak, cd.data(), cd.size())) {
-            fclose(pak);
-            continue;
-        }
-
-        int pakMatches = 0;
-        size_t pos = 0;
-        for (uint16_t i = 0; i < entries && pos + 46 <= cd.size(); ++i) {
-            const unsigned char* h = cd.data() + pos;
-            if (pakRd32(h) != 0x02014b50u)
-                break;
-
-            const uint16_t nameLen = pakRd16(h + 28);
-            const uint16_t extraLen = pakRd16(h + 30);
-            const uint16_t commentLen = pakRd16(h + 32);
-            const size_t recordSize = 46u + nameLen + extraLen + commentLen;
-            if (pos + recordSize > cd.size())
-                break;
-
-            const std::string entry((const char*)h + 46, nameLen);
-            const std::string normalized = pakNormalizeName(entry.c_str());
-
-            if (normalized.size() > wantedPrefix.size() &&
-                normalized.compare(0, wantedPrefix.size(), wantedPrefix) == 0) {
-                anyFound = true;
-                ++totalMatches;
-                ++pakMatches;
-                if (pakMatches <= maxMatches) {
-                    compatLogFmt("PAK PREFIX: %s <- %s :: %s",
-                                 prefix, pakPath.c_str(), normalized.c_str());
-                }
-            }
-
-            pos += recordSize;
-        }
-
-        if (pakMatches > maxMatches) {
-            compatLogFmt("PAK PREFIX: %s <- %s :: ... +%d more",
-                         prefix, pakPath.c_str(), pakMatches - maxMatches);
-        }
-
-        fclose(pak);
-    }
-
-    closedir(root);
-    compatLogFmt("PAK PREFIX SUMMARY: %s -> %d entries",
-                 prefix, totalMatches);
-    return anyFound;
-}
 
 static bool tryMaterializePakDirectory(const char* path) {
     if (!path || !*path)
@@ -3630,97 +3382,6 @@ static bool tryMaterializePakDirectory(const char* path) {
     if (extractedAny)
         compatLogFmt("pak DIR READY: %s (scanned %d FCData paks)", path, pakCount);
     return extractedAny;
-}
-static void probeShaderPakEntries() {
-    const char* wanted[] = {
-        "Shaders/statenocull.ext",
-        "Shaders/hdrprocess.ext",
-        "Shaders/sunflares.ext",
-        "Shaders/lightstyles.ext",
-        "Shaders/glare.ext",
-        "Shaders/cgvprogramms.ext",
-        "Shaders/cgpshaders.ext",
-        "Shaders/templfog.ext",
-        "Shaders/templvfog.ext",
-        "Shaders/templfog_fp.ext",
-        "Shaders/templfogcaustics.ext",
-        "Shaders/templvfogcaustics.ext",
-        "Shaders/templfogcaustics_fp.ext",
-        "Shaders/white.ext",
-        "Shaders/whiteshadow.ext",
-        "Shaders/templdecal.ext",
-        "Shaders/templheatvis_sources.ext",
-        "Shaders/templinvlight.ext",
-        "Shaders/templdof.ext",
-        "Shaders/Scripts/CommonSubroutines.csl",
-        "Shaders/Scripts/CommonSubroutines.csi",
-        "Shaders/HWScripts/CommonSubroutines.csl",
-        "Shaders/HWScripts/CommonSubroutines.csi",
-        nullptr
-    };
-
-    const char* roots[] = {
-        "FCData",
-        "fcdata",
-        "FCData/Localized",
-        "fcdata/localized",
-        ".",
-        nullptr
-    };
-
-    for (size_t w = 0; wanted[w]; ++w) {
-        const std::string normalized = pakNormalizeName(wanted[w]);
-        bool found = false;
-
-        for (size_t r = 0; roots[r] && !found; ++r) {
-            std::string resolvedRoot;
-            if (!resolvePathCaseInsensitive(roots[r], resolvedRoot))
-                continue;
-
-            DIR* dir = opendir(resolvedRoot.c_str());
-            if (!dir)
-                continue;
-
-            for (dirent* ent = readdir(dir); ent && !found; ent = readdir(dir)) {
-                const char* name = ent->d_name;
-                const size_t len = std::strlen(name);
-                if (len < 4)
-                    continue;
-
-                const char c0 = (char)std::tolower((unsigned char)name[len - 4]);
-                const char c1 = (char)std::tolower((unsigned char)name[len - 3]);
-                const char c2 = (char)std::tolower((unsigned char)name[len - 2]);
-                const char c3 = (char)std::tolower((unsigned char)name[len - 1]);
-                if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
-                    continue;
-
-                const std::string pakPath = resolvedRoot + "/" + name;
-                FILE* pak = fopen(pakPath.c_str(), "rb");
-                if (!pak)
-                    continue;
-
-                uint32_t localOffset = 0;
-                uint32_t compressedSize = 0;
-                uint32_t uncompressedSize = 0;
-                uint32_t expectedCrc = 0;
-                uint16_t method = 0;
-
-                if (pakFindEntry(pak, normalized, localOffset,
-                                 compressedSize, uncompressedSize, method,
-                                 expectedCrc)) {
-                    compatLogFmt("PAK PROBE: %s <- %s", wanted[w], pakPath.c_str());
-                    found = true;
-                }
-
-                fclose(pak);
-            }
-
-            closedir(dir);
-        }
-
-        if (!found)
-            compatLogFmt("PAK PROBE: %s -> NOT FOUND", wanted[w]);
-    }
 }
 
 void compatProbePakArchives(const char* dataRoot) {
@@ -4038,26 +3699,6 @@ static bool isShaderEnumerationDirectory(const char* path) {
            p == "shaders/hwscripts/declarations";
 }
 
-static bool directoryHasVisibleEntries(const char* path) {
-    if (!path || !*path)
-        return false;
-
-    DIR* d = opendir(path);
-    if (!d)
-        return false;
-
-    bool hasEntry = false;
-    while (struct dirent* ent = readdir(d)) {
-        const char* name = ent->d_name;
-        if (!name || !*name || !std::strcmp(name, ".") || !std::strcmp(name, ".."))
-            continue;
-        hasEntry = true;
-        break;
-    }
-
-    closedir(d);
-    return hasEntry;
-}
 
 static bool isShaderPathForDiag(const char* path) {
     if (!path || !*path)
