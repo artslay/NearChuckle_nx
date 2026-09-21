@@ -671,6 +671,14 @@ void* LoadedSo::findSym(const char* name) const {
 static bool isAllocSym(const char* n) {
     return strcmp(n, "free") == 0 || strcmp(n, "malloc") == 0 ||
            strcmp(n, "realloc") == 0 || strcmp(n, "calloc") == 0 ||
+           strcmp(n, "CryMalloc") == 0 || strcmp(n, "CryRealloc") == 0 ||
+           strcmp(n, "CryReallocSize") == 0 || strcmp(n, "CryFree") == 0 ||
+           strcmp(n, "CryFreeSize") == 0 ||
+           strcmp(n, "CryModuleMalloc") == 0 ||
+           strcmp(n, "CryModuleRealloc") == 0 ||
+           strcmp(n, "CryModuleReallocSize") == 0 ||
+           strcmp(n, "CryModuleFree") == 0 ||
+           strcmp(n, "CryModuleFreeSize") == 0 ||
            strcmp(n, "_ZdlPv") == 0 || strcmp(n, "_ZdaPv") == 0 ||
            strcmp(n, "_ZdlPvm") == 0 || strcmp(n, "_Znwm") == 0 ||
            strcmp(n, "_Znam") == 0;
