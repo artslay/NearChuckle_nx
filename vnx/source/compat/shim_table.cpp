@@ -3687,6 +3687,16 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
                  rootCgvMacro ? "ready" : "missing",
                  rootCgpShaders ? "ready" : "missing");
 
+    // Android CGP shader files can reference CommonSubroutines before
+    // the guest loader has successfully registered CGVProgramms.csl.
+    // Materialize the exact declaration tree and make the macro self-contained
+    // so the shared script is available regardless of the guest loader path.
+    const commonPatch = patchCommonSubroutinesIntoShaderMacro(
+        "Shaders/HWScripts/Declarations/CGVPMacro.csi",
+        "Shaders/HWScripts/Declarations/CGVProgramms.csl");
+    compatLogFmt("shader common patch result: %s",
+                 commonPatch ? "ready" : "not-applied");
+
     const bool commonCsl =
         tryMaterializeUniquePakBasename(
             "Shaders/Scripts/CommonSubroutines.csl");
@@ -3697,6 +3707,156 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     compatLogFmt("shader common: csl=%s csi=%s",
                  commonCsl ? "ready" : "missing",
                  commonCsi ? "ready" : "missing");
+}
+
+
+static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
+                                                  const char* programPath) {
+    if (!macroPath || !programPath)
+        return false;
+
+    std::string macroResolved;
+    std::string programResolved;
+    if (!resolvePathCaseInsensitive(macroPath, macroResolved) ||
+        !resolvePathCaseInsensitive(programPath, programResolved)) {
+        compatLogFmt("shader common patch: source missing macro=%s program=%s",
+                     macroPath, programPath);
+        return false;
+    }
+
+    auto readFileText = [](const std::string& path, std::string& out) -> bool {
+        FILE* f = fopen(path.c_str(), "rb");
+        if (!f)
+            return false;
+
+        if (fseek(f, 0, SEEK_END) != 0) {
+            fclose(f);
+            return false;
+        }
+
+        const long size = ftell(f);
+        if (size < 0 || size > 1024 * 1024) {
+            fclose(f);
+            return false;
+        }
+
+        if (fseek(f, 0, SEEK_SET) != 0) {
+            fclose(f);
+            return false;
+        }
+
+        out.resize((size_t)size);
+        const size_t got = size ? fread(&out[0], 1, (size_t)size, f) : 0;
+        fclose(f);
+        if (got != (size_t)size) {
+            out.clear();
+            return false;
+        }
+        return true;
+    };
+
+    std::string macro;
+    std::string program;
+    if (!readFileText(macroResolved, macro) ||
+        !readFileText(programResolved, program)) {
+        compatLogFmt("shader common patch: read failed macro=%s program=%s",
+                     macroResolved.c_str(), programResolved.c_str());
+        return false;
+    }
+
+    const std::string declaration = "SubrScript 'CommonSubroutines'";
+    const size_t macroPos = macro.find(declaration);
+    if (macroPos == std::string::npos) {
+        compatLogFmt("shader common patch: declaration missing in %s",
+                     macroResolved.c_str());
+        return false;
+    }
+
+    // Already patched: keep the operation idempotent across repeated startup
+    // runs on the same extracted shader tree.
+    size_t afterDecl = macroPos + declaration.size();
+    while (afterDecl < macro.size() &&
+           (macro[afterDecl] == ' ' || macro[afterDecl] == '\t' ||
+            macro[afterDecl] == '\r' || macro[afterDecl] == '\n')) {
+        ++afterDecl;
+    }
+    if (afterDecl < macro.size() && macro[afterDecl] == '{') {
+        compatLogFmt("shader common patch: already present in %s",
+                     macroResolved.c_str());
+        return true;
+    }
+
+    const std::string sourceDecl = "DeclareCGScript 'CommonSubroutines'";
+    const size_t sourcePos = program.find(sourceDecl);
+    if (sourcePos == std::string::npos) {
+        compatLogFmt("shader common patch: source declaration missing in %s",
+                     programResolved.c_str());
+        return false;
+    }
+
+    const size_t openBrace = program.find('{', sourcePos + sourceDecl.size());
+    if (openBrace == std::string::npos) {
+        compatLogFmt("shader common patch: source brace missing in %s",
+                     programResolved.c_str());
+        return false;
+    }
+
+    int depth = 0;
+    size_t closeBrace = std::string::npos;
+    for (size_t i = openBrace; i < program.size(); ++i) {
+        if (program[i] == '{')
+            ++depth;
+        else if (program[i] == '}') {
+            --depth;
+            if (depth == 0) {
+                closeBrace = i;
+                break;
+            }
+        }
+    }
+
+    if (closeBrace == std::string::npos || depth != 0) {
+        compatLogFmt("shader common patch: unbalanced source braces in %s",
+                     programResolved.c_str());
+        return false;
+    }
+
+    const std::string body = program.substr(openBrace + 1,
+                                             closeBrace - openBrace - 1);
+
+    size_t lineEnd = macro.find('\n', macroPos);
+    if (lineEnd == std::string::npos)
+        lineEnd = macro.size();
+    else
+        ++lineEnd;
+
+    std::string replacement = declaration;
+    replacement += "\n{\n";
+    replacement += body;
+    replacement += "\n}\n";
+
+    macro.replace(macroPos, lineEnd - macroPos, replacement);
+
+    FILE* out = fopen(macroResolved.c_str(), "wb");
+    if (!out) {
+        compatLogFmt("shader common patch: write failed %s",
+                     macroResolved.c_str());
+        return false;
+    }
+
+    const size_t written = fwrite(macro.data(), 1, macro.size(), out);
+    fclose(out);
+
+    if (written != macro.size()) {
+        compatLogFmt("shader common patch: short write %s (%u/%u)",
+                     macroResolved.c_str(), (unsigned)written,
+                     (unsigned)macro.size());
+        return false;
+    }
+
+    compatLogFmt("shader common patch: injected CommonSubroutines into %s from %s",
+                 macroResolved.c_str(), programResolved.c_str());
+    return true;
 }
 
 static bool isShaderEnumerationDirectory(const char* path) {
