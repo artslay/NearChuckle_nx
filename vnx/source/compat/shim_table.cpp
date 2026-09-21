@@ -1652,7 +1652,7 @@ static std::string pakAssetRelativeName(const char* requested) {
     return wanted;
 }
 
-static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
+static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (!requested || !mode || mode[0] != 'r')
         return nullptr;
 
@@ -1677,37 +1677,9 @@ static FILE* tryOpenFromLanguagePaks(const char* requested, const char* mode) {
         }
     }
 
-    // Scripts are critical to CryGame startup. Give the primary Scripts.pak a
-    // deterministic first chance instead of depending on directory enumeration
-    // order or the process CWD. Entry names inside the archive are relative,
-    // e.g. "scripts/classregistry.lua".
-    const bool scriptsAsset = wanted.rfind("scripts/", 0) == 0;
-    if (scriptsAsset) {
-        const char* scriptPaks[] = {
-            "FCData/Scripts.pak",
-            "FCData/scripts.pak",
-            "fcdata/Scripts.pak",
-            "fcdata/scripts.pak",
-            nullptr
-        };
-
-        for (size_t i = 0; scriptPaks[i]; ++i) {
-            struct stat st = {};
-            if (::stat(scriptPaks[i], &st) != 0 || !S_ISREG(st.st_mode))
-                continue;
-
-            compatLogFmt("PAK SCRIPT TRY: %s <- %s", wanted.c_str(), scriptPaks[i]);
-            if (pakExtractEntry(scriptPaks[i], wanted, outPath)) {
-                FILE* f = fopen(outPath.c_str(), mode);
-                if (f) {
-                    compatLogFmt("PAK SCRIPT EXTRACT: %s <- %s",
-                                 requested, scriptPaks[i]);
-                    return f;
-                }
-            }
-        }
-    }
-
+    // All normal assets use the same PAK search path. There is no special case
+    // for scripts, textures, audio, etc.: normalize the guest path once and
+    // search the same PAK roots for the same relative entry name.
     const char* roots[] = {
         ".",
         "FCData",
