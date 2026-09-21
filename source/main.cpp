@@ -526,7 +526,9 @@ static int run_farcry(LoadedSo* game_so) {
     }
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
+    compatLog("Startup diagnostics complete; closing startup log before entering Far Cry");
     compatLogFlush();
+    compatLogClose();
 
     return game_main(argc, argv);
 }
@@ -620,6 +622,7 @@ int main(int, char**) {
 
     compatLogFmt("Far Cry returned %d", rc);
     compatLogFlush();
+    compatLogClose();
 
     vnxSetGameSo(nullptr);
     compatUiShutdown();
