@@ -1918,6 +1918,10 @@ static void logShaderScriptDiagnostics(FILE* f, const char* path) {
     }
 }
 
+// Forward declaration: shader directory diagnostics are defined with the
+// directory-enumeration helpers below, after stub_fopen().
+static bool isShaderPathForDiag(const char* path);
+
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
