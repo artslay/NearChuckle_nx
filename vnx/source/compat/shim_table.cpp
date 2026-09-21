@@ -1939,15 +1939,22 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 return fallback;
         }
 
-        // Android Far Cry's OpenBasicPaks() probes one packaging artifact that
-        // is not part of the shipped Switch FCData set: CData/517.pak.
-        // The original port reached this filename and continued with an empty
-        // ZIP rather than requiring real content. In the Switch port CryPak can
-        // present the same request as an absolute FCData path after realpath/path
-        // normalization, so accept both spellings. Do not synthesize any other
-        // PAK files.
+        // Android Far Cry's startup code can probe packaging artifacts that
+        // are not present in the shipped Switch FCData set. These are optional
+        // empty ZIP/PAK placeholders in the Android packaging path.
         if (mode && mode[0] == 'r' && ioPath) {
             const std::string normalizedPath = pakNormalizeName(ioPath);
+
+            const bool startupPak0 =
+                normalizedPath == "cdata/0.pak" ||
+                normalizedPath == "fcdata/0.pak" ||
+                (normalizedPath.size() >= 12 &&
+                 normalizedPath.compare(normalizedPath.size() - 12, 12,
+                                         "/cdata/0.pak") == 0) ||
+                (normalizedPath.size() >= 13 &&
+                 normalizedPath.compare(normalizedPath.size() - 13, 13,
+                                         "/fcdata/0.pak") == 0);
+
             const bool startupPak517 =
                 normalizedPath == "cdata/517.pak" ||
                 normalizedPath == "fcdata/517.pak" ||
@@ -1958,8 +1965,9 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                  normalizedPath.compare(normalizedPath.size() - 15, 15,
                                          "/fcdata/517.pak") == 0);
 
-            if (startupPak517) {
-                if (normalizedPath == "cdata/517.pak") {
+            if (startupPak0 || startupPak517) {
+                if (normalizedPath == "cdata/0.pak" ||
+                    normalizedPath == "cdata/517.pak") {
                     mkdir("CData", 0755);
                 }
 
