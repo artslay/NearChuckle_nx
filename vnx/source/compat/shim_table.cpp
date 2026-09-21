@@ -941,14 +941,18 @@ static void* sh_realloc(void* p, size_t n) {
                 memcpy(fresh, p, copySize);
             }
 
+            char where[256];
+            elfDescribePc((uint64_t)__builtin_return_address(0), where, sizeof(where));
             compatLogFmt("realloc: recovered foreign ptr=%p new=%p size=%zu "
-                         "copied=%zu old_usable=%zu",
-                         p, fresh, n, copySize, oldUsable);
+                         "copied=%zu old_usable=%zu from %s",
+                         p, fresh, n, copySize, oldUsable, where);
             return fresh;
         }
 
-        compatLogFmt("realloc: unrecoverable foreign ptr=%p size=%zu old_usable=%zu",
-                     p, n, oldUsable);
+        char where[256];
+        elfDescribePc((uint64_t)__builtin_return_address(0), where, sizeof(where));
+        compatLogFmt("realloc: unrecoverable foreign ptr=%p size=%zu old_usable=%zu from %s",
+                     p, n, oldUsable, where);
         return malloc(n);
     }
 
