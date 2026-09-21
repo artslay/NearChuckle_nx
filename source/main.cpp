@@ -2,6 +2,7 @@
 #include "compat/loader.h"
 
 extern void compatPrepareShaderDirectories(const char* dataRoot);
+extern void compatProbePakArchives(const char* dataRoot);
 
 #include <switch.h>
 
@@ -298,6 +299,7 @@ static void setup_environment() {
     // for CryEngine's internal shader-directory scan.
     normalize_engine_data_dirs();
     compatPrepareShaderDirectories(config.data_root);
+    compatProbePakArchives(config.data_root);
     probe_engine_data_layout();
 }
 
