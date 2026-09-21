@@ -64,6 +64,8 @@ static void parse_line(char* line) {
         config.fov = std::atoi(sep);
     } else if (!std::strcmp(line, "vsync")) {
         config.vsync = std::atoi(sep);
+    } else if (!std::strcmp(line, "disable_shader_compilation")) {
+        config.disable_shader_compilation = std::atoi(sep);
     }
 }
 
@@ -78,6 +80,7 @@ int read_config(const char* path) {
     config.screen_height = 720;
     config.fov = 90;
     config.vsync = 1;
+    config.disable_shader_compilation = 0;
 
     FILE* f = std::fopen(path, "r");
     if (!f)
