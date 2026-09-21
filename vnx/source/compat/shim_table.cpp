@@ -1374,12 +1374,13 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
         return false;
     }
 
-    const uint32_t actualCrc =
-        (uint32_t)crc32(0, plain.data(), (unsigned int)plain.size());
     const bool classRegistryEntry =
         normalizedWanted == "scripts/classregistry.lua";
 
     if (classRegistryEntry) {
+        const uint32_t actualCrc =
+            (uint32_t)crc32(0, plain.data(), (unsigned int)plain.size());
+
         compatLogFmt("PAK CLASSREG CRC: %s <- %s expected=0x%08x actual=0x%08x %s",
                      wanted.c_str(), pakPath.c_str(),
                      (unsigned)expectedCrc, (unsigned)actualCrc,
@@ -1389,13 +1390,13 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
                      (unsigned)method, (unsigned)compressedSize,
                      (unsigned)uncompressedSize, (unsigned)localOffset,
                      (unsigned)localFlags);
-    }
 
-    if (actualCrc != expectedCrc) {
-        if (!shaderEntry) compatLogFmt("PAK EXTRACT FAIL: %s <- %s : crc-mismatch expected=0x%08x actual=0x%08x",
-                     outPath.c_str(), wanted.c_str(),
-                     (unsigned)expectedCrc, (unsigned)actualCrc);
-        return false;
+        if (actualCrc != expectedCrc) {
+            compatLogFmt("PAK EXTRACT FAIL: %s <- %s : crc-mismatch expected=0x%08x actual=0x%08x",
+                         outPath.c_str(), wanted.c_str(),
+                         (unsigned)expectedCrc, (unsigned)actualCrc);
+            return false;
+        }
     }
 
     size_t slash = outPath.find_last_of('/');
@@ -1732,7 +1733,7 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (wanted.empty())
         return nullptr;
 
-    // v2 intentionally bypasses caches produced by earlier PAK path/lookup implementations.
+    // v3 intentionally bypasses caches produced by earlier PAK path/lookup implementations.
     // All PAK assets still use the same resolver; this only prevents stale extracted
     // files from hiding whether the current archive reader produced valid data.
     const std::string cacheRoot = "_pakcache_v3";
