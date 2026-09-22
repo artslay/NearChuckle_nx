@@ -1280,10 +1280,6 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
     if (std::strcmp(base, "libCryScriptSystem.so") == 0) {
         if (!patchFarCrySetGlobalTagHandlerString(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY SCRIPT SETGLOBAL A/B: patch not applied");
-        return;
-    }
-
-    if (std::strcmp(base, "libCryScriptSystem.so") == 0) {
         if (!patchFarCrySetGlobalTagHandlerFloat(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY SCRIPT FLOAT A/B: patch not applied");
         return;
