@@ -4686,24 +4686,6 @@ static int stub_dup2(int, int)           { errno = ENOTSUP; return -1; }
 static int stub_ioctl(int, unsigned long, void*) { errno = ENOTSUP; return -1; }
 
 // ─── access stub (file existence check) ──────────────────────────────────────
-static int stub_stat(const char* p, struct stat* s) {
-    if (!p || !s) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    const std::string ioPathStorage = normalizeSwitchFsPath(p);
-    const char* ioPath = ioPathStorage.c_str();
-
-    if (::stat(ioPath, s) == 0)
-        return 0;
-
-    std::string resolved;
-    if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
-        return ::stat(resolved.c_str(), s);
-    return -1;
-}
-
 static int stub_access(const char* path, int mode) {
     if (!path) {
         errno = EINVAL;
