@@ -91,6 +91,7 @@ static bool resolvePathCaseInsensitive(const char* input, std::string& resolved)
 static bool compatIsPakPath(const char* path);
 static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
+static bool tryMaterializeUniquePakBasename(const char* targetPath);
 static void compatLogPakOpenState(FILE* f, const char* path);
 
 // Normalize Switch virtual-device paths before they reach newlib's POSIX I/O.
@@ -283,6 +284,27 @@ static char* stub_realpath(const char* p, char* out) {
             absolute += '/';
         absolute += p;
         return writeCanonical(absolute);
+    }
+
+    // CryPak may keep normal game assets exclusively inside FCData/*.pak.
+    // In that case a host-side stat() legitimately fails even though the guest
+    // asset exists. Materialize a unique PAK entry at the requested virtual
+    // path, then canonicalize it normally. This is particularly important for
+    // scripts/classregistry.lua: Lua's loader calls realpath() before entering
+    // the lexer, so returning failure leaves the parser with no valid source
+    // filename even though the script is present in Scripts.pak.
+    if (strchr(p, '/') && tryMaterializeUniquePakBasename(p)) {
+        struct stat pakSt = {};
+        if (::stat(p, &pakSt) == 0 && S_ISREG(pakSt.st_mode)) {
+            char cwd[PATH_MAX];
+            if (::getcwd(cwd, sizeof(cwd))) {
+                std::string absolute = cwd;
+                if (!absolute.empty() && absolute.back() != '/')
+                    absolute += '/';
+                absolute += p;
+                return writeCanonical(absolute);
+            }
+        }
     }
 
     if (!callerOwnsBuffer)
