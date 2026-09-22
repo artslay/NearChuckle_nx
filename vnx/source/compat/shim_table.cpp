@@ -4164,6 +4164,34 @@ static bool scriptPrepCacheReady() {
            S_ISREG(st.st_mode);
 }
 
+static bool shaderPrepCacheReady() {
+    if (!prepMarkerExists(kShaderPrepMarker))
+        return false;
+
+    // The marker is persistent, but also verify the core declaration files that
+    // the shader bootstrap materializes. If the user deletes the prepared tree,
+    // the next launch is allowed to rebuild it instead of trusting a stale marker.
+    const char* required[] = {
+        "Shaders/HWScripts/Declarations/CGVProgramms.csl",
+        "Shaders/HWScripts/Declarations/CGVPMacro.csi",
+        "Shaders/HWScripts/Declarations/CGPShaders.csl",
+        "Shaders/HWScripts/CGVProgramms.csl",
+        "Shaders/HWScripts/CGVPMacro.csi",
+        "Shaders/HWScripts/CGPShaders.csl",
+        "Shaders/Scripts/CommonSubroutines.csl",
+        "Shaders/Scripts/CommonSubroutines.csi",
+        nullptr
+    };
+
+    for (size_t i = 0; required[i]; ++i) {
+        struct stat st = {};
+        if (::stat(required[i], &st) != 0 || !S_ISREG(st.st_mode))
+            return false;
+    }
+
+    return true;
+}
+
 void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
     // The first run materializes the full Scripts tree from FCData/*.pak.
     // Once that tree is present, keep a persistent marker and do not reopen or
@@ -4279,7 +4307,7 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     // Shader source files are materialized only during the first preparation.
     // The generated files and the _pakcache_v3 entries persist on the SD card,
     // so repeating the PAK directory/entry scans on every launch is unnecessary.
-    if (prepMarkerExists(kShaderPrepMarker)) {
+    if (shaderPrepCacheReady()) {
         compatLog("shader preload: cached=1 (skip FCData PAK scan)");
         return;
     }
@@ -4346,10 +4374,15 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     (void)commonCsi;
 
     // Reaching this point means the one-time preparation pass has completed.
-    // Subsequent launches can trust the persistent marker and go straight to
-    // the already-materialized shader files.
-    writePrepMarker(kShaderPrepMarker);
-    compatLog("shader preload: persistent cache marker created");
+    // Record the marker only when the core files are really present.
+    if (shaderPrepCacheReady()) {
+        // Marker existed already in the normal repeated-launch case. This write
+        // is mainly for the first successful preparation after an update.
+        writePrepMarker(kShaderPrepMarker);
+        compatLog("shader preload: persistent cache marker ready");
+    } else {
+        compatLog("shader preload: persistent cache marker NOT created (core files missing)");
+    }
 }
 
 
