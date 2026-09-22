@@ -1743,17 +1743,29 @@ static void prepareShaderSourceFiles(const char* /*dataRoot*/) {
     };
 
     int foundCount = 0;
+    int materializedCount = 0;
+
     for (size_t i = 0; wanted[i]; ++i) {
         std::string resolved;
-        if (!resolvePathCaseInsensitive(wanted[i], resolved))
-            continue;
+        if (!resolvePathCaseInsensitive(wanted[i], resolved)) {
+            // The renderer expects these shader control files as normal files
+            // during Init Shaders. Do not rely on CryPak directory enumeration
+            // to discover them from FCData/*.pak: materialize a unique PAK entry
+            // into the exact requested path first.
+            if (tryMaterializeUniquePakBasename(wanted[i])) {
+                ++materializedCount;
+            }
+            if (!resolvePathCaseInsensitive(wanted[i], resolved))
+                continue;
+        }
 
         struct stat st = {};
         if (stat(resolved.c_str(), &st) == 0 && S_ISREG(st.st_mode))
             ++foundCount;
     }
 
-    compatLogFmt("shader loose files: %d/24", foundCount);
+    compatLogFmt("shader source files: %d/24 present, materialized=%d",
+                 foundCount, materializedCount);
 }
 
 static std::string pakAssetRelativeName(const char* requested) {
