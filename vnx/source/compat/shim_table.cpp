@@ -908,49 +908,34 @@ static void* sh_realloc(void* p, size_t n) {
     if (!p)
         return malloc(n);
 
-    if (!memIsHeap(p) || !looksLikeNewlibChunk(p)) {
-        // Some guest components hand libc realloc a pointer owned by another
-        // allocator. Returning a blank block loses the contents that realloc
-        // is required to preserve and can corrupt parser/input state later.
-        // When the pointer is inside the Switch heap, recover the readable
-        // payload from newlib's reported usable size and keep the old block
-        // untouched. This is intentionally a leak on the foreign-pointer path:
-        // preserving data is safer than passing an unknown owner back to free().
-        size_t oldUsable = 0;
-        if (memIsHeap(p))
-            oldUsable = malloc_usable_size(p);
-
-        if (oldUsable > 0 && oldUsable <= (256u * 1024u * 1024u)) {
-            const size_t copySize = oldUsable < n ? oldUsable : n;
-            void* fresh = malloc(n);
-            if (!fresh) {
-                compatLogFmt("realloc: recover failed ptr=%p size=%zu old_usable=%zu",
-                             p, n, oldUsable);
-                return nullptr;
-            }
-
-            if (copySize > 0) {
-                // The destination size is exactly n; the source is constrained
-                // by malloc_usable_size(). Both addresses are in the process heap.
-                memcpy(fresh, p, copySize);
-            }
-
-            char where[256];
-            elfDescribePc((uint64_t)__builtin_return_address(0), where, sizeof(where));
-            compatLogFmt("realloc: recovered foreign ptr=%p new=%p size=%zu "
-                         "copied=%zu old_usable=%zu from %s",
-                         p, fresh, n, copySize, oldUsable, where);
-            return fresh;
-        }
+    // Do not apply free()-specific chunk heuristics to realloc(). A pointer can
+    // be a valid live newlib allocation even when freeWouldCorrupt() cannot
+    // prove that the surrounding free-list topology is safe. Rejecting such a
+    // pointer changes realloc semantics into malloc+memcpy+leak and changes the
+    // heap layout, which is particularly sensitive during CryEngine shader
+    // preprocessing.
+    if (memIsHeap(p)) {
+        const size_t oldUsable = malloc_usable_size(p);
 
         char where[256];
-        elfDescribePc((uint64_t)__builtin_return_address(0), where, sizeof(where));
-        compatLogFmt("realloc: unrecoverable foreign ptr=%p size=%zu old_usable=%zu from %s",
+        elfDescribePc((uint64_t)__builtin_return_address(0),
+                      where, sizeof(where));
+        compatLogFmt("realloc: DIRECT heap ptr=%p size=%zu old_usable=%zu from %s",
                      p, n, oldUsable, where);
-        return malloc(n);
+
+        return realloc(p, n);
     }
 
-    return realloc(p, n);
+    // Keep protection for pointers that are not part of the Switch heap at all.
+    // There is no trustworthy old size/owner information for these pointers,
+    // so do not pass them to newlib realloc.
+    char where[256];
+    elfDescribePc((uint64_t)__builtin_return_address(0),
+                  where, sizeof(where));
+
+    compatLogFmt("realloc: SKIP non-heap ptr=%p size=%zu from %s",
+                 p, n, where);
+    return malloc(n);
 }
 
 // ─── /dev/urandom virtual fd ─────────────────────────────────────────────────
