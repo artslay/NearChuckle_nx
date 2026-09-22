@@ -4124,7 +4124,7 @@ static void countLuaScriptsRecursive(const std::string& directory,
 }
 
 static const char* kScriptPrepMarker = ".nearchuckle_scripts_ready_v1";
-static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v3";
+static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v4";
 
 static bool prepMarkerExists(const char* marker) {
     if (!marker || !*marker)
@@ -4185,6 +4185,8 @@ static bool shaderPrepCacheReady() {
         "Shaders/HWScripts/CGVProgramms.csl",
         "Shaders/HWScripts/CGVPMacro.csi",
         "Shaders/HWScripts/CGPShaders.csl",
+        "Shaders/Scripts/CommonSubroutines.csl",
+        "Shaders/Scripts/CommonSubroutines.csi",
         nullptr
     };
 
@@ -4353,6 +4355,8 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
         compatLog("shader preload: cached=1 (skip FCData PAK scan)");
         return;
     }
+
+    compatLog("shader preload: cache invalid/incomplete -> refresh shader source tree");
 
     // One HWScripts pass also materializes its nested Declarations tree, so
     // scanning Declarations separately only repeats the same 17-Pak walk.
