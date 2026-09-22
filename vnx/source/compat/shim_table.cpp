@@ -1676,6 +1676,14 @@ static std::string pakAssetRelativeName(const char* requested) {
     if (wanted.rfind("fcdata/", 0) == 0)
         wanted.erase(0, 7);
 
+    // CryPak exposes the compiled geometry cache through the virtual
+    // CCGF_CACHE namespace, but the actual archive entries are rooted at
+    // objects/... (CCGF_CACHE.PAK is the archive, not an entry-directory).
+    // Keep the namespace for the physical file lookup, but remove it when
+    // comparing against PAK entry names.
+    if (wanted.rfind("ccgf_cache/", 0) == 0)
+        wanted.erase(0, 11);
+
     while (wanted.rfind("./", 0) == 0)
         wanted.erase(0, 2);
 
@@ -1750,6 +1758,8 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
                 continue;
 
             if (pakExtractEntry(pakPath, wanted, outPath)) {
+                if (wanted.rfind("objects/", 0) == 0)
+                    compatLogFmt("PAK EXACT: %s <- %s", wanted.c_str(), pakPath.c_str());
                 FILE* f = fopen(outPath.c_str(), mode);
                 if (f) {
                     closedir(dir);
