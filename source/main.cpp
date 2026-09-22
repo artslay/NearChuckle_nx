@@ -695,6 +695,15 @@ int main(int, char**) {
         return 1;
     }
 
+    // The libnx software console owns the default NWindow/Framebuffer.
+    // Release it BEFORE the guest SDL/EGL window is created so CryEngine's
+    // presentation surface has exclusive ownership of the display buffers.
+    // The startup file log remains active; only the temporary on-screen
+    // diagnostics console is retired here.
+    compatLog("SDL: releasing startup console before guest EGL window creation");
+    compatLogFlush();
+    compatUiShutdown();
+
     int rc = run_farcry(game_so);
 
     compatLogFmt("Far Cry returned %d", rc);
