@@ -603,9 +603,9 @@ static int run_farcry(LoadedSo* game_so) {
 }
 
 int main(int, char**) {
-    // Keep visible startup diagnostics on the Switch until Far Cry is ready to
-    // create its real SDL/EGL window. The startup console is released before
-    // game_main() begins, so it cannot interfere with the game's framebuffer.
+    // Keep the full startup diagnostics visible on the Switch while game_main()
+    // runs. runtime.cpp releases the console exactly at the main-loop marker,
+    // after which the real SDL/EGL game window owns the framebuffer.
     compatUiInit();
 
     if (read_config("/switch/NearChuckle_nx/config.txt") != 0)
