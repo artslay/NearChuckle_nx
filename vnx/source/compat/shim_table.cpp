@@ -4124,7 +4124,7 @@ static void countLuaScriptsRecursive(const std::string& directory,
 }
 
 static const char* kScriptPrepMarker = ".nearchuckle_scripts_ready_v1";
-static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v1";
+static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v2";
 
 static bool prepMarkerExists(const char* marker) {
     if (!marker || !*marker)
@@ -4359,14 +4359,12 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     (void)rootCgvMacro;
     (void)rootCgpShaders;
 
-    const bool commonPatch = patchCommonSubroutinesIntoShaderMacro(
-        "Shaders/HWScripts/Declarations/CGVPMacro.csi",
-        "Shaders/HWScripts/Declarations/CGVProgramms.csl");
-    (void)commonPatch;
-
-    // CommonSubroutines is patched directly into the declaration macro above.
-    // Do not scan every PAK again just to look for optional loose copies that may
-    // not exist in the shipped archives.
+    // Keep the original CryEngine shader declaration layout intact:
+    // CGVPMacro.csi contains the SubrScript placeholder, while
+    // CGVProgramms.csl owns the DeclareCGScript definitions. Modifying the
+    // included CSI changes the top-level token stream seen by the legacy
+    // shader parser and can prevent DeclareCGScript entries such as PosCommon
+    // from being registered.
     // Reaching this point means the one-time preparation pass has completed.
     // Record the marker only when the core files are really present.
     if (shaderPrepCacheReady()) {
