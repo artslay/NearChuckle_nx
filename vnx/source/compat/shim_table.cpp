@@ -423,10 +423,89 @@ static double stub_difftime(time_t a, time_t b) { return difftime(a, b); }
 static int stub_fesetround(int r) { return fesetround(r); }
 // strptime — newlib stub (may not exist in devkitA64 newlib)
 static char* stub_strptime(const char*, const char*, struct tm*) { return nullptr; }
-// clearerr / fileno / fdopen
+// clearerr / fileno / stat ABI / fdopen
 static void  stub_clearerr(FILE* f)              { clearerr(f); }
 static int   stub_fileno(FILE* f)                { return f ? ::fileno(f) : -1; }
-static int   stub_fstat64(int fd, void* out) {
+
+// Guest libraries are Android arm64 binaries, while this compatibility layer
+// is compiled against devkitA64/newlib. Their struct stat ABI is therefore not
+// interchangeable. Bionic arm64 lays out st_size at offset 48 and the three
+// timespecs starting at offsets 72/88/104, for a 128-byte structure.
+struct AndroidArm64Stat {
+    uint64_t st_dev;
+    uint64_t st_ino;
+    uint32_t st_mode;
+    uint32_t st_nlink;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint64_t st_rdev;
+    uint64_t __pad1;
+    int64_t  st_size;
+    int32_t  st_blksize;
+    int32_t  __pad2;
+    int64_t  st_blocks;
+    int64_t  st_atim_sec;
+    int64_t  st_atim_nsec;
+    int64_t  st_mtim_sec;
+    int64_t  st_mtim_nsec;
+    int64_t  st_ctim_sec;
+    int64_t  st_ctim_nsec;
+    uint32_t __unused4;
+    uint32_t __unused5;
+};
+
+static_assert(sizeof(AndroidArm64Stat) == 128, "AndroidArm64Stat size");
+static_assert(offsetof(AndroidArm64Stat, st_size) == 48, "AndroidArm64Stat st_size");
+static_assert(offsetof(AndroidArm64Stat, st_mtim_sec) == 88, "AndroidArm64Stat st_mtime");
+
+static void fillAndroidArm64Stat(const struct stat& nativeSt, void* out) {
+    if (!out)
+        return;
+
+    AndroidArm64Stat guest = {};
+    guest.st_mode = static_cast<uint32_t>(nativeSt.st_mode);
+    guest.st_nlink = static_cast<uint32_t>(nativeSt.st_nlink);
+    guest.st_uid = static_cast<uint32_t>(nativeSt.st_uid);
+    guest.st_gid = static_cast<uint32_t>(nativeSt.st_gid);
+    guest.st_size = static_cast<int64_t>(nativeSt.st_size);
+    guest.st_blksize = static_cast<int32_t>(nativeSt.st_blksize);
+    guest.st_blocks = static_cast<int64_t>(nativeSt.st_blocks);
+    guest.st_atim_sec = static_cast<int64_t>(nativeSt.st_atime);
+    guest.st_mtim_sec = static_cast<int64_t>(nativeSt.st_mtime);
+    guest.st_ctim_sec = static_cast<int64_t>(nativeSt.st_ctime);
+    std::memcpy(out, &guest, sizeof(guest));
+}
+
+static int stub_stat(const char* p, struct stat* ignored) {
+    (void)ignored;
+    if (!p) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    const std::string ioPathStorage = normalizeSwitchFsPath(p);
+    const char* ioPath = ioPathStorage.c_str();
+
+    struct stat nativeSt = {};
+    int rc = ::stat(ioPath, &nativeSt);
+    if (rc != 0) {
+        std::string resolved;
+        if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
+            rc = ::stat(resolved.c_str(), &nativeSt);
+    }
+
+    if (rc != 0)
+        return rc;
+
+    fillAndroidArm64Stat(nativeSt, ignored);
+    if (asciiLower(ioPathStorage).find(".caf") != std::string::npos) {
+        compatLogFmt("stat ABI ANDROID64: %s size=%lld",
+                     ioPath, static_cast<long long>(nativeSt.st_size));
+    }
+    return 0;
+}
+
+static int stub_fstat64(int fd, void* out) {
     if (!out) {
         errno = EINVAL;
         return -1;
@@ -437,12 +516,11 @@ static int   stub_fstat64(int fd, void* out) {
     if (rc != 0)
         return rc;
 
-    // Android arm64 stat64 places st_mtime at offset 80.  GetModificationTime()
-    // only consumes that field here, so provide the value in the ABI expected
-    // by the game while keeping the host-side fstat implementation.
-    std::memset(out, 0, 128);
-    std::memcpy(static_cast<unsigned char*>(out) + 80,
-                &st.st_mtime, sizeof(st.st_mtime));
+    fillAndroidArm64Stat(st, out);
+    if (st.st_size >= 0) {
+        compatLogFmt("fstat64 ABI ANDROID64: fd=%d size=%lld",
+                     fd, static_cast<long long>(st.st_size));
+    }
     return 0;
 }
 static FILE* stub_fdopen(int fd, const char* m)  { (void)fd; (void)m; return nullptr; }
