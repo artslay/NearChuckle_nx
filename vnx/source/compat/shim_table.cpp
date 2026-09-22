@@ -3322,6 +3322,10 @@ static bool w_SDL_GL_SwapWindow(void* window) {
     static unsigned int swap_count = 0;
     ++swap_count;
 
+    // frame_debug.log survives the startup-log shutdown, so record entry here
+    // before any compatibility logger path can be closed or blocked.
+    frameDebugLogFmt("SDL SWAP ENTER[%u]: window=%p", swap_count, window);
+
     // Do not call the guest Android SDL_GL_SwapWindow(). Its Android backend can
     // block in the Java/UI presentation path, which is not present on Switch.
     // CryEngine is already rendering into the active EGL surface, so direct
