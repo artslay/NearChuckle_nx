@@ -1105,6 +1105,60 @@ static void patchFarCrySkipLoadConfiguration(LoadedSo* so, uint8_t* stage_base,
                  (unsigned long long)kOffset, old, *insn);
 }
 
+// Far Cry's Android build reaches CScriptSystem::SetGlobalTagHandlerString()
+// immediately before the current NULL-write fault. The public Far Cry source
+// shows this callback copies the incoming Lua string into the pointer stored in
+// the tagged userdata and then notifies the script sink. On Switch, the fault
+// occurs inside this callback at libCryScriptSystem.so +0x39ab8 (+0x98 from the
+// function start). Disable only this string-tag setter as an A/B experiment.
+// Integer/float tagged globals and all other Lua callbacks remain untouched.
+static bool patchFarCrySetGlobalTagHandlerString(LoadedSo* so, uint8_t* stage_base,
+                                                uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* path = so->path.c_str();
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (std::strcmp(base, "libCryScriptSystem.so") != 0)
+        return false;
+
+    constexpr const char* kSym =
+        "_ZN13CScriptSystem26SetGlobalTagHandlerStringEP9lua_State";
+
+    void* fn = so->findSym(kSym);
+    if (!fn) {
+        compatLogFmt("FARCRY SCRIPT SETGLOBAL A/B: symbol not found: %s", kSym);
+        return false;
+    }
+
+    const uintptr_t imageBase = (uintptr_t)so->base;
+    const uintptr_t addr = (uintptr_t)fn;
+    if (addr < imageBase || addr - imageBase >= alloc_size) {
+        compatLogFmt(
+            "FARCRY SCRIPT SETGLOBAL A/B: symbol outside image fn=%p base=%p size=0x%llx",
+            fn, (void*)imageBase, (unsigned long long)alloc_size);
+        return false;
+    }
+
+    const uint64_t off = (uint64_t)(addr - imageBase);
+    uint32_t* insn = reinterpret_cast<uint32_t*>(
+        stage_base + min_vaddr + off);
+
+    const uint32_t old0 = insn[0];
+    const uint32_t old1 = insn[1];
+
+    // MOV W0, WZR; RET — valid zero-return Lua C callback.
+    insn[0] = 0x2a1f03e0u;
+    insn[1] = 0xd65f03c0u;
+    armICacheInvalidate(insn, 8);
+
+    compatLogFmt(
+        "FARCRY SCRIPT SETGLOBAL A/B: patched SetGlobalTagHandlerString +0x%llx old=%08x %08x new=%08x %08x",
+        (unsigned long long)off, old0, old1, insn[0], insn[1]);
+    return true;
+}
+
 // ─── Per-game binary quirk patches ─────────────────────────────────────────────
 // The actual fixups live in source/compat/games/ (one file per title), reached
 // through compat/games.h, so game-specific patches stay isolated from the shared
@@ -1128,6 +1182,12 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
 
     const char* base = std::strrchr(path, '/');
     base = base ? base + 1 : path;
+
+    if (std::strcmp(base, "libCryScriptSystem.so") == 0) {
+        if (!patchFarCrySetGlobalTagHandlerString(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY SCRIPT SETGLOBAL A/B: patch not applied");
+        return;
+    }
 
     if (std::strcmp(base, "libCryGame.so") == 0) {
         compatLogFmt("VIDEO PANEL PATCH: scanning libCryGame image min_vaddr=0x%llx size=0x%llx",
