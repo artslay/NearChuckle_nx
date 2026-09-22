@@ -4400,6 +4400,7 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     // preparation. It restores the exact original declaration sources from
     // Shaders.pak instead of trusting files left by an older compatibility build.
     const bool declarationsRestored = refreshCoreShaderDeclarationsFromPak();
+    (void)declarationsRestored;
 
     // Keep the original CryEngine shader declaration layout intact:
     // CGVPMacro.csi contains the SubrScript placeholder, while
@@ -4408,14 +4409,30 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     // shader parser and can prevent DeclareCGScript entries such as PosCommon
     // from being registered.
     // Reaching this point means the one-time preparation pass has completed.
-    // Record the marker only when the core files are really present.
-    if (shaderPrepCacheReady()) {
-        // Marker existed already in the normal repeated-launch case. This write
-        // is mainly for the first successful preparation after an update.
+    // Record the new marker only after the restored core declaration files exist.
+    bool coreReady = true;
+    const char* required[] = {
+        "Shaders/HWScripts/Declarations/CGVProgramms.csl",
+        "Shaders/HWScripts/Declarations/CGVPMacro.csi",
+        "Shaders/HWScripts/Declarations/CGPShaders.csl",
+        "Shaders/HWScripts/CGVProgramms.csl",
+        "Shaders/HWScripts/CGVPMacro.csi",
+        "Shaders/HWScripts/CGPShaders.csl",
+        nullptr
+    };
+    for (size_t i = 0; required[i]; ++i) {
+        struct stat st = {};
+        if (::stat(required[i], &st) != 0 || !S_ISREG(st.st_mode)) {
+            coreReady = false;
+            break;
+        }
+    }
+
+    if (coreReady && declarationsRestored) {
         writePrepMarker(kShaderPrepMarker);
         compatLog("shader preload: persistent cache marker ready");
     } else {
-        compatLog("shader preload: persistent cache marker NOT created (core files missing)");
+        compatLog("shader preload: persistent cache marker NOT created (core shader declarations incomplete)");
     }
 }
 
