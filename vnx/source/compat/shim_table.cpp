@@ -3212,7 +3212,8 @@ static bool w_SDL_GetWindowSizeInPixels(void* window, int* w, int* h) {
 static bool w_SDL_GL_SwapWindow(void* window) {
     using Fn = bool (*)(void*);
     Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GL_SwapWindow"));
-    bool ok = fn ? fn(window) : false;
+    const bool guest_ok = fn ? fn(window) : false;
+    bool ok = guest_ok;
 
     static unsigned int swap_count = 0;
     ++swap_count;
@@ -3220,19 +3221,49 @@ static bool w_SDL_GL_SwapWindow(void* window) {
     // If the guest SDL Android path reports a failed swap, present the already
     // current EGL surface directly. This keeps the renderer alive even when
     // the Java-side swap path cannot be reproduced on Switch.
+    bool egl_fallback = false;
     if (!ok) {
         EGLDisplay display = eglGetCurrentDisplay();
         EGLSurface surface = eglGetCurrentSurface(EGL_DRAW);
         if (display != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE) {
-            if (eglSwapBuffers(display, surface) == EGL_TRUE)
+            if (eglSwapBuffers(display, surface) == EGL_TRUE) {
                 ok = true;
+                egl_fallback = true;
+            }
         }
     }
 
-    if (swap_count <= 5 || !ok) {
-        compatLogFmt("SDL: SDL_GL_SwapWindow(%p) -> %d err=%s",
-                     window, ok ? 1 : 0, sdl3_error());
+    // Bring-up probe: keep the startup log open through the first few actual
+    // frame presentations so a black screen can be distinguished from a render
+    // loop that never reaches SDL_GL_SwapWindow(). This is intentionally limited
+    // to eight calls and then permanently closes the compatibility log.
+    if (swap_count <= 8 || !ok) {
+        GLint viewport[4] = {0, 0, 0, 0};
+        GLint framebuffer = 0;
+        GLint current_program = 0;
+        GLfloat clear_color[4] = {0, 0, 0, 0};
+
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
+        glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, clear_color);
+        const GLenum gl_error = glGetError();
+
+        compatLogFmt(
+            "SDL: Swap[%u] window=%p guest=%d final=%d egl_fallback=%d "
+            "viewport=%d,%d %dx%d fbo=%d program=%d clear=%.3f,%.3f,%.3f,%.3f "
+            "glerr=0x%x sdlerr=%s",
+            swap_count, window, guest_ok ? 1 : 0, ok ? 1 : 0,
+            egl_fallback ? 1 : 0,
+            viewport[0], viewport[1], viewport[2], viewport[3],
+            framebuffer, current_program,
+            clear_color[0], clear_color[1], clear_color[2], clear_color[3],
+            (unsigned)gl_error, sdl3_error());
     }
+
+    if (swap_count == 8)
+        compatLogClose();
+
     return ok;
 }
 
