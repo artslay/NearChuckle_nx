@@ -867,88 +867,106 @@ extern "C" volatile uint32_t g_near_video_panel_finished_offset;
 
 static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
                                       uint64_t min_vaddr, size_t alloc_size) {
-    if (!so || !so->symtab_heap || !so->strtab_heap || !so->sym_count ||
-        !stage_base)
+    (void)so;
+
+    if (!stage_base || !alloc_size)
         return false;
 
-    Elf64_Sym* target = nullptr;
-    for (uint32_t i = 0; i < so->sym_count; ++i) {
-        Elf64_Sym& sym = so->symtab_heap[i];
-        if (!sym.st_name || sym.st_name >= so->strsz || !sym.st_value)
+    // CUIVideoPanel::IsPlaying() in the Android source is:
+    //
+    //   int CUIVideoPanel::IsPlaying() { return !m_bFinished; }
+    //
+    // With clang/AArch64 this compiles to:
+    //
+    //   ldrb  wN, [x0, #m_bFinished]
+    //   eor   w0, wN, #1
+    //   ret
+    //
+    // The method is not guaranteed to be present in .dynsym, so use this
+    // exact three-instruction body as a fallback signature scan.
+    int matches = 0;
+    uint32_t* match = nullptr;
+    uint32_t matchOffset = 0xffffffffu;
+    uint32_t fieldOffset = 0;
+
+    auto isLdrbFromX0 = [](uint32_t w, unsigned& rt, unsigned& imm12) -> bool {
+        // LDRB Wt, [Xn, #imm12]
+        if ((w & 0xffc00000u) != 0x39400000u)
+            return false;
+        if (((w >> 5) & 31u) != 0) // Rn must be X0
+            return false;
+        rt = w & 31u;
+        imm12 = (w >> 10) & 0xfffu;
+        return true;
+    };
+
+    auto isEorW0Imm1 = [](uint32_t w, unsigned& rn) -> bool {
+        // EOR W0, Wn, #1. For the 32-bit logical-immediate encoding, #1
+        // has N=0, immr=0, imms=0, leaving Rn in bits [9:5] and Rd=0.
+        if ((w & 0xfffffc1fu) != 0x52000000u)
+            return false;
+        rn = (w >> 5) & 31u;
+        return true;
+    };
+
+    const uint8_t* bytes = stage_base;
+    for (size_t off = 0; off + 12 <= alloc_size; off += 4) {
+        uint32_t w0, w1, w2;
+        std::memcpy(&w0, bytes + off + 0, sizeof(w0));
+        std::memcpy(&w1, bytes + off + 4, sizeof(w1));
+        std::memcpy(&w2, bytes + off + 8, sizeof(w2));
+
+        unsigned rt = 0, imm12 = 0, rn = 0;
+        if (!isLdrbFromX0(w0, rt, imm12))
             continue;
-        const char* name = so->strtab_heap + sym.st_name;
-        // CUIVideoPanel has both IsPlaying() and the Lua wrapper
-        // IsPlaying(IFunctionHandler*). The native no-argument method is the
-        // one whose body is "return !m_bFinished" and must be patched.
-        if (std::strstr(name, "_ZN13CUIVideoPanel9IsPlayingEv")) {
-            target = &sym;
-            compatLogFmt("VIDEO PANEL SYMBOL: %s value=0x%llx size=0x%llx",
-                         name,
-                         (unsigned long long)sym.st_value,
-                         (unsigned long long)sym.st_size);
-            break;
+        if (rt != rn) {
+            // rn is set by the EOR test below; keep this check after it.
         }
+        if (!isEorW0Imm1(w1, rn))
+            continue;
+        if (rn != rt)
+            continue;
+        if (w2 != 0xd65f03c0u) // RET
+            continue;
+
+        ++matches;
+        match = (uint32_t*)(bytes + off);
+        matchOffset = (uint32_t)off;
+        fieldOffset = imm12;
+
+        compatLogFmt("VIDEO PANEL SIGNATURE CANDIDATE: off=0x%llx field=0x%x words=%08x %08x %08x",
+                     (unsigned long long)off, imm12, w0, w1, w2);
     }
 
-    if (!target)
-        return false;
-
-    if (target->st_value < min_vaddr ||
-        target->st_value - min_vaddr + 16 > alloc_size) {
-        compatLogFmt("VIDEO PANEL PATCH: IsPlaying outside image value=0x%llx min=0x%llx size=0x%llx",
-                     (unsigned long long)target->st_value,
-                     (unsigned long long)min_vaddr,
-                     (unsigned long long)alloc_size);
-        return false;
-    }
-
-    uint32_t* fn = reinterpret_cast<uint32_t*>(
-        stage_base + target->st_value);
-
-    uint32_t finishedOffset = 0xffffffffu;
-    for (int i = 0; i < 8; ++i) {
-        const uint32_t w = fn[i];
-        // LDRB Wt, [X0, #imm12].
-        if ((w & 0xffc00000u) == 0x39400000u &&
-            ((w >> 5) & 31u) == 0u) {
-            finishedOffset = (w >> 10) & 0xfffu;
-            compatLogFmt("VIDEO PANEL FINISHED OFFSET: 0x%x (insn+0x%x=%08x)",
-                         finishedOffset, i * 4, w);
-            break;
-        }
-    }
-
-    if (finishedOffset == 0xffffffffu) {
-        compatLog("VIDEO PANEL PATCH: could not derive m_bFinished offset");
+    if (matches == 0) {
+        compatLog("VIDEO PANEL PATCH: native IsPlaying signature not found");
         return false;
     }
 
-    if (target->st_size && target->st_size < 16) {
-        compatLogFmt("VIDEO PANEL PATCH: IsPlaying too small size=0x%llx",
-                     (unsigned long long)target->st_size);
+    if (matches > 1) {
+        compatLogFmt("VIDEO PANEL PATCH: native signature ambiguous (%d matches); no code patched",
+                     matches);
         return false;
     }
 
-    const uint32_t original0 = fn[0];
-    const uint32_t original1 = fn[1];
-    const uint32_t original2 = fn[2];
-    const uint32_t original3 = fn[3];
+    // We only replace the tiny native IsPlaying() body. Returning zero makes
+    // failed/missing intro videos appear finished to the Lua video sequencer,
+    // while leaving every other UI method untouched. This is deliberate for
+    // the Switch bring-up where the AMD64 intro movies are not available.
+    const uint32_t old0 = match[0];
+    const uint32_t old1 = match[1];
+    const uint32_t old2 = match[2];
 
-    // Absolute AArch64 jump:
-    //   ldr x16, #8
-    //   br  x16
-    //   .quad compatVideoPanelIsPlaying
-    fn[0] = 0x58000090u;
-    fn[1] = 0xd61f0200u;
-    const uint64_t helper = (uint64_t)(uintptr_t)&compatVideoPanelIsPlaying;
-    std::memcpy(&fn[2], &helper, sizeof(helper));
+    match[0] = 0x2a1f03e0u; // MOV W0, WZR
+    match[1] = 0xd65f03c0u; // RET
+    match[2] = 0xd503201fu; // NOP
 
-    g_near_video_panel_finished_offset = finishedOffset;
+    g_near_video_panel_finished_offset = fieldOffset;
 
-    compatLogFmt("VIDEO PANEL PATCH: IsPlaying -> compat bridge helper=%p",
-                 (void*)(uintptr_t)helper);
-    compatLogFmt("VIDEO PANEL PATCH OLD: %08x %08x %08x %08x",
-                 original0, original1, original2, original3);
+    compatLogFmt("VIDEO PANEL PATCH: IsPlaying @0x%08x -> return 0 (field=0x%x)",
+                 matchOffset, fieldOffset);
+    compatLogFmt("VIDEO PANEL PATCH OLD: %08x %08x %08x",
+                 old0, old1, old2);
     return true;
 }
 
