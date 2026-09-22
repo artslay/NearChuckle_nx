@@ -118,6 +118,8 @@ void elfHeapCanaryCheck(const char* stage) {
 }
 
 static void logUnrecoveredFault(ThreadExceptionDump* ctx);
+extern void shimLastAllocatorEvent(uint32_t* kind, uint32_t* phase, uint64_t* caller,
+                                   uint64_t* ptr, uint64_t* size, uint64_t* size2);
 void elfDescribePc(uint64_t pc, char* buf, size_t sz);   // defined below
 
 extern "C" void __libnx_exception_handler(ThreadExceptionDump* ctx) {
@@ -680,6 +682,30 @@ static void logUnrecoveredFault(ThreadExceptionDump* ctx) {
     dumpFaultMemory("x10", ctx->cpu_gprs[10].x);
     dumpFaultMemory("x20", ctx->cpu_gprs[20].x);
     dumpFaultMemory("x23", ctx->cpu_gprs[23].x);
+
+    uint32_t alloc_kind = 0, alloc_phase = 0;
+    uint64_t alloc_caller = 0, alloc_ptr = 0, alloc_size = 0, alloc_size2 = 0;
+    shimLastAllocatorEvent(&alloc_kind, &alloc_phase, &alloc_caller,
+                           &alloc_ptr, &alloc_size, &alloc_size2);
+    if (alloc_kind != 0) {
+        const char* kind_name = "unknown";
+        switch (alloc_kind) {
+            case 1: kind_name = "malloc"; break;
+            case 2: kind_name = "calloc"; break;
+            case 3: kind_name = "free"; break;
+            case 4: kind_name = "realloc"; break;
+        }
+        char alloc_caller_desc[256] = {};
+        elfDescribePc(alloc_caller, alloc_caller_desc, sizeof(alloc_caller_desc));
+        compatLogFmt("UNRECOVERED FAULT LAST ALLOC: kind=%s phase=%s caller=%p (%s) ptr=%p size=%llu size2=%llu",
+                     kind_name,
+                     alloc_phase == 1 ? "ENTER" : "RETURN",
+                     (void*)alloc_caller,
+                     alloc_caller_desc,
+                     (void*)alloc_ptr,
+                     (unsigned long long)alloc_size,
+                     (unsigned long long)alloc_size2);
+    }
 
     elfLogAddrInfo("UNRECOVERED FAULT pc", ctx->pc.x);
     elfLogAddrInfo("UNRECOVERED FAULT far", ctx->far.x);
