@@ -882,6 +882,12 @@ static void sh_free(void* p) {
     if (!p) return;
     g_sh_free_calls++;
     arenaGate("free");
+
+    // Android's original CMTSafeHeap::Free() calls plain ::free(p) on Linux.
+    // Do not second-guess the allocator's chunk metadata here: pointers coming
+    // from CrySystem/CMTSafeHeap can have allocator headers that differ from
+    // the conservative newlib chunk heuristic above. For this A/B experiment,
+    // only reject addresses that are not part of a Switch heap at all.
     if (!memIsHeap(p)) {
         static int warned = 0;
         if (warned < 20) {
@@ -892,19 +898,7 @@ static void sh_free(void* p) {
         }
         return;
     }
-    if (!looksLikeNewlibChunk(p)) {
-        static int badc = 0;
-        if (badc < 40) {
-            badc++;
-            char where[256];
-            elfDescribePc((uint64_t)__builtin_return_address(0), where, sizeof(where));
-            const uint64_t* h = (const uint64_t*)p;
-            compatLogFmt("free: SKIP bad-chunk ptr %p align=%u usable=%zu hdr[-16]=0x%llx hdr[-8]=0x%llx from %s",
-                         p, (unsigned)((uintptr_t)p & 0xF), malloc_usable_size(p),
-                         (unsigned long long)h[-2], (unsigned long long)h[-1], where);
-        }
-        return;  // leak, but do not corrupt the newlib free-list
-    }
+
     free(p);
 }
 static void* sh_realloc(void* p, size_t n) {
