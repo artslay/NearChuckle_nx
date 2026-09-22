@@ -1786,9 +1786,29 @@ static bool tryMaterializeUniquePakBasename(const char* targetPath) {
     std::string uniquePak;
     std::string uniqueEntry;
     int globalMatches = 0;
+    std::vector<std::string> visitedRoots;
 
     for (size_t r = 0; roots[r]; ++r) {
-        DIR* root = opendir(roots[r]);
+        std::string resolvedRoot;
+        if (!resolvePathCaseInsensitive(roots[r], resolvedRoot))
+            continue;
+
+        // FCData/fcdata and Localized/localized may resolve to the same
+        // directory on the case-insensitive Switch filesystem. Do not scan
+        // the same physical PAK set twice, otherwise a single archive entry
+        // is incorrectly reported as ambiguous.
+        bool duplicateRoot = false;
+        for (const std::string& visited : visitedRoots) {
+            if (visited == resolvedRoot) {
+                duplicateRoot = true;
+                break;
+            }
+        }
+        if (duplicateRoot)
+            continue;
+        visitedRoots.push_back(resolvedRoot);
+
+        DIR* root = opendir(resolvedRoot.c_str());
         if (!root)
             continue;
 
@@ -1802,7 +1822,7 @@ static bool tryMaterializeUniquePakBasename(const char* targetPath) {
                 std::tolower((unsigned char)name[len - 1]) != 'k')
                 continue;
 
-            std::string pakPath = std::string(roots[r]);
+            std::string pakPath = resolvedRoot;
             if (pakPath != ".")
                 pakPath += "/";
             pakPath += name;
