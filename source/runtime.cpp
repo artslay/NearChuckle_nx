@@ -172,11 +172,10 @@ void compatLog(const char* msg) {
     }
     log_write(msg);
 
-    // Once CryEngine has entered its real main loop, stop all startup logging.
-    // Do this after writing the marker itself, and never reopen the file again.
-    if (main_loop_marker) {
-        log_close_locked();
-    } else if (g_boot_console && bootUiInteresting(msg)) {
+    // Keep the diagnostic log open after the main-loop marker so the first
+    // rendered frames and SDL/EGL swaps can be captured. The graphics shim
+    // closes the log after its first few swap calls.
+    if (g_boot_console && bootUiInteresting(msg)) {
         if (g_ui_line_count < 18) {
             std::snprintf(g_ui_lines[g_ui_line_count],
                           sizeof(g_ui_lines[g_ui_line_count]), "%s", msg ? msg : "");
@@ -207,10 +206,9 @@ void compatLogFmt(const char* fmt, ...) {
 
 void compatLogRaw(const char* msg) {
     mutexLock(&g_log_lock);
-    const bool main_loop_marker = is_main_loop_marker(msg);
     log_write(msg);
-    if (main_loop_marker)
-        log_close_locked();
+    // Keep raw logging open past the main-loop marker for the first-frame
+    // graphics diagnostics. The SDL swap probe closes the log later.
     mutexUnlock(&g_log_lock);
 }
 
