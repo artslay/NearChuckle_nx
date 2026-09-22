@@ -2318,30 +2318,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             }
         }
 
-        // Far Cry's AMD64 build expects an intro movie named AMD64.bik.
-        // The official 64-bit patch uses a different movie set/format, so this
-        // legacy Bink request can be absent even though the game itself can
-        // continue without the intro. Only reach this fallback after normal
-        // filesystem, case-fix, FCData, and PAK lookup attempts have failed.
-        // Far Cry is known to skip intro movies when their files are empty.
-        if (ioPath && mode && mode[0] == 'r') {
-            const std::string videoPath = pakNormalizeName(ioPath);
-            if (videoPath == "languages/movies/english/amd64.bik" ||
-                videoPath == "./languages/movies/english/amd64.bik" ||
-                videoPath == "languages/movies/amd64.bik" ||
-                videoPath == "./languages/movies/amd64.bik") {
-                FILE* emptyVideo = tmpfile();
-                if (emptyVideo) {
-                    compatLogFmt("fopen VIDEO EMPTY FALLBACK: %s mode=%s",
-                                 ioPath, mode);
-                    setvbuf(emptyVideo, nullptr, _IOFBF, 64 * 1024);
-                    return emptyVideo;
-                }
-                compatLogFmt("fopen VIDEO EMPTY FALLBACK FAILED: %s mode=%s",
-                             ioPath, mode);
-            }
-        }
-
         if (shaderSourceIo)
             compatLogFmt("fopen SHADER FINAL FAIL: path=%s mode=%s",
                          ioPath ? ioPath : "?", mode ? mode : "?");
@@ -2424,7 +2400,7 @@ static int sh_fclose(FILE* f) {
     return fclose(f);
 }
 
-// open() wrapper — logs every call so we can trace early constructor I/O
+// open() wrapper — Android-compatible path resolution for guest stdio/file-stream users
 static int stub_open(const char* path, int flags, ...) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
@@ -2480,6 +2456,52 @@ static int stub_open(const char* path, int flags, ...) {
             if (shaderSourceOpen)
                 compatLogFmt("open SHADER CASEFIX: requested=%s resolved=%s result=FAIL",
                              ioPath, resolved.c_str());
+        }
+    }
+
+    // BinkDecoder/FileStream in the Android port ultimately reaches open()
+    // through std::ifstream. Our PAK reader returns FILE*, which is not useful
+    // to std::ifstream, so materialize the archive entry into a real file and
+    // then let the normal Switch open() consume that file descriptor.
+    //
+    // Restrict this extra lookup to video assets. The general CryPak path already
+    // handles other PAK-backed assets through fopen()/realpath(), while video
+    // decoding specifically bypasses those stdio wrappers.
+    if (fd < 0 && ioPath &&
+        (shaderPathHasExt(ioPath, ".bik") ||
+         shaderPathHasExt(ioPath, ".avi"))) {
+        std::string materialized;
+        if (tryMaterializePakPath(ioPath, materialized)) {
+            int mfd = doOpen(materialized.c_str());
+            if (mfd >= 0) {
+                compatLogFmt("open VIDEO PAK EXACT: %s -> %s fd=%d",
+                             ioPath, materialized.c_str(), mfd);
+                return mfd;
+            }
+            compatLogFmt("open VIDEO PAK EXACT FAILED: %s -> %s",
+                         ioPath, materialized.c_str());
+        }
+
+        // Match the Android path fallback: if the virtual directory differs but
+        // the basename is unique in the PAK set, use that single unambiguous match.
+        if (tryMaterializeUniquePakBasename(ioPath)) {
+            std::string normalizedName = pakNormalizeName(ioPath);
+            char cwd[PATH_MAX];
+            if (::getcwd(cwd, sizeof(cwd))) {
+                std::string materializedPath = std::string(cwd);
+                if (!materializedPath.empty() && materializedPath.back() != '/')
+                    materializedPath += '/';
+                materializedPath += normalizedName;
+
+                int mfd = doOpen(materializedPath.c_str());
+                if (mfd >= 0) {
+                    compatLogFmt("open VIDEO PAK BASENAME: %s -> %s fd=%d",
+                                 ioPath, materializedPath.c_str(), mfd);
+                    return mfd;
+                }
+                compatLogFmt("open VIDEO PAK BASENAME FAILED: %s -> %s",
+                             ioPath, materializedPath.c_str());
+            }
         }
     }
 
