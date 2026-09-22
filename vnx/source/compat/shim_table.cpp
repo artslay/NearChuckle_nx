@@ -92,6 +92,7 @@ static bool compatIsPakPath(const char* path);
 static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
 static bool tryMaterializeUniquePakBasename(const char* targetPath);
+static bool isShaderCacheLookupPath(const char* path);
 static void compatLogPakOpenState(FILE* f, const char* path);
 
 // Normalize Switch virtual-device paths before they reach newlib's POSIX I/O.
@@ -293,7 +294,13 @@ static char* stub_realpath(const char* p, char* out) {
     // scripts/classregistry.lua: Lua's loader calls realpath() before entering
     // the lexer, so returning failure leaves the parser with no valid source
     // filename even though the script is present in Scripts.pak.
-    if (strchr(p, '/') && tryMaterializeUniquePakBasename(p)) {
+    // Shader cache files are deliberately excluded from the PAK-backed
+    // realpath fallback. These .cgps/.cgvp/.cgasm files are generated/runtime
+    // cache artifacts and must stay unavailable here so CryEngine can take its
+    // embedded shader fallback path instead of feeding a cached Cg program into
+    // CCGPShader_GL::mfLoad on Switch.
+    if (!isShaderCacheLookupPath(p) &&
+        strchr(p, '/') && tryMaterializeUniquePakBasename(p)) {
         struct stat pakSt = {};
         if (::stat(p, &pakSt) == 0 && S_ISREG(pakSt.st_mode)) {
             char cwd[PATH_MAX];
