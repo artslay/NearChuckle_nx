@@ -3218,6 +3218,8 @@ static bool w_SDL_GL_SwapWindow(void* window) {
     // block in the Java/UI presentation path, which is not present on Switch.
     // CryEngine is already rendering into the active EGL surface, so direct
     // eglSwapBuffers is the correct native presentation operation here.
+    compatLogFmt("SDL: Swap[%u] ENTER window=%p", swap_count, window);
+
     const EGLDisplay display = eglGetCurrentDisplay();
     const EGLSurface surface = eglGetCurrentSurface(EGL_DRAW);
     const EGLBoolean egl_ok =
@@ -3226,6 +3228,10 @@ static bool w_SDL_GL_SwapWindow(void* window) {
             : EGL_FALSE;
     const bool ok = (egl_ok == EGL_TRUE);
     const bool egl_fallback = true;
+
+    compatLogFmt("SDL: Swap[%u] EGL result=%d display=%p surface=%p",
+                 swap_count, egl_ok == EGL_TRUE ? 1 : 0,
+                 display, surface);
 
     // Bring-up probe: keep the startup log open through the first few actual
     // frame presentations so a black screen can be distinguished from a render
@@ -4234,7 +4240,15 @@ static bool shaderPrepCacheReady() {
         (::stat("Shaders/Scripts", &scriptsDir) == 0) &&
         S_ISDIR(scriptsDir.st_mode);
 
-    return scriptsDirPresent && scriptCslCount >= 2;
+    struct stat dep1 = {};
+    struct stat dep2 = {};
+    const bool dependenciesPresent =
+        (::stat("Shaders/Scripts/CGVProgramms.csl", &dep1) == 0 &&
+         S_ISREG(dep1.st_mode)) &&
+        (::stat("Shaders/Scripts/CGPShaders.csl", &dep2) == 0 &&
+         S_ISREG(dep2.st_mode));
+
+    return scriptsDirPresent && dependenciesPresent && scriptCslCount >= 4;
 }
 
 static bool refreshCoreShaderDeclarationsFromPak() {
