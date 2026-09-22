@@ -1338,7 +1338,9 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
     if (std::strcmp(base, "libCrySystem.so") == 0) {
         if (!patchFarCryScriptSinkOnSetGlobal(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY SCRIPTSINK A/B: patch not applied");
-        return;
+
+        // Continue into the GetFileSize BRK diagnostic/experiment below.
+        // This used to return here, leaving the CBNZ->BRK bypass unreachable.
     }
 
     if (std::strcmp(base, "libCryGame.so") == 0) {
