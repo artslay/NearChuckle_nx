@@ -2469,7 +2469,10 @@ static int stub_open(const char* path, int flags, ...) {
         int mfd = doOpen(mapped.c_str());
         compatLogFmt("obb: open %s -> %s (fd=%d)", ioPath ? ioPath : "?",
                      mapped.c_str(), mfd);
-        if (mfd >= 0) return mfd;
+        if (mfd >= 0) {
+            if (videoIo) g_near_video_open_failed = 0;
+            return mfd;
+        }
     }
 
     const bool shaderSourceOpen =
@@ -2494,6 +2497,7 @@ static int stub_open(const char* path, int flags, ...) {
                 if (shaderSourceOpen)
                     compatLogFmt("open SHADER CASEFIX: requested=%s resolved=%s result=OK fd=%d",
                                  ioPath, resolved.c_str(), rfd);
+                if (videoIo) g_near_video_open_failed = 0;
                 return rfd;
             }
             if (shaderSourceOpen)
@@ -2557,7 +2561,10 @@ static int stub_open(const char* path, int flags, ...) {
         if (videoIo) g_near_video_open_failed = 1;
         compatLogFmt("open FAIL: %s flags=0x%x", ioPath ? ioPath : "?", flags);
     }
-    else        compatLogFmt("open OK:   %s flags=0x%x fd=%d", ioPath ? ioPath : "?", flags, fd);
+    else {
+        if (videoIo) g_near_video_open_failed = 0;
+        compatLogFmt("open OK:   %s flags=0x%x fd=%d", ioPath ? ioPath : "?", flags, fd);
+    }
     return fd;
 }
 
