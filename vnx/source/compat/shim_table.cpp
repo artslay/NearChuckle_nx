@@ -5132,6 +5132,62 @@ static void stub_syslog(int, const char* fmt, ...) {
     compatLog(buf);
 }
 
+
+// Diagnostic wrappers for wide-character conversion APIs. The current faulting
+// instruction is a UTF-16-style STRH into x10, so record the API boundary before
+// changing any conversion semantics.
+static size_t g_wide_diag_calls = 0;
+
+static size_t diag_mbsrtowcs(wchar_t* dst, const char** src, size_t len, mbstate_t* ps) {
+    const size_t n = ++g_wide_diag_calls;
+    if (n <= 24) {
+        const char* s = (src && *src) ? *src : "";
+        compatLogFmt("WIDE DIAG mbsrtowcs[%zu]: dst=%p src=%p len=%zu ps=%p text=%.96s",
+                     n, (void*)dst, (void*)s, len, (void*)ps, s);
+    }
+    size_t rc = ::mbsrtowcs(dst, src, len, ps);
+    if (n <= 24)
+        compatLogFmt("WIDE DIAG mbsrtowcs[%zu]: rc=%zu dst=%p", n, rc, (void*)dst);
+    return rc;
+}
+
+static size_t diag_mbtowc(wchar_t* dst, const char* src, size_t len) {
+    const size_t n = ++g_wide_diag_calls;
+    if (n <= 24) {
+        compatLogFmt("WIDE DIAG mbtowc[%zu]: dst=%p src=%p len=%zu text=%.96s",
+                     n, (void*)dst, (const void*)src, len, src ? src : "");
+    }
+    size_t rc = (size_t)::mbtowc(dst, src, len);
+    if (n <= 24)
+        compatLogFmt("WIDE DIAG mbtowc[%zu]: rc=%zu dst=%p", n, rc, (void*)dst);
+    return rc;
+}
+
+static size_t diag_mbrtowc(wchar_t* dst, const char* src, size_t len, mbstate_t* ps) {
+    const size_t n = ++g_wide_diag_calls;
+    if (n <= 24) {
+        compatLogFmt("WIDE DIAG mbrtowc[%zu]: dst=%p src=%p len=%zu ps=%p text=%.96s",
+                     n, (void*)dst, (const void*)src, len, (void*)ps, src ? src : "");
+    }
+    size_t rc = ::mbrtowc(dst, src, len, ps);
+    if (n <= 24)
+        compatLogFmt("WIDE DIAG mbrtowc[%zu]: rc=%zu dst=%p", n, rc, (void*)dst);
+    return rc;
+}
+
+static size_t diag_wcsrtombs(char* dst, const wchar_t** src, size_t len, mbstate_t* ps) {
+    const size_t n = ++g_wide_diag_calls;
+    if (n <= 24) {
+        compatLogFmt("WIDE DIAG wcsrtombs[%zu]: dst=%p src=%p len=%zu ps=%p",
+                     n, (void*)dst, (void*)((src && *src) ? *src : nullptr),
+                     len, (void*)ps);
+    }
+    size_t rc = ::wcsrtombs(dst, src, len, ps);
+    if (n <= 24)
+        compatLogFmt("WIDE DIAG wcsrtombs[%zu]: rc=%zu dst=%p", n, rc, (void*)dst);
+    return rc;
+}
+
 // ─── Android UTF-8 multibyte compatibility ───────────────────────────────────
 // CryEngine's Linux path uses mbstowcs() when loading LANGUAGES/*.xml. The
 // Android ARM64 build leaves mbstowcs unresolved, so the ELF loader otherwise
@@ -6680,13 +6736,13 @@ static const ShimEntry g_shims[] = {
     {"wcstold",   (void*)wcstold},
     {"wcscoll",   (void*)wcscoll},
     {"wcsxfrm",   (void*)wcsxfrm},
-    {"wcsrtombs", (void*)wcsrtombs},
-    {"mbsrtowcs", (void*)mbsrtowcs},
+    {"wcsrtombs", (void*)diag_wcsrtombs},
+    {"mbsrtowcs", (void*)diag_mbsrtowcs},
     {"wcsnrtombs",(void*)stub_wcsnrtombs},
     {"mbsnrtowcs",(void*)stub_mbsnrtowcs},
     {"wcrtomb",   (void*)wcrtomb},
-    {"mbtowc",    (void*)mbtowc},
-    {"mbrtowc",   (void*)mbrtowc},
+    {"mbtowc",    (void*)diag_mbtowc},
+    {"mbrtowc",   (void*)diag_mbrtowc},
     {"mbrlen",    (void*)mbrlen},
     {"wctob",     (void*)wctob},
     {"btowc",     (void*)btowc},
