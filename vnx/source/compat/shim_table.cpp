@@ -3246,10 +3246,9 @@ static bool w_SDL_GL_SwapWindow(void* window) {
                  swap_count, egl_ok == EGL_TRUE ? 1 : 0,
                  display, surface);
 
-    // Bring-up probe: keep the startup log open through the first few actual
-    // frame presentations so a black screen can be distinguished from a render
-    // loop that never reaches SDL_GL_SwapWindow(). This is intentionally limited
-    // to eight calls and then permanently closes the compatibility log.
+    // Keep presentation diagnostics attached to the normal compatibility log.
+    // runtime.cpp closes that log at the CXGame::Run main-loop marker; do not
+    // close it early based on the number of swaps.
     if (swap_count <= 8 || !ok) {
         GLint viewport[4] = {0, 0, 0, 0};
         GLint framebuffer = 0;
@@ -3273,9 +3272,6 @@ static bool w_SDL_GL_SwapWindow(void* window) {
             clear_color[0], clear_color[1], clear_color[2], clear_color[3],
             (unsigned)gl_error, sdl3_error());
     }
-
-    if (swap_count == 8)
-        compatLogClose();
 
     return ok;
 }
