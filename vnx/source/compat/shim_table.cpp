@@ -4456,14 +4456,59 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     // HWScripts/Declarations. Keep exact copies in Scripts as well so the
     // runtime loader sees the DeclareCGScript entries through the same
     // directory it scans for menu shaders.
-    std::string scriptCgvProgramms;
-    std::string scriptCgpShaders;
+    auto copyShaderDeclarationToScripts =
+        [](const char* sourcePath, const char* outputPath) -> bool {
+            std::string sourceResolved;
+            if (!resolvePathCaseInsensitive(sourcePath, sourceResolved))
+                return false;
+
+            FILE* in = fopen(sourceResolved.c_str(), "rb");
+            if (!in)
+                return false;
+
+            if (fseek(in, 0, SEEK_END) != 0) {
+                fclose(in);
+                return false;
+            }
+
+            const long size = ftell(in);
+            if (size < 0 || size > 1024 * 1024) {
+                fclose(in);
+                return false;
+            }
+
+            if (fseek(in, 0, SEEK_SET) != 0) {
+                fclose(in);
+                return false;
+            }
+
+            std::vector<char> data((size_t)size);
+            const size_t got =
+                size ? fread(data.data(), 1, data.size(), in) : 0;
+            fclose(in);
+
+            if (got != data.size())
+                return false;
+
+            FILE* out = fopen(outputPath, "wb");
+            if (!out)
+                return false;
+
+            const size_t written =
+                data.empty() ? 0 : fwrite(data.data(), 1, data.size(), out);
+            fclose(out);
+
+            return written == data.size();
+        };
+
     const bool scriptCgvProgrammsReady =
-        tryMaterializePakPath("Shaders/Scripts/CGVProgramms.csl",
-                              scriptCgvProgramms);
+        copyShaderDeclarationToScripts(
+            "Shaders/HWScripts/Declarations/CGVProgramms.csl",
+            "Shaders/Scripts/CGVProgramms.csl");
     const bool scriptCgpShadersReady =
-        tryMaterializePakPath("Shaders/Scripts/CGPShaders.csl",
-                              scriptCgpShaders);
+        copyShaderDeclarationToScripts(
+            "Shaders/HWScripts/Declarations/CGPShaders.csl",
+            "Shaders/Scripts/CGPShaders.csl");
 
     compatLogFmt("shader dependency scripts: CGVProgramms=%d CGPShaders=%d",
                  scriptCgvProgrammsReady ? 1 : 0,
