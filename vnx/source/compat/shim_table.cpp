@@ -93,6 +93,7 @@ static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
 static bool tryMaterializeUniquePakBasename(const char* targetPath);
 static bool tryMaterializePakPath(const char* targetPath, std::string& materialized);
+static std::string pakNormalizeName(const char* name);
 static bool isShaderCacheLookupPath(const char* path);
 static void compatLogPakOpenState(FILE* f, const char* path);
 
@@ -315,7 +316,7 @@ static char* stub_realpath(const char* p, char* out) {
     // embedded shader fallback path instead of feeding a cached Cg program into
     // CCGPShader_GL::mfLoad on Switch.
     if (!isShaderCacheLookupPath(p) &&
-        (strchr(p, '/') || strchr(p, '\\\\'))) {
+        (strchr(p, '/') || strchr(p, '\\'))) {
         std::string materialized;
         if (tryMaterializePakPath(p, materialized)) {
             compatLogFmt("realpath PAK EXACT: %s -> %s", p, materialized.c_str());
@@ -4481,7 +4482,7 @@ static size_t stub_mbstowcs(wchar_t* dst, const char* src, size_t len) {
         dst[out++] = (wchar_t)cp;
     }
     if (out < len)
-        dst[out] = L'\\0';
+        dst[out] = L'\0';
     return out;
 }
 
