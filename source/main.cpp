@@ -534,10 +534,19 @@ static int run_farcry(LoadedSo* game_so) {
     compatLog("Far Cry: command-line CVars use name=value syntax");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
-    compatLog("Startup diagnostics complete; closing startup log before entering Far Cry");
-    compatLogFlush();
-    compatLogClose();
+    compatLog("Startup diagnostics complete; waiting for CXGame::Run main-loop marker");
 
+    // The startup console is diagnostics-only. It must be released before SDL3/
+    // CryEngine starts rendering its real window; otherwise consoleUpdate() can
+    // keep touching the same display framebuffer while the game is running.
+    compatUiShutdown();
+
+    compatLogFlush();
+
+    // Do not close the log here. CryEngine will emit the exact
+    // "CXGame::Run: entered main game loop" marker through compatLog(), and
+    // runtime.cpp closes the log at that point. This also guarantees that
+    // post-startup logging cannot reopen the file.
     return game_main(argc, argv);
 }
 
