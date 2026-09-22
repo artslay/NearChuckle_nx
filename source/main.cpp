@@ -536,59 +536,81 @@ static int run_farcry(LoadedSo* game_so) {
     MainFn game_main = reinterpret_cast<MainFn>(entry);
 
     char arg0[] = "FarCry";
-    // Each CVar is supplied as one name=value argument, matching the Android
-    // launcher/engine command-line form.
-    // CryEngine's Android command-line parser expects each CVar assignment as
-    // one argument in name=value form. Passing "name value" puts the value on
-    // the command stream as a second token, which produces the engine log:
-    //   r_Width=1280
-    //   Unknown command: 1280
-    // and leaves the actual CVar at its default value.
-    char arg1[] = "r_Driver=OpenGL";
+
+    // CryEngine's CXConsole expects command-line CVars as two tokens:
+    //   name value
+    // ParseArguments() forwards each token separately, and ExecuteString()
+    // interprets the first token as the variable name and the second as its
+    // value. A single "name=value" token is treated as an unknown command.
+    char arg1[] = "r_Driver";
     char arg2[64];
-    char arg3[64];
-    char arg4[] = "r_Fullscreen=0";
-    char arg5[64];
-    char arg6[] = "r_VSync=0";
-    char arg7[] = "r_Quality_BumpMapping=3";
-    char arg8[] = "r_NoPS20=0";
-    char arg9[] = "r_GL_NV30_PS20=1";
-    char arg10[] = "GL_NV30_PS20=1";
-    // Keep the guest on the Android hardware-shader path so shared CG scripts
-    // such as PosCommon can be registered before individual shaders compile.
-    char arg11[] = "r_UseHWShaders=1";
-    // The menu background movie is not usable on the Switch port yet.
-    char arg12[] = "ui_BackGroundVideo=0";
+    char arg3[] = "r_Width";
+    char arg4[64];
+    char arg5[] = "r_Height";
+    char arg6[64];
+    char arg7[] = "r_Fullscreen";
+    char arg8[] = "0";
+    char arg9[] = "game_fov";
+    char arg10[64];
+    char arg11[] = "r_Quality_BumpMapping";
+    char arg12[] = "3";
+    char arg13[] = "r_NoPS20";
+    char arg14[] = "0";
+    char arg15[] = "r_GL_NV30_PS20";
+    char arg16[] = "1";
+    char arg17[] = "GL_NV30_PS20";
+    char arg18[] = "1";
+    char arg19[] = "r_UseHWShaders";
+    char arg20[] = "1";
+    char arg21[] = "r_VSync";
+    char arg22[] = "0";
+    char arg23[] = "ui_BackGroundVideo";
+    char arg24[] = "0";
 
-    std::snprintf(arg2, sizeof(arg2), "r_Width=%d", config.screen_width);
-    std::snprintf(arg3, sizeof(arg3), "r_Height=%d", config.screen_height);
-    std::snprintf(arg5, sizeof(arg5), "game_fov=%d", config.fov);
+    char arg0_value[] = "OpenGL";
 
-    char* argv[13];
+    std::snprintf(arg2, sizeof(arg2), "%d", config.screen_width);
+    std::snprintf(arg4, sizeof(arg4), "%d", config.screen_height);
+    std::snprintf(arg6, sizeof(arg6), "%s", arg8);
+    std::snprintf(arg10, sizeof(arg10), "%d", config.fov);
+
+    char* argv[25];
     argv[0] = arg0;
     argv[1] = arg1;
-    argv[2] = arg2;
+    argv[2] = arg0_value;
     argv[3] = arg3;
-    argv[4] = arg4;
+    argv[4] = arg2;
     argv[5] = arg5;
-    argv[6] = arg7;
-    argv[7] = arg8;
-    argv[8] = arg9;
-    argv[9] = arg10;
-    argv[10] = arg11;
-    argv[11] = arg6;
+    argv[6] = arg4;
+    argv[7] = arg7;
+    argv[8] = arg8;
+    argv[9] = arg9;
+    argv[10] = arg10;
+    argv[11] = arg11;
     argv[12] = arg12;
+    argv[13] = arg13;
+    argv[14] = arg14;
+    argv[15] = arg15;
+    argv[16] = arg16;
+    argv[17] = arg17;
+    argv[18] = arg18;
+    argv[19] = arg19;
+    argv[20] = arg20;
+    argv[21] = arg21;
+    argv[22] = arg22;
+    argv[23] = arg23;
+    argv[24] = arg24;
 
-    const int argc = 13;
+    const int argc = 25;
 
     // Keep shader compilation enabled, matching the working Android build.
     // Missing/experimental Switch shader caches must not turn the menu into a
     // black frame just because this wrapper was built from a shader-debug branch.
 
-    compatLog("Far Cry: Android-style graphics CVars queued (name=value syntax)");
-    compatLog("Far Cry: ui_BackGroundVideo=0 queued for post-init console parsing");
-    compatLog("Far Cry: r_UseHWShaders=1 queued for shader script registration");
-    compatLog("Far Cry: command-line CVars use name=value syntax");
+    compatLog("Far Cry: Android-style graphics CVars queued (name + value syntax)");
+    compatLog("Far Cry: ui_BackGroundVideo 0 queued for post-init console parsing");
+    compatLog("Far Cry: r_UseHWShaders 1 queued for shader script registration");
+    compatLog("Far Cry: command-line CVars use separate name/value arguments");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
     compatLog("Startup diagnostics complete; waiting for CXGame::Run main-loop marker");
