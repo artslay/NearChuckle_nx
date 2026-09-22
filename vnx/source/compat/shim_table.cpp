@@ -2423,6 +2423,18 @@ static int sh_fseek(FILE* f, long off, int whence) {
         rc = fseek(f, off, whence);
     return rc;
 }
+static long sh_ftell(FILE* f) {
+    if (apkcache::owns(f)) return (long)apkcache::tell(f);
+    return ftell(f);
+}
+static int sh_fgetc(FILE* f) {
+    int rc;
+    if (apkcache::owns(f))
+        rc = apkcache::getc(f);
+    else
+        rc = fgetc(f);
+    return rc;
+}
 
 // Keep fgets on the same stream abstraction as fread/fgetc. CryPak-backed
 // streams are not native libc FILEs from the engine's point of view, so routing
@@ -2450,12 +2462,12 @@ static char* sh_fgets(char* dst, int n, FILE* f) {
 
     int i = 0;
     while (i < n - 1) {
-        const int c = sh_fgetc(f);
-        if (c == EOF)
+        const int ch = sh_fgetc(f);
+        if (ch == EOF)
             break;
 
-        dst[i++] = (char)c;
-        if (c == '\n')
+        dst[i++] = (char)ch;
+        if (ch == '\n')
             break;
     }
 
@@ -2477,18 +2489,6 @@ static char* sh_fgets(char* dst, int n, FILE* f) {
     return dst;
 }
 
-static int sh_fgetc(FILE* f) {
-    if (apkcache::owns(f)) return (long)apkcache::tell(f);
-    return ftell(f);
-}
-static int sh_fgetc(FILE* f) {
-    int rc;
-    if (apkcache::owns(f))
-        rc = apkcache::getc(f);
-    else
-        rc = fgetc(f);
-    return rc;
-}
 static int sh_feof(FILE* f) {
     int rc;
     if (apkcache::owns(f))
