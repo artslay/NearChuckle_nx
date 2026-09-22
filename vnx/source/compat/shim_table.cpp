@@ -302,6 +302,8 @@ static char* stub_realpath(const char* p, char* out) {
                 if (!absolute.empty() && absolute.back() != '/')
                     absolute += '/';
                 absolute += p;
+                compatLogFmt("realpath PAK FALLBACK: %s materialized from FCData PAK",
+                             p);
                 return writeCanonical(absolute);
             }
         }
