@@ -3007,9 +3007,10 @@ static void* fake_dlsym(void* handle, const char* sym) {
     // function before the global shim table gets a chance to replace it.
     // Force this single presentation entry point through our Switch/EGL
     // implementation so the Android Java/UI swap path can never block.
-    if (strcmp(sym, "SDL_GL_SwapWindow") == 0) {
+    if (strcmp(sym, "SDL_GL_SwapWindow") == 0 ||
+        strcmp(sym, "eglSwapBuffers") == 0) {
         void* forced = shimResolve(sym);
-        compatLogFmt("dlsym: SDL_GL_SwapWindow -> forced shim %p", forced);
+        compatLogFmt("dlsym: %s -> forced shim %p", sym, forced);
         if (forced)
             return forced;
     }
@@ -3076,6 +3077,72 @@ static EGLBoolean w_eglMakeCurrent(EGLDisplay d, EGLSurface draw, EGLSurface rea
     return ok;
 }
 
+static FILE* g_frame_debug_log = nullptr;
+static unsigned int g_frame_debug_swaps = 0;
+
+static void frameDebugLogFmt(const char* fmt, ...) {
+    if (!fmt)
+        return;
+
+    if (!g_frame_debug_log) {
+        g_frame_debug_log = fopen(
+            "/switch/NearChuckle_nx/frame_debug.log", "w");
+        if (!g_frame_debug_log)
+            return;
+    }
+
+    char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    fprintf(g_frame_debug_log, "%s\n", buf);
+    fflush(g_frame_debug_log);
+}
+
+static EGLBoolean w_eglSwapBuffers(EGLDisplay d, EGLSurface s) {
+    ++g_frame_debug_swaps;
+
+    EGLint surface_width = 0;
+    EGLint surface_height = 0;
+    if (d != EGL_NO_DISPLAY && s != EGL_NO_SURFACE) {
+        (void)eglQuerySurface(d, s, EGL_WIDTH, &surface_width);
+        (void)eglQuerySurface(d, s, EGL_HEIGHT, &surface_height);
+    }
+
+    GLint viewport[4] = {0, 0, 0, 0};
+    GLint framebuffer = 0;
+    GLint current_program = 0;
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
+
+    const EGLBoolean ok =
+        (d != EGL_NO_DISPLAY && s != EGL_NO_SURFACE)
+            ? eglSwapBuffers(d, s)
+            : EGL_FALSE;
+
+    const GLenum gl_error = glGetError();
+    frameDebugLogFmt(
+        "EGL swap[%u]: result=%d display=%p surface=%p size=%dx%d "
+        "viewport=%d,%d %dx%d fbo=%d program=%d glerr=0x%x eglerr=0x%x",
+        g_frame_debug_swaps,
+        ok == EGL_TRUE ? 1 : 0,
+        (void*)d, (void*)s,
+        surface_width, surface_height,
+        viewport[0], viewport[1], viewport[2], viewport[3],
+        framebuffer, current_program,
+        (unsigned)gl_error, (unsigned)eglGetError());
+
+    if (g_frame_debug_swaps >= 16) {
+        fclose(g_frame_debug_log);
+        g_frame_debug_log = nullptr;
+    }
+
+    return ok;
+}
+
 // XRenderOGL resolves a number of legacy/extension GL entry points at runtime.
 // Mesa's eglGetProcAddress() does not necessarily expose every compatibility
 // symbol that we already provide through the ELF shim table. Fall back to the
@@ -3084,6 +3151,14 @@ static EGLBoolean w_eglMakeCurrent(EGLDisplay d, EGLSurface draw, EGLSurface rea
 static void* w_eglGetProcAddress(const char* name) {
     if (!name || !*name)
         return nullptr;
+
+    if (strcmp(name, "eglSwapBuffers") == 0) {
+        void* shim = shimResolve(name);
+        if (shim) {
+            compatLogFmt("EGL: eglGetProcAddress(eglSwapBuffers) -> shim %p", shim);
+            return shim;
+        }
+    }
 
     __eglMustCastToProperFunctionPointerType egl_p = eglGetProcAddress(name);
     void* p = reinterpret_cast<void*>(egl_p);
@@ -6705,7 +6780,7 @@ static const ShimEntry g_shims[] = {
     {"eglDestroySurface",   (void*)eglDestroySurface},
     {"eglMakeCurrent",      (void*)w_eglMakeCurrent},
     {"eglSurfaceAttrib", (void*)eglSurfaceAttrib},
-    {"eglSwapBuffers",      (void*)eglSwapBuffers},
+    {"eglSwapBuffers",      (void*)w_eglSwapBuffers},
     {"eglSwapInterval",     (void*)eglSwapInterval},
 
     // ── Android NDK Sensor API (source/compat/sensors.cpp) — real accelerometer ──
