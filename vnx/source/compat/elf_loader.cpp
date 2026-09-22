@@ -1253,6 +1253,54 @@ static bool patchFarCrySetGlobalTagHandlerFloat(LoadedSo* so, uint8_t* stage_bas
     return true;
 }
 
+
+// A/B experiment for the next tagged-global crash.
+// String and float tagged-global setters are already bypassed. The next fault
+// is now in SetGlobalTagHandlerInt +0x6c, so bypass only the integer tagged-global
+// setter to identify the next incompatible callback/path.
+static bool patchFarCrySetGlobalTagHandlerInt(LoadedSo* so, uint8_t* stage_base,
+                                             uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* path = so->path.c_str();
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (std::strcmp(base, "libCryScriptSystem.so") != 0)
+        return false;
+
+    constexpr const char* kSym = "_ZN13CScriptSystem22SetGlobalTagHandlerIntEP9lua_State";
+    void* fn = so->findSym(kSym);
+    if (!fn) {
+        compatLogFmt("FARCRY SCRIPT INT A/B: symbol not found: %s", kSym);
+        return false;
+    }
+
+    const uintptr_t imageBase = (uintptr_t)so->base;
+    const uintptr_t addr = (uintptr_t)fn;
+    if (addr < imageBase || addr - imageBase >= alloc_size) {
+        compatLogFmt(
+            "FARCRY SCRIPT INT A/B: symbol outside image fn=%p base=%p size=0x%llx",
+            fn, (void*)imageBase, (unsigned long long)alloc_size);
+        return false;
+    }
+
+    const uint64_t off = (uint64_t)(addr - imageBase);
+    uint32_t* insn = reinterpret_cast<uint32_t*>(
+        stage_base + min_vaddr + off);
+    const uint32_t old0 = insn[0];
+    const uint32_t old1 = insn[1];
+
+    insn[0] = 0x2a1f03e0u; // MOV W0, WZR
+    insn[1] = 0xd65f03c0u; // RET
+    armICacheInvalidate(insn, 8);
+
+    compatLogFmt(
+        "FARCRY SCRIPT INT A/B: patched SetGlobalTagHandlerInt +0x%llx old=%08x %08x new=%08x %08x",
+        (unsigned long long)off, old0, old1, insn[0], insn[1]);
+    return true;
+}
+
 // ─── Per-game binary quirk patches ─────────────────────────────────────────────
 // The actual fixups live in source/compat/games/ (one file per title), reached
 // through compat/games.h, so game-specific patches stay isolated from the shared
@@ -1282,6 +1330,8 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
             compatLog("FARCRY SCRIPT SETGLOBAL A/B: patch not applied");
         if (!patchFarCrySetGlobalTagHandlerFloat(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY SCRIPT FLOAT A/B: patch not applied");
+        if (!patchFarCrySetGlobalTagHandlerInt(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY SCRIPT INT A/B: patch not applied");
         return;
     }
 
