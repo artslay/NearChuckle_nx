@@ -2612,17 +2612,30 @@ static int android_log_print(int, const char* tag, const char* fmt, ...) {
     va_start(va, fmt);
     vsnprintf(buf, sizeof(buf), fmt, va);
     va_end(va);
-    if (androidLogThrottleOk()) compatLogFmt("[%s] %s", tag ? tag : "?", buf);
+
+    // Never throttle the exact CryEngine main-loop marker. runtime.cpp uses it
+    // as the definitive point where startup diagnostics end and the log is
+    // permanently closed.
+    const bool main_loop_marker =
+        std::strstr(buf, "CXGame::Run: entered main game loop") != nullptr;
+    if (main_loop_marker || androidLogThrottleOk())
+        compatLogFmt("[%s] %s", tag ? tag : "?", buf);
     return (int)strlen(buf);
 }
 static int android_log_write(int, const char* tag, const char* msg) {
-    if (androidLogThrottleOk()) compatLogFmt("[%s] %s", tag ? tag : "?", msg ? msg : "");
+    const bool main_loop_marker =
+        msg && std::strstr(msg, "CXGame::Run: entered main game loop") != nullptr;
+    if (main_loop_marker || androidLogThrottleOk())
+        compatLogFmt("[%s] %s", tag ? tag : "?", msg ? msg : "");
     return 0;
 }
 static int android_log_vprint(int, const char* tag, const char* fmt, va_list va) {
     char buf[512];
     vsnprintf(buf, sizeof(buf), fmt, va);
-    if (androidLogThrottleOk()) compatLogFmt("[%s] %s", tag ? tag : "?", buf);
+    const bool main_loop_marker =
+        std::strstr(buf, "CXGame::Run: entered main game loop") != nullptr;
+    if (main_loop_marker || androidLogThrottleOk())
+        compatLogFmt("[%s] %s", tag ? tag : "?", buf);
     return (int)strlen(buf);
 }
 static int android_log_buf_print(int, int, const char* tag, const char* fmt, ...) {
