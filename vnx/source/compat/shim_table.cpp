@@ -3332,7 +3332,7 @@ static bool w_SDL_GL_SwapWindow(void* window) {
     const EGLSurface surface = eglGetCurrentSurface(EGL_DRAW);
     const EGLBoolean egl_ok =
         (display != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE)
-            ? eglSwapBuffers(display, surface)
+            ? w_eglSwapBuffers(display, surface)
             : EGL_FALSE;
     const bool ok = (egl_ok == EGL_TRUE);
     const bool egl_fallback = true;
@@ -3397,6 +3397,8 @@ static void* w_SDL_GL_CreateContext(void* window) {
     return ctx;
 }
 
+static void frameDebugLogFmt(const char* fmt, ...);
+
 static int w_SDL_GL_MakeCurrent(void* window, void* context) {
     using Fn = bool (*)(void*, void*);
     Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GL_MakeCurrent"));
@@ -3432,6 +3434,17 @@ static int w_SDL_GL_MakeCurrent(void* window, void* context) {
             compatLogFmt("GL proc probe: %s -> %p", name,
                          reinterpret_cast<void*>(p));
         }
+
+        // frame_debug.log must exist even when the engine never reaches its
+        // presentation path. This is the persistent A/B marker for the next
+        // stage: INIT proves the current EGL context is active, while
+        // subsequent SWAP lines prove that CryEngine actually presents frames.
+        frameDebugLogFmt(
+            "FRAME DEBUG INIT: window=%p context=%p display=%p draw=%p read=%p",
+            window, context,
+            (void*)eglGetCurrentDisplay(),
+            (void*)eglGetCurrentSurface(EGL_DRAW),
+            (void*)eglGetCurrentSurface(EGL_READ));
     }
 
     return ok ? 1 : 0;
