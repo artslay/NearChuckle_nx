@@ -1070,6 +1070,31 @@ static bool patchFarCryInputThunkCrashPath(LoadedSo* so, uint8_t* stage_base,
     return true;
 }
 
+// Temporary A/B: bypass CXGame::LoadConfiguration(). The fault stack repeatedly
+// contained libCryGame.so +0xf9718, identified as LoadConfiguration +0x60.
+// Therefore the current function start is +0xf96b8 for this exact Android lib.
+// Returning immediately avoids both system.cfg handling and game.cfg parsing while
+// leaving renderer, input, PAK and the rest of the game initialization untouched.
+static void patchFarCrySkipLoadConfiguration(LoadedSo* so, uint8_t* stage_base,
+                                              uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || std::strcmp(so->path.c_str(), "libCryGame.so") != 0)
+        return;
+
+    constexpr uint64_t kOffset = 0xF96B8;
+    if (kOffset < min_vaddr || kOffset + 4 > alloc_size) {
+        compatLogFmt("FARCRY LOADCFG A/B: offset +0x%llx outside image size=0x%llx",
+                     (unsigned long long)kOffset,
+                     (unsigned long long)alloc_size);
+        return;
+    }
+
+    uint32_t* insn = reinterpret_cast<uint32_t*>(stage_base + min_vaddr + kOffset);
+    const uint32_t old = *insn;
+    *insn = 0xD65F03C0u; // RET
+    compatLogFmt("FARCRY LOADCFG A/B: patched +0x%llx old=%08x new=%08x",
+                 (unsigned long long)kOffset, old, *insn);
+}
+
 // ─── Per-game binary quirk patches ─────────────────────────────────────────────
 // The actual fixups live in source/compat/games/ (one file per title), reached
 // through compat/games.h, so game-specific patches stay isolated from the shared
@@ -1108,6 +1133,7 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
             compatLog("FARCRY INPUT A/B: BindCommandToKey patch not applied");
         if (!patchFarCryInputThunkCrashPath(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY INPUT A/B2: crash-path thunk patch not applied");
+        patchFarCrySkipLoadConfiguration(so, stage_base, min_vaddr, alloc_size);
         return;
     }
 
