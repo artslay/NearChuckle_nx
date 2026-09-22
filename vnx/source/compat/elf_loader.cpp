@@ -868,11 +868,16 @@ LoadedSo* elfDlopen(const char* name) {
 // out of the .so path (…/games/<pkg>/lib/<soname>) and forwards.
 static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
                                  size_t alloc_size, const char* path) {
-    // A/B experiment for the current Far Cry bring-up crash. The unrecovered
-    // fault lands on BRK #1 at libCrySystem.so + 0x7d0e0 inside
-    // CRefStreamEngine::GetFileSize(char const*, unsigned int). Patch ONLY the
-    // exact instruction we observed in the matching guest binary; all other
-    // libraries and all other instructions remain untouched.
+    // Diagnostic-only handling for the current Far Cry bring-up crash.
+    // The original image contains BRK #1 at libCrySystem.so + 0x7d0e0.
+    // We previously replaced that BRK with NOP, but the resulting
+    // "stack smash" was not trustworthy: the instruction immediately before
+    // it is part of a completed epilogue, so falling through after BRK can
+    // execute a different code block/function and manufacture a canary failure.
+    //
+    // Do NOT modify the guest instruction here. Dump its branch targets and
+    // leave the original BRK intact so the next crash report represents the
+    // real guest control flow.
     if (!path || !stage_base)
         return;
 
@@ -881,44 +886,38 @@ static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
     if (std::strcmp(base, "libCrySystem.so") != 0)
         return;
 
-    constexpr uint64_t kGetFileSizeBrkOffset = 0x7d0e0;
-    if (kGetFileSizeBrkOffset + sizeof(uint32_t) > alloc_size) {
-        compatLogFmt("CrySystem GetFileSize BRK PATCH: offset 0x%llx outside image size 0x%llx",
-                     (unsigned long long)kGetFileSizeBrkOffset,
+    constexpr uint64_t kBrkOffset = 0x7d0e0;
+    if (kBrkOffset < 0x30 || kBrkOffset + 0x30 > alloc_size) {
+        compatLogFmt("CrySystem BRK DIAG: offset 0x%llx outside image size 0x%llx",
+                     (unsigned long long)kBrkOffset,
                      (unsigned long long)alloc_size);
         return;
     }
 
     uint32_t* insn = reinterpret_cast<uint32_t*>(
-        stage_base + min_vaddr + kGetFileSizeBrkOffset);
-    const uint32_t old = *insn;
+        stage_base + min_vaddr + kBrkOffset);
 
-    // Diagnostic: dump the instruction words around the observed BRK. This is
-    // read-only and lets us determine whether the BRK is an unresolved call,
-    // a branch target, or another hand-inserted trap. The current crash later
-    // reports a stack-canary failure at +0x7d0e8, so the immediately following
-    // instructions are especially important.
-    if (kGetFileSizeBrkOffset >= 0x10 &&
-        kGetFileSizeBrkOffset + 0x10 + sizeof(uint32_t) <= alloc_size) {
-        for (int i = -12; i <= 8; ++i) {
-            const uint32_t word = insn[i];
-            compatLogFmt("CrySystem GetFileSize BRK CTX: off=0x%llx word=%08x",
-                         (unsigned long long)(kGetFileSizeBrkOffset + (int64_t)i * 4),
-                         word);
+    for (int i = -12; i <= 12; ++i) {
+        const uint64_t off = kBrkOffset + (int64_t)i * 4;
+        const uint32_t word = insn[i];
+        compatLogFmt("CrySystem BRK CTX: off=0x%llx word=%08x",
+                     (unsigned long long)off, word);
+
+        // AArch64 BL encoding: 0b100101xxxxxxxxxxxxxxxxxxxxxxxxxx.
+        if ((word & 0xfc000000u) == 0x94000000u) {
+            int32_t imm26 = (int32_t)(word & 0x03ffffffu);
+            if (imm26 & 0x02000000)
+                imm26 |= (int32_t)0xfc000000;
+            const int64_t target = (int64_t)off + ((int64_t)imm26 << 2);
+            compatLogFmt("CrySystem BRK BL TARGET: from=0x%llx to=0x%llx",
+                         (unsigned long long)off,
+                         (unsigned long long)target);
         }
     }
-    if (old != 0xd4200020u) {
-        compatLogFmt("CrySystem GetFileSize BRK PATCH: signature mismatch off=0x%llx old=%08x",
-                     (unsigned long long)kGetFileSizeBrkOffset, old);
-        return;
-    }
 
-    // AArch64 NOP. This is deliberately a temporary diagnostic patch: the
-    // function may still fail later, but if the old trap was the blocker the
-    // log should move past the previous PC immediately.
-    *insn = 0xd503201fu;
-    compatLogFmt("CrySystem GetFileSize BRK PATCH: off=0x%llx old=%08x new=%08x",
-                 (unsigned long long)kGetFileSizeBrkOffset, old, *insn);
+    const uint32_t old = *insn;
+    compatLogFmt("CrySystem BRK DIAG: off=0x%llx word=%08x (instruction left unchanged)",
+                 (unsigned long long)kBrkOffset, old);
 }
 
 // ─── RELA relocation processing ───────────────────────────────────────────────
