@@ -868,13 +868,42 @@ LoadedSo* elfDlopen(const char* name) {
 // out of the .so path (…/games/<pkg>/lib/<soname>) and forwards.
 static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
                                  size_t alloc_size, const char* path) {
-    // NearChuckle_nx has no game-specific ELF instruction patches yet.
-    // Keep this hook available for verified binary quirks without modifying
-    // the shared loader path.
-    (void)stage_base;
-    (void)min_vaddr;
-    (void)alloc_size;
-    (void)path;
+    // A/B experiment for the current Far Cry bring-up crash. The unrecovered
+    // fault lands on BRK #1 at libCrySystem.so + 0x7d0e0 inside
+    // CRefStreamEngine::GetFileSize(char const*, unsigned int). Patch ONLY the
+    // exact instruction we observed in the matching guest binary; all other
+    // libraries and all other instructions remain untouched.
+    if (!path || !stage_base)
+        return;
+
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (std::strcmp(base, "libCrySystem.so") != 0)
+        return;
+
+    constexpr uint64_t kGetFileSizeBrkOffset = 0x7d0e0;
+    if (kGetFileSizeBrkOffset + sizeof(uint32_t) > alloc_size) {
+        compatLogFmt("CrySystem GetFileSize BRK PATCH: offset 0x%llx outside image size 0x%llx",
+                     (unsigned long long)kGetFileSizeBrkOffset,
+                     (unsigned long long)alloc_size);
+        return;
+    }
+
+    uint32_t* insn = reinterpret_cast<uint32_t*>(
+        stage_base + min_vaddr + kGetFileSizeBrkOffset);
+    const uint32_t old = *insn;
+    if (old != 0xd4200020u) {
+        compatLogFmt("CrySystem GetFileSize BRK PATCH: signature mismatch off=0x%llx old=%08x",
+                     (unsigned long long)kGetFileSizeBrkOffset, old);
+        return;
+    }
+
+    // AArch64 NOP. This is deliberately a temporary diagnostic patch: the
+    // function may still fail later, but if the old trap was the blocker the
+    // log should move past the previous PC immediately.
+    *insn = 0xd503201fu;
+    compatLogFmt("CrySystem GetFileSize BRK PATCH: off=0x%llx old=%08x new=%08x",
+                 (unsigned long long)kGetFileSizeBrkOffset, old, *insn);
 }
 
 // ─── RELA relocation processing ───────────────────────────────────────────────
