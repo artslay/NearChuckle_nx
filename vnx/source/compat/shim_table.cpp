@@ -1465,7 +1465,18 @@ static bool tryMaterializePakPath(const char* targetPath, std::string& materiali
         }
     }
 
-    const std::string cacheRoot = "_pakcache_v3";
+    // realpath() must return an absolute canonical path. Keep the PAK
+    // materialization cache under the current game directory, but never hand
+    // the guest CryEngine a relative "_pakcache_v3/..." path.
+    char cwd[PATH_MAX];
+    if (!::getcwd(cwd, sizeof(cwd)))
+        return false;
+
+    std::string cacheRoot = cwd;
+    if (!cacheRoot.empty() && cacheRoot.back() != '/')
+        cacheRoot += '/';
+    cacheRoot += "_pakcache_v3";
+
     std::string safe = wanted;
     for (char& c : safe) if (c == '/') c = '_';
     const std::string outPath = cacheRoot + "/" + safe;
