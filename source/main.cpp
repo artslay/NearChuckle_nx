@@ -562,11 +562,16 @@ static int run_farcry(LoadedSo* game_so) {
     std::snprintf(arg5, sizeof(arg5), "\"game_fov %d\"", config.fov);
     std::snprintf(arg6, sizeof(arg6), "\"r_Quality_BumpMapping 3\"");
     std::snprintf(arg7, sizeof(arg7), "\"r_NoPS20 0\"");
-    std::snprintf(arg8, sizeof(arg8), "\"r_GL_NV30_PS20 1\"");
-    std::snprintf(arg9, sizeof(arg9), "\"GL_NV30_PS20 1\"");
-    std::snprintf(arg10, sizeof(arg10), "\"r_UseHWShaders 1\"");
-    std::snprintf(arg11, sizeof(arg11), "\"r_VSync 0\"");
-    std::snprintf(arg12, sizeof(arg12), "\"ui_BackGroundVideo 0\"");
+    // r_GL_NV30_PS20 is initialized to 1 by Android SystemInit after the
+    // command-line/config stage, so passing it here only creates a redundant
+    // console command and is not needed for the Android shader path.
+    std::snprintf(arg8, sizeof(arg8), "\"GL_NV30_PS20 1\"");
+    std::snprintf(arg9, sizeof(arg9), "\"r_UseHWShaders 1\"");
+    std::snprintf(arg10, sizeof(arg10), "\"r_VSync 0\"");
+    // ui_BackGroundVideo is created later by CUISystem::CreateCVars(), so a
+    // startup command cannot override its default value of 1 reliably.
+    std::snprintf(arg11, sizeof(arg11), "\"ui_BackGroundVideo 0\"");
+    std::snprintf(arg12, sizeof(arg12), "\"__NearChuckleNoop\"");
 
     char* argv[13];
     argv[0] = arg0;
