@@ -2259,12 +2259,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
-    const bool shaderSourceIo =
-        shaderIo &&
-        (shaderPathHasExt(ioPath, ".csl") ||
-         shaderPathHasExt(ioPath, ".csi") ||
-         shaderPathHasExt(ioPath, ".crycg"));
-    static unsigned g_shader_cache_miss_logs = 0;
     const bool shaderCacheIo = shaderIo && isShaderCacheLookupPath(ioPath);
 
 
