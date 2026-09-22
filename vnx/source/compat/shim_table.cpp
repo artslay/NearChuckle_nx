@@ -99,6 +99,7 @@ static std::string asciiLower(std::string value);
 static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
 
 static bool compatIsPakPath(const char* path);
+static bool materializeCommonSubroutinesScript();
 static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
 static bool tryMaterializeUniquePakBasename(const char* targetPath);
@@ -4124,7 +4125,7 @@ static void countLuaScriptsRecursive(const std::string& directory,
 }
 
 static const char* kScriptPrepMarker = ".nearchuckle_scripts_ready_v1";
-static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v4";
+static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v5";
 
 static bool prepMarkerExists(const char* marker) {
     if (!marker || !*marker)
@@ -4186,7 +4187,6 @@ static bool shaderPrepCacheReady() {
         "Shaders/HWScripts/CGVPMacro.csi",
         "Shaders/HWScripts/CGPShaders.csl",
         "Shaders/Scripts/CommonSubroutines.csl",
-        "Shaders/Scripts/CommonSubroutines.csi",
         nullptr
     };
 
@@ -4404,7 +4404,7 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     // preparation. It restores the exact original declaration sources from
     // Shaders.pak instead of trusting files left by an older compatibility build.
     const bool declarationsRestored = refreshCoreShaderDeclarationsFromPak();
-    (void)declarationsRestored;
+    const bool commonStandaloneReady = materializeCommonSubroutinesScript();
 
     // Keep the original CryEngine shader declaration layout intact:
     // CGVPMacro.csi contains the SubrScript placeholder, while
@@ -4432,7 +4432,7 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
         }
     }
 
-    if (coreReady && declarationsRestored) {
+    if (coreReady && declarationsRestored && commonStandaloneReady) {
         writePrepMarker(kShaderPrepMarker);
         compatLog("shader preload: persistent cache marker ready");
     } else {
@@ -4440,6 +4440,162 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     }
 }
 
+
+static bool materializeCommonSubroutinesScript() {
+    std::string sourceResolved;
+    if (!resolvePathCaseInsensitive(
+            "Shaders/HWScripts/Declarations/CGVProgramms.csl",
+            sourceResolved)) {
+        compatLog("shader common standalone: CGVProgramms.csl not found");
+        return false;
+    }
+
+    FILE* f = fopen(sourceResolved.c_str(), "rb");
+    if (!f) {
+        compatLogFmt("shader common standalone: open failed %s",
+                     sourceResolved.c_str());
+        return false;
+    }
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        compatLog("shader common standalone: seek end failed");
+        return false;
+    }
+
+    const long size = ftell(f);
+    if (size < 0 || size > 1024 * 1024) {
+        fclose(f);
+        compatLogFmt("shader common standalone: invalid source size=%ld", size);
+        return false;
+    }
+
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        compatLog("shader common standalone: seek start failed");
+        return false;
+    }
+
+    std::string source((size_t)size, '\0');
+    const size_t got =
+        size ? fread(&source[0], 1, (size_t)size, f) : 0;
+    fclose(f);
+
+    if (got != (size_t)size) {
+        compatLogFmt("shader common standalone: short read %u/%u",
+                     (unsigned)got, (unsigned)size);
+        return false;
+    }
+
+    std::string lower = source;
+    for (char& ch : lower)
+        ch = (char)std::tolower((unsigned char)ch);
+
+    const std::string declaration =
+        "declarecgscript 'commonsubroutines'";
+    const size_t declPos = lower.find(declaration);
+    if (declPos == std::string::npos) {
+        compatLogFmt("shader common standalone: declaration missing in %s",
+                     sourceResolved.c_str());
+        return false;
+    }
+
+    const size_t openBrace = lower.find('{',
+                                         declPos + declaration.size());
+    if (openBrace == std::string::npos) {
+        compatLogFmt("shader common standalone: opening brace missing in %s",
+                     sourceResolved.c_str());
+        return false;
+    }
+
+    int depth = 0;
+    size_t closeBrace = std::string::npos;
+    for (size_t i = openBrace; i < source.size(); ++i) {
+        if (source[i] == '{') {
+            ++depth;
+        } else if (source[i] == '}') {
+            --depth;
+            if (depth == 0) {
+                closeBrace = i;
+                break;
+            }
+        }
+    }
+
+    if (closeBrace == std::string::npos || depth != 0) {
+        compatLogFmt(
+            "shader common standalone: unbalanced declaration in %s",
+            sourceResolved.c_str());
+        return false;
+    }
+
+    size_t blockEnd = closeBrace + 1;
+    while (blockEnd < source.size() &&
+           (source[blockEnd] == '\r' || source[blockEnd] == '\n'))
+        ++blockEnd;
+
+    const std::string block =
+        source.substr(declPos, blockEnd - declPos);
+
+    const char* outputs[] = {
+        "Shaders/Scripts/CommonSubroutines.csl",
+        "shaders/scripts/CommonSubroutines.csl",
+        nullptr
+    };
+
+    bool allOk = true;
+    for (size_t i = 0; outputs[i]; ++i) {
+        const char* outPath = outputs[i];
+
+        size_t slash = std::string(outPath).find_last_of('/');
+        if (slash != std::string::npos) {
+            const std::string dir = std::string(outPath, slash);
+            std::string cur;
+            size_t pos = 0;
+            while (pos <= dir.size()) {
+                size_t end = dir.find('/', pos);
+                const std::string part =
+                    dir.substr(pos, end == std::string::npos
+                                      ? dir.size() - pos
+                                      : end - pos);
+                if (!part.empty()) {
+                    if (!cur.empty())
+                        cur += "/";
+                    cur += part;
+                    mkdir(cur.c_str(), 0755);
+                }
+                if (end == std::string::npos)
+                    break;
+                pos = end + 1;
+            }
+        }
+
+        FILE* out = fopen(outPath, "wb");
+        if (!out) {
+            compatLogFmt("shader common standalone: write failed %s",
+                         outPath);
+            allOk = false;
+            continue;
+        }
+
+        const size_t written =
+            fwrite(block.data(), 1, block.size(), out);
+        fclose(out);
+
+        if (written != block.size()) {
+            compatLogFmt(
+                "shader common standalone: short write %s (%u/%u)",
+                outPath, (unsigned)written, (unsigned)block.size());
+            allOk = false;
+            continue;
+        }
+
+        compatLogFmt("shader common standalone: generated %s (%u bytes)",
+                     outPath, (unsigned)block.size());
+    }
+
+    return allOk;
+}
 
 static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath) {
