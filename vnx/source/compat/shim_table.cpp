@@ -4450,6 +4450,25 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     (void)rootCgvMacro;
     (void)rootCgpShaders;
 
+    // CryEngine's runtime Cg loader resolves dependent scripts such as
+    // CommonSubroutines and PosCommon from the Shaders/Scripts enumeration,
+    // even though the original declaration files are stored below
+    // HWScripts/Declarations. Keep exact copies in Scripts as well so the
+    // runtime loader sees the DeclareCGScript entries through the same
+    // directory it scans for menu shaders.
+    std::string scriptCgvProgramms;
+    std::string scriptCgpShaders;
+    const bool scriptCgvProgrammsReady =
+        tryMaterializePakPath("Shaders/Scripts/CGVProgramms.csl",
+                              scriptCgvProgramms);
+    const bool scriptCgpShadersReady =
+        tryMaterializePakPath("Shaders/Scripts/CGPShaders.csl",
+                              scriptCgpShaders);
+
+    compatLogFmt("shader dependency scripts: CGVProgramms=%d CGPShaders=%d",
+                 scriptCgvProgrammsReady ? 1 : 0,
+                 scriptCgpShadersReady ? 1 : 0);
+
     // This pass is intentionally only part of the versioned first-run shader
     // preparation. It restores the exact original declaration sources from
     // Shaders.pak instead of trusting files left by an older compatibility build.
@@ -4499,8 +4518,13 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
                  finalScriptCslCount,
                  finalScriptCsiCount);
 
+    // The dependency declarations must be visible from the Scripts
+    // enumeration as well; otherwise CCGVProgram_GL can load a system shader
+    // but still report missing CommonSubroutines/PosCommon when a menu material
+    // references them.
     if (coreReady && declarationsRestored && commonStandaloneReady &&
-        finalScriptsDirPresent && finalScriptCslCount >= 2) {
+        scriptCgvProgrammsReady && scriptCgpShadersReady &&
+        finalScriptsDirPresent && finalScriptCslCount >= 4) {
         writePrepMarker(kShaderPrepMarker);
         compatLog("shader preload: persistent cache marker ready");
     } else {
