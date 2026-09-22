@@ -165,8 +165,7 @@ CompatLayer* compatGet() {
 void compatLog(const char* msg) {
     mutexLock(&g_log_lock);
 
-    const bool main_loop_marker = is_main_loop_marker(msg);
-    if (!main_loop_marker && suppressCompatShaderDiag(msg)) {
+    if (suppressCompatShaderDiag(msg)) {
         mutexUnlock(&g_log_lock);
         return;
     }
