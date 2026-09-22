@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cctype>
 #include <string>
+#include <sys/iosupport.h>
 
 static CompatLayer g_compat = {};
 static Mutex g_log_lock;
@@ -17,6 +18,7 @@ static bool g_log_closed = false;
 static LoadedSo* g_game_so = nullptr;
 
 static bool g_boot_console = false;
+static const devoptab_t* g_boot_stdout_dotab = nullptr;
 static char g_ui_lines[18][128] = {};
 static int g_ui_line_count = 0;
 
@@ -47,6 +49,10 @@ static void bootUiRender() {
 
 void compatUiInit() {
     if (g_boot_console) return;
+    // libnx consoleInit() permanently installs its console write backend into
+    // stdout. Save the previous device so the game cannot keep calling the
+    // deinitialized software-console renderer after compatUiShutdown().
+    g_boot_stdout_dotab = devoptab_list[STD_OUT];
     consoleInit(nullptr);
     g_boot_console = true;
     g_ui_line_count = 0;
@@ -57,6 +63,13 @@ void compatUiShutdown() {
     if (!g_boot_console) return;
     consoleUpdate(nullptr);
     consoleExit(nullptr);
+
+    // consoleExit() deinitializes the renderer but libnx 4.12 does not restore
+    // devoptab_list[STD_OUT]. Restore the original stdout backend ourselves so
+    // any later guest/host printf cannot enter ConsoleSwRenderer_drawChar() with
+    // a NULL framebuffer after the startup console has been shut down.
+    devoptab_list[STD_OUT] = g_boot_stdout_dotab;
+    g_boot_stdout_dotab = nullptr;
     g_boot_console = false;
 }
 
