@@ -866,8 +866,9 @@ LoadedSo* elfDlopen(const char* name) {
 // through compat/games.h, so game-specific patches stay isolated from the shared
 // loader and from the Unity path. This helper just pulls the owning package id
 // out of the .so path (…/games/<pkg>/lib/<soname>) and forwards.
-static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
-                                 size_t alloc_size, const char* path) {
+static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
+                                 uint64_t min_vaddr, size_t alloc_size,
+                                 const char* path) {
     // Diagnostic-only handling for the current Far Cry bring-up crash.
     // The original image contains BRK #1 at libCrySystem.so + 0x7d0e0.
     // We previously replaced that BRK with NOP, but the resulting
@@ -916,6 +917,82 @@ static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
     }
 
     const uint32_t old = *insn;
+
+    // Extra load-time diagnostics for the exact path that reaches BRK #1.
+    // The crash LR showed that execution returns to 0x7d01c, where CBNZ X0
+    // branches directly to 0x7d0e0. The preceding BL at 0x7d018 returns the
+    // value that becomes X0, so identify that helper and its literal argument.
+    {
+        const uint64_t cbnzOff = 0x7d01c;
+        const uint32_t cbnz = *reinterpret_cast<const uint32_t*>(
+            stage_base + min_vaddr + cbnzOff);
+        if ((cbnz & 0x7e000000u) == 0x34000000u) {
+            const bool nonzero = ((cbnz >> 24) & 1u) != 0;
+            int32_t imm19 = (int32_t)((cbnz >> 5) & 0x7ffffu);
+            if (imm19 & 0x40000)
+                imm19 |= (int32_t)0xfff80000;
+            const int64_t cbTarget = (int64_t)cbnzOff + ((int64_t)imm19 << 2);
+            const unsigned rt = cbnz & 31u;
+            compatLogFmt("CrySystem BRK CHECK: off=0x%llx %s X%u -> 0x%llx",
+                         (unsigned long long)cbnzOff,
+                         nonzero ? "CBNZ" : "CBZ",
+                         rt,
+                         (unsigned long long)cbTarget);
+        }
+
+        const uint64_t callOff = 0x7d018;
+        const uint32_t callInsn = *reinterpret_cast<const uint32_t*>(
+            stage_base + min_vaddr + callOff);
+        if ((callInsn & 0xfc000000u) == 0x94000000u) {
+            int32_t imm26 = (int32_t)(callInsn & 0x03ffffffu);
+            if (imm26 & 0x02000000)
+                imm26 |= (int32_t)0xfc000000;
+            const int64_t callTarget = (int64_t)callOff + ((int64_t)imm26 << 2);
+            char targetDesc[256] = {};
+            if (so)
+                elfDescribePc((uint64_t)so->base + (uint64_t)callTarget,
+                              targetDesc, sizeof(targetDesc));
+            compatLogFmt("CrySystem BRK CHECK: BL from=0x%llx to=0x%llx helper=%s",
+                         (unsigned long long)callOff,
+                         (unsigned long long)callTarget,
+                         targetDesc[0] ? targetDesc : "unknown");
+        }
+
+        // Decode the ADRP+ADD pair at 0x7d00c/0x7d014 that forms X1 for the
+        // helper call. This is a read-only diagnostic; it never touches code.
+        const uint64_t adrpOff = 0x7d00c;
+        const uint64_t addOff  = 0x7d014;
+        const uint32_t adrp = *reinterpret_cast<const uint32_t*>(
+            stage_base + min_vaddr + adrpOff);
+        const uint32_t add  = *reinterpret_cast<const uint32_t*>(
+            stage_base + min_vaddr + addOff);
+        if ((adrp & 0x9f000000u) == 0x90000000u &&
+            ((add & 0xffc003e0u) == 0x91000000u)) {
+            int64_t imm21 = (int64_t)(((adrp >> 5) & 0x7ffffu) << 2) |
+                              (int64_t)((adrp >> 29) & 3u);
+            if (imm21 & (1ll << 20))
+                imm21 -= (1ll << 21);
+            const int64_t page = ((int64_t)adrpOff & ~0xfffLL) + (imm21 << 12);
+            const uint64_t imm12 = (add >> 10) & 0xfffu;
+            const uint64_t litVaddr = (uint64_t)(page + (int64_t)imm12);
+            if (litVaddr < alloc_size) {
+                char literal[128] = {};
+                size_t n = 0;
+                const unsigned char* src = stage_base + min_vaddr + litVaddr;
+                while (n + 1 < sizeof(literal) && litVaddr + n < alloc_size) {
+                    const unsigned char c = src[n];
+                    if (c == 0) break;
+                    literal[n++] = (c >= 32 && c < 127) ? (char)c : '.';
+                }
+                literal[n] = '\\0';
+                compatLogFmt("CrySystem BRK ARG LITERAL: off=0x%llx text=\\\"%s\\\"",
+                             (unsigned long long)litVaddr, literal);
+            } else {
+                compatLogFmt("CrySystem BRK ARG LITERAL: computed off=0x%llx outside image",
+                             (unsigned long long)litVaddr);
+            }
+        }
+    }
 
     // Find direct branches in the preceding 0x400 bytes that target the BRK.
     // This identifies the real error/abort path without executing or modifying
@@ -1381,7 +1458,7 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     // Per-game instruction fixups (see patchKnownGameQuirks) — applied to the
     // staged code while it's still writable, before either mapping path below
     // makes it executable. Signature-gated, so a no-op for anything unmatched.
-    patchKnownGameQuirks(stage_base, min_vaddr, alloc_size, path);
+    patchKnownGameQuirks(so, stage_base, min_vaddr, alloc_size, path);
 
     // ── Copy staged ELF into persistent backing and map it once ─────────────
     memcpy(backing, stage, alloc_size);
