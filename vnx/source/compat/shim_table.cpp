@@ -4156,7 +4156,7 @@ static void countLuaScriptsRecursive(const std::string& directory,
 }
 
 static const char* kScriptPrepMarker = ".nearchuckle_scripts_ready_v1";
-static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v5";
+static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v6";
 
 static bool prepMarkerExists(const char* marker) {
     if (!marker || !*marker)
@@ -4227,7 +4227,20 @@ static bool shaderPrepCacheReady() {
             return false;
     }
 
-    return true;
+    // The standalone CommonSubroutines file alone is not enough: CryEngine
+    // expects the physical Shaders/Scripts tree to contain the other shader
+    // scripts as well. Count the loose CSL files as a cheap cache validation;
+    // this does not touch any PAKs on normal cached launches.
+    int scriptCslCount = 0;
+    int scriptCsiCount = 0;
+    countShaderScriptsRecursive("Shaders/Scripts", scriptCslCount, scriptCsiCount);
+
+    struct stat scriptsDir = {};
+    const bool scriptsDirPresent =
+        (::stat("Shaders/Scripts", &scriptsDir) == 0) &&
+        S_ISDIR(scriptsDir.st_mode);
+
+    return scriptsDirPresent && scriptCslCount >= 2;
 }
 
 static bool refreshCoreShaderDeclarationsFromPak() {
@@ -4397,18 +4410,25 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
         nullptr
     };
 
+    bool shaderScriptsPakReady = false;
+
     prepareShaderSourceFiles(dataRoot);
 
     for (size_t i = 0; dirs[i]; ++i) {
         const bool ready = tryMaterializePakDirectory(dirs[i]);
-        if (ready) {
-            int cslCount = 0;
-            int csiCount = 0;
-            std::string resolved = dirs[i];
-            if (!resolvePathCaseInsensitive(dirs[i], resolved))
-                resolved = dirs[i];
-            countShaderScriptsRecursive(resolved, cslCount, csiCount);
-        }
+
+        int cslCount = 0;
+        int csiCount = 0;
+        std::string resolved = dirs[i];
+        if (!resolvePathCaseInsensitive(dirs[i], resolved))
+            resolved = dirs[i];
+        countShaderScriptsRecursive(resolved, cslCount, csiCount);
+
+        compatLogFmt("shader prep dir: %s pak_ready=%d csl=%d csi=%d",
+                     dirs[i], ready ? 1 : 0, cslCount, csiCount);
+
+        if (std::strcmp(dirs[i], "Shaders/Scripts") == 0)
+            shaderScriptsPakReady = ready;
     }
 
     // The Android CryPak implementation used by the guest shader loader can
@@ -4463,7 +4483,25 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
         }
     }
 
-    if (coreReady && declarationsRestored && commonStandaloneReady) {
+    int finalScriptCslCount = 0;
+    int finalScriptCsiCount = 0;
+    countShaderScriptsRecursive("Shaders/Scripts",
+                                finalScriptCslCount,
+                                finalScriptCsiCount);
+
+    struct stat finalScriptsDir = {};
+    const bool finalScriptsDirPresent =
+        (::stat("Shaders/Scripts", &finalScriptsDir) == 0) &&
+        S_ISDIR(finalScriptsDir.st_mode);
+
+    compatLogFmt("shader prep tree: Shaders/Scripts pak_ready=%d present=%d csl=%d csi=%d",
+                 shaderScriptsPakReady ? 1 : 0,
+                 finalScriptsDirPresent ? 1 : 0,
+                 finalScriptCslCount,
+                 finalScriptCsiCount);
+
+    if (coreReady && declarationsRestored && commonStandaloneReady &&
+        finalScriptsDirPresent && finalScriptCslCount >= 2) {
         writePrepMarker(kShaderPrepMarker);
         compatLog("shader preload: persistent cache marker ready");
     } else {
