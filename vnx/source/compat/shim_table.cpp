@@ -31,6 +31,8 @@
 #include <locale.h>
 #include <setjmp.h>
 #include <semaphore.h>
+
+extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
 extern "C" {
@@ -243,7 +245,7 @@ static char* stub_realpath(const char* p, char* out) {
                 free(out);
             return nullptr;
         }
-        if (p && strcasestr(p, "sidle_loop.caf")) {
+        if (p && strstr(p, "sidle_loop.caf")) {
             char caller[256];
             elfDescribePc((uint64_t)__builtin_return_address(0),
                           caller, sizeof(caller));
