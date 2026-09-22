@@ -861,6 +861,95 @@ LoadedSo* elfDlopen(const char* name) {
     return so;
 }
 
+extern "C" int compatVideoPanelIsPlaying(void* self);
+extern "C" volatile int g_near_video_open_failed;
+extern "C" volatile uint32_t g_near_video_panel_finished_offset;
+
+static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
+                                      uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !so->symtab_heap || !so->strtab_heap || !so->sym_count ||
+        !stage_base)
+        return false;
+
+    Elf64_Sym* target = nullptr;
+    for (uint32_t i = 0; i < so->sym_count; ++i) {
+        Elf64_Sym& sym = so->symtab_heap[i];
+        if (!sym.st_name || sym.st_name >= so->strsz || !sym.st_value)
+            continue;
+        const char* name = so->strtab_heap + sym.st_name;
+        if (std::strstr(name, "CUIVideoPanel") &&
+            std::strstr(name, "IsPlaying")) {
+            target = &sym;
+            compatLogFmt("VIDEO PANEL SYMBOL: %s value=0x%llx size=0x%llx",
+                         name,
+                         (unsigned long long)sym.st_value,
+                         (unsigned long long)sym.st_size);
+            break;
+        }
+    }
+
+    if (!target)
+        return false;
+
+    if (target->st_value < min_vaddr ||
+        target->st_value - min_vaddr + 16 > alloc_size) {
+        compatLogFmt("VIDEO PANEL PATCH: IsPlaying outside image value=0x%llx min=0x%llx size=0x%llx",
+                     (unsigned long long)target->st_value,
+                     (unsigned long long)min_vaddr,
+                     (unsigned long long)alloc_size);
+        return false;
+    }
+
+    uint32_t* fn = reinterpret_cast<uint32_t*>(
+        stage_base + target->st_value);
+
+    uint32_t finishedOffset = 0xffffffffu;
+    for (int i = 0; i < 8; ++i) {
+        const uint32_t w = fn[i];
+        // LDRB Wt, [X0, #imm12].
+        if ((w & 0xffc00000u) == 0x39400000u &&
+            ((w >> 5) & 31u) == 0u) {
+            finishedOffset = (w >> 10) & 0xfffu;
+            compatLogFmt("VIDEO PANEL FINISHED OFFSET: 0x%x (insn+0x%x=%08x)",
+                         finishedOffset, i * 4, w);
+            break;
+        }
+    }
+
+    if (finishedOffset == 0xffffffffu) {
+        compatLog("VIDEO PANEL PATCH: could not derive m_bFinished offset");
+        return false;
+    }
+
+    if (target->st_size && target->st_size < 16) {
+        compatLogFmt("VIDEO PANEL PATCH: IsPlaying too small size=0x%llx",
+                     (unsigned long long)target->st_size);
+        return false;
+    }
+
+    const uint32_t original0 = fn[0];
+    const uint32_t original1 = fn[1];
+    const uint32_t original2 = fn[2];
+    const uint32_t original3 = fn[3];
+
+    // Absolute AArch64 jump:
+    //   ldr x16, #8
+    //   br  x16
+    //   .quad compatVideoPanelIsPlaying
+    fn[0] = 0x58000090u;
+    fn[1] = 0xd61f0200u;
+    const uint64_t helper = (uint64_t)(uintptr_t)&compatVideoPanelIsPlaying;
+    std::memcpy(&fn[2], &helper, sizeof(helper));
+
+    g_near_video_panel_finished_offset = finishedOffset;
+
+    compatLogFmt("VIDEO PANEL PATCH: IsPlaying -> compat bridge helper=%p",
+                 (void*)(uintptr_t)helper);
+    compatLogFmt("VIDEO PANEL PATCH OLD: %08x %08x %08x %08x",
+                 original0, original1, original2, original3);
+    return true;
+}
+
 // ─── Per-game binary quirk patches ─────────────────────────────────────────────
 // The actual fixups live in source/compat/games/ (one file per title), reached
 // through compat/games.h, so game-specific patches stay isolated from the shared
@@ -884,6 +973,13 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
 
     const char* base = std::strrchr(path, '/');
     base = base ? base + 1 : path;
+
+    if (std::strcmp(base, "libCryGame.so") == 0) {
+        if (!patchVideoPanelIsPlaying(so, stage_base, min_vaddr, alloc_size))
+            compatLog("VIDEO PANEL PATCH: not applied");
+        return;
+    }
+
     if (std::strcmp(base, "libCrySystem.so") != 0)
         return;
 
