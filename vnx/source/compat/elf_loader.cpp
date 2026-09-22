@@ -877,8 +877,10 @@ static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
         if (!sym.st_name || sym.st_name >= so->strsz || !sym.st_value)
             continue;
         const char* name = so->strtab_heap + sym.st_name;
-        if (std::strstr(name, "CUIVideoPanel") &&
-            std::strstr(name, "IsPlaying")) {
+        // CUIVideoPanel has both IsPlaying() and the Lua wrapper
+        // IsPlaying(IFunctionHandler*). The native no-argument method is the
+        // one whose body is "return !m_bFinished" and must be patched.
+        if (std::strstr(name, "_ZN13CUIVideoPanel9IsPlayingEv")) {
             target = &sym;
             compatLogFmt("VIDEO PANEL SYMBOL: %s value=0x%llx size=0x%llx",
                          name,
