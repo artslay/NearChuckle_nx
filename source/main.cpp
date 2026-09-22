@@ -347,7 +347,7 @@ static void setup_environment() {
     // PAK layout probes are intentionally diagnostic-only. The runtime already
     // knows the game data root and FCData directory; do not enumerate all PAKs
     // on every startup unless an explicit diagnostic run is requested.
-    const pakDiag = std::getenv("NEARCHUCKLE_PAK_DIAG");
+    const char* pakDiag = std::getenv("NEARCHUCKLE_PAK_DIAG");
     if (pakDiag && pakDiag[0] == '1') {
         compatProbePakArchives(config.data_root);
         probe_engine_data_layout();
