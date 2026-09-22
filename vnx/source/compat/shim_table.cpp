@@ -85,6 +85,12 @@ extern "C" {
 #include <algorithm>
 #include <unordered_map>
 
+// Diagnostic logging policy. Keep crash/loader/path failures visible, but suppress
+// high-frequency allocator and successful realpath chatter that can drown the
+// actual failure. Flip these back to true only for a focused memory investigation.
+static constexpr bool kVerboseAllocatorLogs = false;
+static constexpr bool kVerboseSuccessfulPathLogs = false;
+
 static std::string asciiLower(std::string value);
 
 // Case-insensitive filesystem resolver used by file wrappers below.
@@ -253,7 +259,8 @@ static char* stub_realpath(const char* p, char* out) {
                          (void*)out, canonical.size() + 1, caller);
         }
         memcpy(out, canonical.c_str(), canonical.size() + 1);
-        compatLogFmt("realpath RESULT: %s -> %s", p, out);
+        if (kVerboseSuccessfulPathLogs)
+            compatLogFmt("realpath RESULT: %s -> %s", p, out);
         return out;
     };
 
@@ -507,10 +514,6 @@ static int stub_stat(const char* p, struct stat* ignored) {
         return rc;
 
     fillAndroidArm64Stat(nativeSt, ignored);
-    if (asciiLower(ioPathStorage).find(".caf") != std::string::npos) {
-        compatLogFmt("stat ABI ANDROID64: %s size=%lld",
-                     ioPath, static_cast<long long>(nativeSt.st_size));
-    }
     return 0;
 }
 
@@ -526,10 +529,6 @@ static int stub_fstat64(int fd, void* out) {
         return rc;
 
     fillAndroidArm64Stat(st, out);
-    if (st.st_size >= 0) {
-        compatLogFmt("fstat64 ABI ANDROID64: fd=%d size=%lld",
-                     fd, static_cast<long long>(st.st_size));
-    }
     return 0;
 }
 static FILE* stub_fdopen(int fd, const char* m)  { (void)fd; (void)m; return nullptr; }
@@ -1074,11 +1073,13 @@ static void* sh_realloc(void* p, size_t n) {
     if (memIsHeap(p)) {
         const size_t oldUsable = malloc_usable_size(p);
 
-        char where[256];
-        elfDescribePc((uint64_t)__builtin_return_address(0),
-                      where, sizeof(where));
-        compatLogFmt("realloc: DIRECT heap ptr=%p size=%zu old_usable=%zu from %s",
-                     p, n, oldUsable, where);
+        if (kVerboseAllocatorLogs) {
+            char where[256];
+            elfDescribePc((uint64_t)__builtin_return_address(0),
+                          where, sizeof(where));
+            compatLogFmt("realloc: DIRECT heap ptr=%p size=%zu old_usable=%zu from %s",
+                         p, n, oldUsable, where);
+        }
 
         return realloc(p, n);
     }
