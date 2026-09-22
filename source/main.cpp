@@ -545,7 +545,7 @@ static int run_farcry(LoadedSo* game_so) {
 
     compatLog("Far Cry: Android-style graphics CVars queued (space-separated parser syntax)");
     compatLog("Far Cry: ui_BackGroundVideo=0 queued for post-init console parsing");
-    compatLog("Far Cry: command-line CVars use name=value syntax");
+    compatLog("Far Cry: command-line CVars use name value syntax");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
     compatLog("Startup diagnostics complete; waiting for CXGame::Run main-loop marker");
