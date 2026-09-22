@@ -87,6 +87,45 @@ static bool is_main_loop_marker(const char* msg) {
     return msg && std::strstr(msg, "CXGame::Run: entered main game loop") != nullptr;
 }
 
+static bool suppressCompatShaderDiag(const char* msg) {
+    if (!msg || !*msg)
+        return false;
+
+    const char* shader = std::strstr(msg, "Shaders/");
+    if (!shader)
+        shader = std::strstr(msg, "shaders/");
+
+    if (shader) {
+        if (std::strstr(msg, "PAK EXACT MISS:") ||
+            std::strstr(msg, "PAK BASENAME MATCH:") ||
+            std::strstr(msg, "PAK BASENAME NOT FOUND:") ||
+            std::strstr(msg, "PAK BASENAME AMBIGUOUS:") ||
+            std::strstr(msg, "realpath RESULT:") ||
+            std::strstr(msg, "realpath PAK EXACT:") ||
+            std::strstr(msg, "realpath SHADER CACHE BYPASS:") ||
+            std::strstr(msg, "fopen FAIL:") ||
+            std::strstr(msg, "fopen CASEFIX:") ||
+            std::strstr(msg, "fopen FCDATA:") ||
+            std::strstr(msg, "PAK FOPEN REQUEST:") ||
+            std::strstr(msg, "opendir ") ||
+            std::strstr(msg, "readdir[") ||
+            std::strstr(msg, "readdir64[") ||
+            std::strstr(msg, "pak DIR READY:") ||
+            std::strstr(msg, "shader source files:") ||
+            std::strstr(msg, "shader dir:") ||
+            std::strstr(msg, "shader root fallback:") ||
+            std::strstr(msg, "shader common") ||
+            std::strstr(msg, "shader common patch:")) {
+            return true;
+        }
+    }
+
+    return std::strstr(msg, "shader source files:") != nullptr ||
+           std::strstr(msg, "shader dir:") != nullptr ||
+           std::strstr(msg, "shader root fallback:") != nullptr ||
+           std::strstr(msg, "shader common") != nullptr;
+}
+
 static void log_close_locked() {
     if (g_log) {
         std::fflush(g_log);
@@ -104,6 +143,10 @@ void compatLog(const char* msg) {
     mutexLock(&g_log_lock);
 
     const bool main_loop_marker = is_main_loop_marker(msg);
+    if (!main_loop_marker && suppressCompatShaderDiag(msg)) {
+        mutexUnlock(&g_log_lock);
+        return;
+    }
     log_write(msg);
 
     // Once CryEngine has entered its real main loop, stop all startup logging.
