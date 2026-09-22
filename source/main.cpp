@@ -485,25 +485,25 @@ static int run_farcry(LoadedSo* game_so) {
     MainFn game_main = reinterpret_cast<MainFn>(entry);
 
     char arg0[] = "FarCry";
-    char arg1[] = "r_Driver OpenGL";
+    char arg1[] = "r_Driver=OpenGL";
     char arg2[64];
     char arg3[64];
-    char arg4[] = "r_Fullscreen 1";
+    char arg4[] = "r_Fullscreen=1";
     char arg5[64];
-    char arg6[] = "r_VSync 1";
-    char arg7[] = "r_ShadersAllowCompilation 0";
-    char arg8[] = "r_ShadersAsyncCompiling 0";
-    char arg9[] = "r_ShadersRemoteCompiler 0";
-    char arg10[] = "r_ShadersSubmitRequestline 0";
-    char arg11[] = "r_ShadersCompileAutoActivate 0";
+    char arg6[] = "r_VSync=1";
+    char arg7[] = "r_ShadersAllowCompilation=0";
+    char arg8[] = "r_ShadersAsyncCompiling=0";
+    char arg9[] = "r_ShadersRemoteCompiler=0";
+    char arg10[] = "r_ShadersSubmitRequestline=0";
+    char arg11[] = "r_ShadersCompileAutoActivate=0";
     // The menu background movie is not usable on the Switch port yet.
     // Disable it at launch so CXGame can enter the normal menu UI instead of
     // waiting in the Bink/message path for AMD64.bik.
-    char arg12[] = "ui_BackGroundVideo 0";
+    char arg12[] = "ui_BackGroundVideo=0";
 
-    std::snprintf(arg2, sizeof(arg2), "r_Width %d", config.screen_width);
-    std::snprintf(arg3, sizeof(arg3), "r_Height %d", config.screen_height);
-    std::snprintf(arg5, sizeof(arg5), "game_fov %d", config.fov);
+    std::snprintf(arg2, sizeof(arg2), "r_Width=%d", config.screen_width);
+    std::snprintf(arg3, sizeof(arg3), "r_Height=%d", config.screen_height);
+    std::snprintf(arg5, sizeof(arg5), "game_fov=%d", config.fov);
 
     char* argv[13];
     argv[0] = arg0;
@@ -531,6 +531,7 @@ static int run_farcry(LoadedSo* game_so) {
 
     argv[argc++] = arg12;
     compatLog("Far Cry: ui_BackGroundVideo=0 (skip menu background video)");
+    compatLog("Far Cry: command-line CVars use name=value syntax");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
     compatLog("Startup diagnostics complete; closing startup log before entering Far Cry");
