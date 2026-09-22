@@ -758,9 +758,27 @@ static bool isFsTraceSym(const char* n) {
            strcmp(n, "read") == 0 || strcmp(n, "lseek") == 0;
 }
 
+static bool isCtypeTraceSym(const char* n) {
+    if (!n || !*n) return false;
+    return strcmp(n, "_ctype_") == 0 ||
+           strcmp(n, "_toupper_tab_") == 0 ||
+           strcmp(n, "_tolower_tab_") == 0 ||
+           strcmp(n, "__ctype_b_loc") == 0 ||
+           strcmp(n, "__ctype_tolower_loc") == 0 ||
+           strcmp(n, "__ctype_toupper_loc") == 0 ||
+           strcmp(n, "__ctype_get_mb_cur_max") == 0 ||
+           strcmp(n, "tolower") == 0 ||
+           strcmp(n, "toupper") == 0 ||
+           strcmp(n, "isspace") == 0 ||
+           strcmp(n, "isprint") == 0 ||
+           strcmp(n, "isalpha") == 0 ||
+           strcmp(n, "isdigit") == 0 ||
+           strcmp(n, "isalnum") == 0 ||
+           strcmp(n, "ispunct") == 0;
+}
 static void* resolveSymbol(const char* name) {
     if (!name || !name[0]) return nullptr;
-    const bool trace = isAllocSym(name) || isFsTraceSym(name);
+    const bool trace = isAllocSym(name) || isFsTraceSym(name) || isCtypeTraceSym(name);
 
     // Shim table takes priority — our implementations override any game-library
     // copies of pthread_*, libc functions, GLES, EGL, libandroid, etc.
