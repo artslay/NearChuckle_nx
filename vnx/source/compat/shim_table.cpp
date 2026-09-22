@@ -267,6 +267,20 @@ static char* stub_realpath(const char* p, char* out) {
         return nullptr;
     }
 
+    // Shader cache files must never be considered by realpath() in this
+    // experiment, even when an older run already materialized one on disk.
+    // The previous check lived only in the PAK fallback below, so stale
+    // Shaders/Cache/*.cgps files still passed the initial stat() and reached
+    // CCGPShader_GL::mfLoad. Force these runtime cache artifacts to behave as
+    // missing and let CryEngine select its embedded fallback.
+    if (isShaderCacheLookupPath(p)) {
+        if (!callerOwnsBuffer)
+            free(out);
+        errno = ENOENT;
+        compatLogFmt("realpath SHADER CACHE BYPASS: %s", p);
+        return nullptr;
+    }
+
     struct stat st = {};
     if (::stat(p, &st) == 0) {
         if (p[0] == '/') {
