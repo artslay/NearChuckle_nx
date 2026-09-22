@@ -892,6 +892,21 @@ static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
     uint32_t* insn = reinterpret_cast<uint32_t*>(
         stage_base + min_vaddr + kGetFileSizeBrkOffset);
     const uint32_t old = *insn;
+
+    // Diagnostic: dump the instruction words around the observed BRK. This is
+    // read-only and lets us determine whether the BRK is an unresolved call,
+    // a branch target, or another hand-inserted trap. The current crash later
+    // reports a stack-canary failure at +0x7d0e8, so the immediately following
+    // instructions are especially important.
+    if (kGetFileSizeBrkOffset >= 0x10 &&
+        kGetFileSizeBrkOffset + 0x10 + sizeof(uint32_t) <= alloc_size) {
+        for (int i = -4; i <= 4; ++i) {
+            const uint32_t word = insn[i];
+            compatLogFmt("CrySystem GetFileSize BRK CTX: off=0x%llx word=%08x",
+                         (unsigned long long)(kGetFileSizeBrkOffset + (int64_t)i * 4),
+                         word);
+        }
+    }
     if (old != 0xd4200020u) {
         compatLogFmt("CrySystem GetFileSize BRK PATCH: signature mismatch off=0x%llx old=%08x",
                      (unsigned long long)kGetFileSizeBrkOffset, old);
