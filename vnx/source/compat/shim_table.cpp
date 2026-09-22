@@ -1011,11 +1011,52 @@ bool shimHeapCheck(char* why, size_t whysz) {
 
     size_t prev_sz = 0;
     const NlChunk* prev_c = nullptr;
+    const uintptr_t top_addr = (uintptr_t)__malloc_av_[2];
+    const NlChunk* top_chunk = (const NlChunk*)top_addr;
+    const size_t top_size = top_chunk ? nlSize(top_chunk) : 0;
+    static bool bounds_logged = false;
+    if (!bounds_logged) {
+        bounds_logged = true;
+        compatLogFmt("HEAP WALK BOUNDS: base=%p end=%p top=%p top_size=%zu top_end=%p",
+                     (void*)(uintptr_t)__malloc_sbrk_base,
+                     (void*)arena_end,
+                     (void*)top_addr,
+                     top_size,
+                     (void*)(top_addr ? top_addr + top_size : 0));
+    }
+
     for (int i = 0; i < 400000; i++) {
         g_walk_steps = i;
         if (!memIsHeap(c)) { g_walk_stop = "left the heap region"; return true; }
         if ((uintptr_t)c + 32 > arena_end) { g_walk_stop = "reached the break"; return true; }
+
+        // av_[2] is newlib's top chunk. It is not a normal free-bin chunk and
+        // therefore must be recognized before checking fd/bk or the boundary
+        // tag of the following zero-filled arena padding.
+        if (c == top_chunk) {
+            g_walk_stop = "reached top chunk";
+            return true;
+        }
+
         size_t sz = nlSize(c);
+
+        // A zero-sized header immediately after the real top chunk is the
+        // unused arena tail, not heap corruption. This must be checked BEFORE
+        // PREV_INUSE/prev_size: the zeroed tail has prev_size=0 while prev_sz is
+        // the valid size of the top chunk, which otherwise creates the exact
+        // false-positive seen in the logs.
+        if (sz == 0) {
+            if (top_addr && top_size &&
+                (uintptr_t)c >= top_addr + top_size) {
+                g_walk_stop = "reached arena tail after top";
+                return true;
+            }
+            snprintf(why, whysz,
+                     "chunk %p has size 0 below the break (step %d)",
+                     (const void*)c, i);
+            g_walk_stop = "zero-size chunk";
+            return false;
+        }
 
         // The invariant the fault actually violates. When PREV_INUSE is clear
         // the previous chunk is free, and prev_size must equal its size —
@@ -1027,7 +1068,7 @@ bool shimHeapCheck(char* why, size_t whysz) {
             // to get here, so this is a real boundary and these bytes are what
             // the writer left behind — a string, a struct, a repeated pattern:
             // whatever it is will identify the owner far faster than tracing
-            // allocations backwards would.
+            // allocations backwards.
             char hex[3 * 48 + 1] = {}, asc[48 + 1] = {};
             const unsigned char* d = (const unsigned char*)prev_c + 16;
             size_t n = prev_sz > 16 ? prev_sz - 16 : 0;
@@ -1041,55 +1082,34 @@ bool shimHeapCheck(char* why, size_t whysz) {
                      "prev size %zu | prev %p data: %s| %s",
                      (const void*)c, i, (unsigned long long)c->prev_size, prev_sz,
                      (const void*)prev_c, hex, asc);
+            g_walk_stop = "prev_size mismatch";
             return false;
         }
+
         const NlChunk* this_prev_c  = prev_c;
         const size_t   this_prev_sz = prev_sz;
         (void)this_prev_sz;
         prev_c  = c;
         prev_sz = sz;
-        // Size zero is the end of the arena, not damage. memIsHeap answers for
-        // the whole reserved heap region, but newlib has only sbrk'd part of
-        // it — walk past the top chunk and the rest is mapped, readable and
-        // entirely zero. Real damage shows up as a garbage non-zero size, so
-        // this stops the walk rather than reporting it. (The previous run
-        // reported exactly this at the same address and step in two different
-        // modules, which is what a fixed arena boundary looks like and what
-        // corruption does not.)
-        if (sz == 0) {
-            snprintf(why, whysz, "chunk %p has size 0 below the break (step %d)",
-                     (const void*)c, i);
-            return false;
-        }
         if (sz < 32 || (sz & 15) != 0) {
             snprintf(why, whysz, "chunk %p has bad size %zu (step %d)", (const void*)c, sz, i);
+            g_walk_stop = "bad chunk size";
             return false;
         }
         const NlChunk* next = (const NlChunk*)((const char*)c + sz);
         if (next <= c) {
             snprintf(why, whysz, "chunk %p does not advance (step %d)", (const void*)c, i);
+            g_walk_stop = "non-advancing chunk";
             return false;
         }
-        if (!memIsHeap(next)) return true;          // reached the top
+        if (!memIsHeap(next)) {
+            g_walk_stop = "left heap after chunk";
+            return true;
+        }
 
-        // The size chain being intact is not the same as the heap being
-        // healthy, which is what the last run showed: it walked cleanly right
-        // up to the constructor that faulted. The value that faults is a bin
-        // pointer, and those live in the *body* of a free chunk, not in the
-        // chain — so a write into freed memory zeroes them while leaving every
-        // size perfectly valid.
-        //
         // A chunk is free when the following chunk says its predecessor is not
-        // in use. Any such chunk is on a bin, so its fd and bk are non-null by
-        // construction; a null one is precisely the state that kills _free_r
-        // at the unlink.
-        // The top chunk belongs to no bin, so its fd and bk are whatever was
-        // last there — reading them as bin pointers is what produced four
-        // "corruption" reports in a row, including one at the first constructor
-        // of the first module, before any game code had run. av_[2] names it
-        // exactly, so skip it by identity rather than by heuristic.
-        if (c == (const NlChunk*)__malloc_av_[2]) { c = next; continue; }
-
+        // in use. Any such chunk is on a bin, so its fd and bk should be non-null.
+        // The top chunk was already handled above by identity.
         if (!(next->size & NL_PREV_INUSE)) {
             if (!c->fd || !c->bk) {
                 // Report the neighbours too. Once one size is misread every
