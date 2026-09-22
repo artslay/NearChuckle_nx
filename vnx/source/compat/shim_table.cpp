@@ -3001,6 +3001,19 @@ static void* fake_dlsym(void* handle, const char* sym) {
     if (!sym) return nullptr;
     const bool trace = isCryAllocatorSym(sym);
 
+    // SDL_GL_SwapWindow is frequently obtained through handle-scoped dlsym()
+    // by CryEngine's renderer. The guest libSDL3 exports its Android
+    // implementation, so a handle-scoped lookup would otherwise return that
+    // function before the global shim table gets a chance to replace it.
+    // Force this single presentation entry point through our Switch/EGL
+    // implementation so the Android Java/UI swap path can never block.
+    if (strcmp(sym, "SDL_GL_SwapWindow") == 0) {
+        void* forced = shimResolve(sym);
+        compatLogFmt("dlsym: SDL_GL_SwapWindow -> forced shim %p", forced);
+        if (forced)
+            return forced;
+    }
+
     // Handle-scoped lookup when dlopen returned a real LoadedSo*.
     if (handle && handle != (void*)0xDEAD) {
         LoadedSo* so = (LoadedSo*)handle;
