@@ -2423,7 +2423,61 @@ static int sh_fseek(FILE* f, long off, int whence) {
         rc = fseek(f, off, whence);
     return rc;
 }
-static long sh_ftell(FILE* f) {
+
+// Keep fgets on the same stream abstraction as fread/fgetc. CryPak-backed
+// streams are not native libc FILEs from the engine's point of view, so routing
+// guest fgets through sh_fgetc() avoids feeding an APK/Pak stream to newlib's
+// native fgets implementation. The first few calls are logged for startup
+// diagnostics so a stdio fault can be separated from the later engine code.
+static char* sh_fgets(char* dst, int n, FILE* f) {
+    static unsigned int diag_count = 0;
+
+    if (!dst || n <= 0 || !f) {
+        if (diag_count < 8) {
+            compatLogFmt("FGETS invalid: dst=%p n=%d file=%p",
+                         (void*)dst, n, (void*)f);
+            ++diag_count;
+        }
+        return nullptr;
+    }
+
+    const unsigned int diag = diag_count;
+    if (diag_count < 8) {
+        compatLogFmt("FGETS[%u] enter: dst=%p n=%d file=%p apk=%d",
+                     diag, (void*)dst, n, (void*)f,
+                     apkcache::owns(f) ? 1 : 0);
+    }
+
+    int i = 0;
+    while (i < n - 1) {
+        const int c = sh_fgetc(f);
+        if (c == EOF)
+            break;
+
+        dst[i++] = (char)c;
+        if (c == '\n')
+            break;
+    }
+
+    if (i == 0) {
+        if (diag_count < 8) {
+            compatLogFmt("FGETS[%u] exit: EOF", diag);
+            ++diag_count;
+        }
+        return nullptr;
+    }
+
+    dst[i] = '\0';
+
+    if (diag_count < 8) {
+        compatLogFmt("FGETS[%u] exit: len=%d text=%s", diag, i, dst);
+        ++diag_count;
+    }
+
+    return dst;
+}
+
+static int sh_fgetc(FILE* f) {
     if (apkcache::owns(f)) return (long)apkcache::tell(f);
     return ftell(f);
 }
@@ -5916,7 +5970,7 @@ static const ShimEntry g_shims[] = {
     {"fflush",      (void*)sh_fflush},
     {"feof",        (void*)sh_feof},
     {"ferror",      (void*)ferror},
-    {"fgets",       (void*)fgets},
+    {"fgets",       (void*)sh_fgets},
     {"fputs",       (void*)sh_fputs},
     {"fgetc",       (void*)sh_fgetc},
     {"fputc",       (void*)sh_fputc},
