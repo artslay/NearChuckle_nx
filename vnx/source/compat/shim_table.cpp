@@ -104,6 +104,7 @@ static bool tryMaterializeUniquePakBasename(const char* targetPath);
 static bool tryMaterializePakPath(const char* targetPath, std::string& materialized);
 static std::string pakNormalizeName(const char* name);
 static bool isShaderCacheLookupPath(const char* path);
+static bool isShaderPathForDiag(const char* path);
 static void compatLogPakOpenState(FILE* f, const char* path);
  
 extern "C" volatile int g_near_video_open_failed = 0;
@@ -327,7 +328,7 @@ static char* stub_realpath(const char* p, char* out) {
         if (!callerOwnsBuffer)
             free(out);
         errno = ENOENT;
-        compatLogFmt("realpath SHADER CACHE BYPASS: %s", p);
+        // Shader cache misses are intentionally silent in the compatibility log.
         return nullptr;
     }
 
@@ -1631,12 +1632,14 @@ static bool tryMaterializePakPath(const char* targetPath, std::string& materiali
             continue;
         if (pakExtractEntry(pakPath, wanted, outPath)) {
             materialized = outPath;
-            compatLogFmt("PAK EXACT MATCH: %s <- %s", wanted.c_str(), pakPath.c_str());
+            if (!isShaderPathForDiag(wanted.c_str()))
+                compatLogFmt("PAK EXACT MATCH: %s <- %s", wanted.c_str(), pakPath.c_str());
             return true;
         }
     }
 
-    compatLogFmt("PAK EXACT MISS: %s%s", inCgfCache ? "CCGF_CACHE/" : "", wanted.c_str());
+    if (!isShaderPathForDiag(wanted.c_str()))
+        compatLogFmt("PAK EXACT MISS: %s%s", inCgfCache ? "CCGF_CACHE/" : "", wanted.c_str());
     return false;
 }
 
@@ -1842,13 +1845,15 @@ static bool tryMaterializeUniquePakBasename(const char* targetPath) {
     }
 
     if (globalMatches == 0) {
-        compatLogFmt("PAK BASENAME NOT FOUND: %s", targetPath);
+        if (!isShaderPathForDiag(targetPath))
+            compatLogFmt("PAK BASENAME NOT FOUND: %s", targetPath);
         return false;
     }
 
     if (globalMatches > 1) {
-        compatLogFmt("PAK BASENAME AMBIGUOUS: %s (%d PAKs)",
-                     targetPath, globalMatches);
+        if (!isShaderPathForDiag(targetPath))
+            compatLogFmt("PAK BASENAME AMBIGUOUS: %s (%d PAKs)",
+                         targetPath, globalMatches);
         return false;
     }
 
@@ -1910,8 +1915,8 @@ static void prepareShaderSourceFiles(const char* /*dataRoot*/) {
             ++foundCount;
     }
 
-    compatLogFmt("shader source files: %d/24 present, materialized=%d",
-                 foundCount, materializedCount);
+    (void)foundCount;
+    (void)materializedCount;
 }
 
 static std::string pakAssetRelativeName(const char* requested) {
@@ -2261,11 +2266,9 @@ static FILE* stub_fopen(const char* path, const char* mode) {
          shaderPathHasExt(ioPath, ".crycg"));
     static unsigned g_shader_cache_miss_logs = 0;
     const bool shaderCacheIo = shaderIo && isShaderCacheLookupPath(ioPath);
-    if (shaderSourceIo)
-        compatLogFmt("fopen SHADER REQUEST: path=%s mode=%s",
-                     ioPath ? ioPath : "?", mode ? mode : "?");
 
-    if (path && ioPathStorage != path)
+
+    if (path && ioPathStorage != path && !shaderIo)
         compatLogFmt("path NORMALIZE: fopen %s -> %s", path, ioPathStorage.c_str());
 
     if (std::string mapped = obbRemap(ioPath); !mapped.empty()) {
@@ -2275,23 +2278,19 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (mf) { if (videoIo) g_near_video_open_failed = 0; setvbuf(mf, nullptr, _IOFBF, 64 * 1024); return mf; }
     }
 
-    if (ioPath && compatIsPakPath(ioPath))
+    if (ioPath && compatIsPakPath(ioPath) && !shaderIo)
         compatLogFmt("PAK FOPEN REQUEST: %s", ioPath);
 
     FILE* f = fopen(ioPath, mode);
-    if (shaderSourceIo)
-        compatLogFmt("fopen SHADER DIRECT: path=%s result=%s",
-                     ioPath ? ioPath : "?", f ? "OK" : "FAIL");
+
     if (!f && ioPath) {
         std::string resolved;
         if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
                 if (videoIo) g_near_video_open_failed = 0;
-                compatLogFmt("fopen CASEFIX: %s -> %s", ioPath, resolved.c_str());
-                if (shaderSourceIo)
-                    compatLogFmt("fopen SHADER CASEFIX: requested=%s resolved=%s result=OK",
-                                 ioPath, resolved.c_str());
+                if (!shaderIo)
+                    compatLogFmt("fopen CASEFIX: %s -> %s", ioPath, resolved.c_str());
                 f = rf;
             }
         }
@@ -2305,7 +2304,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (resolvePathCaseInsensitive(virtualPath.c_str(), resolved)) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
-                compatLogFmt("fopen FCDATA: %s -> %s", ioPath, resolved.c_str());
+                if (!shaderIo)
+                    compatLogFmt("fopen FCDATA: %s -> %s", ioPath, resolved.c_str());
                 f = rf;
             }
         }
@@ -2372,22 +2372,14 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             }
         }
 
-        if (shaderSourceIo)
-            compatLogFmt("fopen SHADER FINAL FAIL: path=%s mode=%s",
-                         ioPath ? ioPath : "?", mode ? mode : "?");
+
 
         if (videoIo)
             g_near_video_open_failed = 1;
 
-        if (!shaderCacheIo || g_shader_cache_miss_logs < 64) {
+        if (!shaderIo)
             compatLogFmt("fopen FAIL: %s (mode=%s)",
                          ioPath ? ioPath : "?", mode ? mode : "?");
-            if (shaderCacheIo) {
-                ++g_shader_cache_miss_logs;
-                if (g_shader_cache_miss_logs == 64)
-                    compatLog("further shader cache misses are no longer logged");
-            }
-        }
         return f;
     }
 
@@ -2395,7 +2387,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         compatLogPakOpenState(f, ioPath);
     }
 
-    logShaderScriptDiagnostics(f, ioPath);
+    if (!shaderIo)
+        logShaderScriptDiagnostics(f, ioPath);
 
     if (videoIo)
         g_near_video_open_failed = 0;
@@ -3862,9 +3855,72 @@ static bool tryMaterializePakDirectory(const char* path) {
     }
     closedir(root);
 
-    if (extractedAny)
+    if (extractedAny && !isShaderPathForDiag(path))
         compatLogFmt("pak DIR READY: %s (scanned %d FCData paks)", path, pakCount);
     return extractedAny;
+}
+
+
+static void countLuaScriptsRecursive(const std::string& directory,
+                                     int& luaCount,
+                                     int depth = 0) {
+    if (depth > 32)
+        return;
+
+    DIR* d = opendir(directory.c_str());
+    if (!d)
+        return;
+
+    while (struct dirent* ent = readdir(d)) {
+        const char* name = ent->d_name;
+        if (!name || !*name || !std::strcmp(name, ".") || !std::strcmp(name, ".."))
+            continue;
+
+        std::string full = directory;
+        if (!full.empty() && full.back() != '/')
+            full += '/';
+        full += name;
+
+        struct stat st = {};
+        if (stat(full.c_str(), &st) != 0)
+            continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            countLuaScriptsRecursive(full, luaCount, depth + 1);
+            continue;
+        }
+
+        const size_t len = std::strlen(name);
+        if (len >= 4 &&
+            std::tolower((unsigned char)name[len - 4]) == '.' &&
+            std::tolower((unsigned char)name[len - 3]) == 'l' &&
+            std::tolower((unsigned char)name[len - 2]) == 'u' &&
+            std::tolower((unsigned char)name[len - 1]) == 'a') {
+            ++luaCount;
+        }
+    }
+
+    closedir(d);
+}
+
+void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
+    // Materialize the entire Scripts tree before CryEngine starts. This ensures
+    // nested directories such as scripts/materials exist when the engine scans
+    // them and makes every script stored in FCData PAKs available as a normal
+    // Switch file before the first Lua load.
+    mkdir("scripts", 0755);
+    mkdir("scripts/materials", 0755);
+
+    const bool ready = tryMaterializePakDirectory("scripts");
+
+    // Keep these directories present even if a PAK contains no explicit ZIP
+    // directory record for an otherwise-valid empty directory.
+    mkdir("scripts", 0755);
+    mkdir("scripts/materials", 0755);
+
+    int luaCount = 0;
+    countLuaScriptsRecursive("scripts", luaCount);
+    compatLogFmt("scripts preload: ready=%d lua=%d", ready ? 1 : 0, luaCount);
 }
 
 void compatProbePakArchives(const char* dataRoot) {
@@ -3962,8 +4018,9 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
             countShaderScriptsRecursive(resolved, cslCount, csiCount);
         }
 
-        compatLogFmt("shader dir: %s ready=%d csl=%d csi=%d",
-                     dirs[i], ready ? 1 : 0, cslCount, csiCount);
+        (void)ready;
+        (void)cslCount;
+        (void)csiCount;
     }
 
     // The Android CryPak implementation used by the guest shader loader can
@@ -3985,10 +4042,9 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
         tryMaterializeUniquePakBasename(
             "Shaders/HWScripts/CGPShaders.csl");
 
-    compatLogFmt("shader root fallback: CGVProgramms=%s CGVPMacro=%s CGPShaders=%s",
-                 rootCgvProgramms ? "ready" : "missing",
-                 rootCgvMacro ? "ready" : "missing",
-                 rootCgpShaders ? "ready" : "missing");
+    (void)rootCgvProgramms;
+    (void)rootCgvMacro;
+    (void)rootCgpShaders;
 
     // Android CGP shader files can reference CommonSubroutines before
     // the guest loader has successfully registered CGVProgramms.csl.
@@ -3997,8 +4053,7 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     const bool commonPatch = patchCommonSubroutinesIntoShaderMacro(
         "Shaders/HWScripts/Declarations/CGVPMacro.csi",
         "Shaders/HWScripts/Declarations/CGVProgramms.csl");
-    compatLogFmt("shader common patch result: %s",
-                 commonPatch ? "ready" : "not-applied");
+    (void)commonPatch;
 
     const bool commonCsl =
         tryMaterializeUniquePakBasename(
@@ -4007,9 +4062,8 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
         tryMaterializeUniquePakBasename(
             "Shaders/Scripts/CommonSubroutines.csi");
 
-    compatLogFmt("shader common: csl=%s csi=%s",
-                 commonCsl ? "ready" : "missing",
-                 commonCsi ? "ready" : "missing");
+    (void)commonCsl;
+    (void)commonCsi;
 }
 
 
@@ -4212,7 +4266,7 @@ static struct dirent* stub_readdir(DIR* dir) {
     auto it = g_readdirPaths.find(dir);
     if (it != g_readdirPaths.end()) {
         unsigned& count = g_readdirCounts[dir];
-        if (count < 32) {
+        if (count < 32 && !isShaderPathForDiag(it->second.c_str())) {
             compatLogFmt("readdir[%u] %s -> %s",
                          count, it->second.c_str(), ent->d_name);
         }
@@ -4244,7 +4298,7 @@ static struct dirent* stub_readdir64(DIR* dir) {
     auto it = g_readdirPaths.find(dir);
     if (it != g_readdirPaths.end()) {
         unsigned& count = g_readdirCounts[dir];
-        if (count < 32) {
+        if (count < 32 && !isShaderPathForDiag(it->second.c_str())) {
             compatLogFmt("readdir64[%u] %s -> %s",
                          count, it->second.c_str(), ent->d_name);
         }
@@ -4270,8 +4324,6 @@ static DIR* stub_opendir(const char* path) {
             g_readdirPaths[d] = ioPath;
             g_readdirCounts[d] = 0;
         }
-        if (isShaderPathForDiag(ioPath))
-            compatLogFmt("opendir SHADER OK: requested=%s", ioPath);
         return d;
     }
 
@@ -4289,11 +4341,9 @@ static DIR* stub_opendir(const char* path) {
                     g_readdirCounts[d] = 0;
                 }
             }
-            if (isShaderPathForDiag(ioPath))
-                compatLogFmt("opendir SHADER CASEFIX: requested=%s resolved=%s",
+            if (!isShaderPathForDiag(ioPath))
+                compatLogFmt("opendir CASEFIX: %s -> %s",
                              ioPath ? ioPath : "?", resolved.c_str());
-            compatLogFmt("opendir CASEFIX: %s -> %s",
-                         ioPath ? ioPath : "?", resolved.c_str());
             return d;
         }
     }
@@ -4306,16 +4356,14 @@ static DIR* stub_opendir(const char* path) {
                 d = opendir(dirResolved.c_str());
         }
         if (d) {
-            if (isShaderPathForDiag(ioPath))
-                compatLogFmt("opendir SHADER PAK: %s", ioPath);
-            compatLogFmt("opendir PAK: %s", ioPath);
+            if (!isShaderPathForDiag(ioPath))
+                compatLogFmt("opendir PAK: %s", ioPath);
             return d;
         }
     }
 
-    if (isShaderPathForDiag(ioPath))
-        compatLogFmt("opendir SHADER FAIL: %s", ioPath ? ioPath : "?");
-    compatLogFmt("opendir FAIL: %s", ioPath ? ioPath : "?");
+    if (!isShaderPathForDiag(ioPath))
+        compatLogFmt("opendir FAIL: %s", ioPath ? ioPath : "?");
     return nullptr;
 }
 
