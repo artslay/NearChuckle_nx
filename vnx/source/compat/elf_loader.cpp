@@ -933,6 +933,15 @@ static void applyRela(LoadedSo* so, const Elf64_Rela* relas, size_t count,
         }
 
         uint64_t sym_addr = 0;
+        if (isCtypeTraceSym(sym_name)) {
+            compatLogFmt("CTYPE RELA: %s type=%u r_offset=0x%llx addend=%lld shndx=%u st_value=0x%llx",
+                         sym_name,
+                         type,
+                         (unsigned long long)r.r_offset,
+                         (long long)r.r_addend,
+                         (unsigned)sym.st_shndx,
+                         (unsigned long long)sym.st_value);
+        }
         if (sym.st_shndx != SHN_UNDEF && sym.st_value != 0) {
             sym_addr = (uint64_t)exec_base + sym.st_value;
         } else if (sym_name[0]) {
