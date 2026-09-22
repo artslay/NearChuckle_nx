@@ -11,6 +11,7 @@ static CompatLayer g_compat = {};
 static Mutex g_log_lock;
 static FILE* g_log = nullptr;
 static bool g_log_initialized = false;
+static bool g_log_closed = false;
 static LoadedSo* g_game_so = nullptr;
 
 static bool g_boot_console = false;
@@ -61,7 +62,7 @@ static char g_android_tls[1024] __attribute__((aligned(16)));
 static char g_android_tls_sub[512] __attribute__((aligned(16)));
 
 static void log_open() {
-    if (g_log)
+    if (g_log || g_log_closed)
         return;
 
     const char* mode = g_log_initialized ? "a" : "w";
@@ -71,7 +72,7 @@ static void log_open() {
 }
 
 static void log_write(const char* text) {
-    if (!text)
+    if (!text || g_log_closed)
         return;
 
     log_open();
@@ -82,15 +83,34 @@ static void log_write(const char* text) {
     std::fflush(g_log);
 }
 
+static bool is_main_loop_marker(const char* msg) {
+    return msg && std::strstr(msg, "CXGame::Run: entered main game loop") != nullptr;
+}
+
+static void log_close_locked() {
+    if (g_log) {
+        std::fflush(g_log);
+        std::fclose(g_log);
+        g_log = nullptr;
+    }
+    g_log_closed = true;
+}
+
 CompatLayer* compatGet() {
     return &g_compat;
 }
 
 void compatLog(const char* msg) {
     mutexLock(&g_log_lock);
+
+    const bool main_loop_marker = is_main_loop_marker(msg);
     log_write(msg);
 
-    if (g_boot_console && bootUiInteresting(msg)) {
+    // Once CryEngine has entered its real main loop, stop all startup logging.
+    // Do this after writing the marker itself, and never reopen the file again.
+    if (main_loop_marker) {
+        log_close_locked();
+    } else if (g_boot_console && bootUiInteresting(msg)) {
         if (g_ui_line_count < 18) {
             std::snprintf(g_ui_lines[g_ui_line_count],
                           sizeof(g_ui_lines[g_ui_line_count]), "%s", msg ? msg : "");
@@ -120,24 +140,27 @@ void compatLogFmt(const char* fmt, ...) {
 }
 
 void compatLogRaw(const char* msg) {
+    mutexLock(&g_log_lock);
+    const bool main_loop_marker = is_main_loop_marker(msg);
     log_write(msg);
+    if (main_loop_marker)
+        log_close_locked();
+    mutexUnlock(&g_log_lock);
 }
 
 void compatLogFlush() {
     mutexLock(&g_log_lock);
-    log_open();
-    if (g_log)
-        std::fflush(g_log);
+    if (!g_log_closed) {
+        log_open();
+        if (g_log)
+            std::fflush(g_log);
+    }
     mutexUnlock(&g_log_lock);
 }
 
 void compatLogClose() {
     mutexLock(&g_log_lock);
-    if (g_log) {
-        std::fflush(g_log);
-        std::fclose(g_log);
-        g_log = nullptr;
-    }
+    log_close_locked();
     mutexUnlock(&g_log_lock);
 }
 
