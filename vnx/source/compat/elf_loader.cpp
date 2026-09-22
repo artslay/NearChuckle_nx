@@ -688,6 +688,10 @@ static void logUnrecoveredFault(ThreadExceptionDump* ctx) {
     dumpFaultMemory("x0", ctx->cpu_gprs[0].x);
     dumpFaultMemory("x3", ctx->cpu_gprs[3].x);
     dumpFaultMemory("x23", ctx->cpu_gprs[23].x);
+    // x20 is the base object used by the crashing instruction sequence:
+    //   ldr x9, [x20]
+    // Dump it so we can see the field that supplied the invalid x9 pointer.
+    dumpFaultMemory("x20", ctx->cpu_gprs[20].x);
 
     elfLogAddrInfo("UNRECOVERED FAULT pc", ctx->pc.x);
     elfLogAddrInfo("UNRECOVERED FAULT far", ctx->far.x);
