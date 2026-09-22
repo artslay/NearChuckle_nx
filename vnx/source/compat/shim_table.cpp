@@ -83,6 +83,7 @@ extern "C" {
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <functional>
 #include <unordered_map>
 #include <atomic>
 
@@ -3911,16 +3912,61 @@ void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
 
     const bool ready = tryMaterializePakDirectory("scripts");
 
-    // Keep these directories present even if a PAK contains no explicit ZIP
-    // directory record for an otherwise-valid empty directory.
     mkdir("scripts", 0755);
     mkdir("scripts/materials", 0755);
 
     int luaCount = 0;
     countLuaScriptsRecursive("scripts", luaCount);
-    compatLogFmt("scripts preload: ready=%d lua=%d", ready ? 1 : 0, luaCount);
-}
 
+    struct stat mat = {};
+    const bool matDefault =
+        (stat("scripts/materials/mat_default.lua", &mat) == 0) &&
+        S_ISREG(mat.st_mode);
+    compatLogFmt("scripts preload: ready=%d lua=%d mat_default=%s",
+                 ready ? 1 : 0, luaCount, matDefault ? "present" : "MISSING");
+
+    // Keep script diagnostics, but only for actual Lua files. This gives us a
+    // complete deterministic list without flooding the log with directories.
+    std::vector<std::string> files;
+    std::function<void(const std::string&, int)> collect =
+        [&](const std::string& directory, int depth) {
+            if (depth > 32)
+                return;
+            DIR* d = opendir(directory.c_str());
+            if (!d)
+                return;
+            while (struct dirent* ent = readdir(d)) {
+                const char* name = ent->d_name;
+                if (!name || !*name || !std::strcmp(name, ".") || !std::strcmp(name, ".."))
+                    continue;
+                std::string full = directory;
+                if (!full.empty() && full.back() != '/')
+                    full += '/';
+                full += name;
+                struct stat st = {};
+                if (stat(full.c_str(), &st) != 0)
+                    continue;
+                if (S_ISDIR(st.st_mode)) {
+                    collect(full, depth + 1);
+                    continue;
+                }
+                const size_t len = std::strlen(name);
+                if (len >= 4 &&
+                    std::tolower((unsigned char)name[len - 4]) == '.' &&
+                    std::tolower((unsigned char)name[len - 3]) == 'l' &&
+                    std::tolower((unsigned char)name[len - 2]) == 'u' &&
+                    std::tolower((unsigned char)name[len - 1]) == 'a') {
+                    files.push_back(full);
+                }
+            }
+            closedir(d);
+        };
+
+    collect("scripts", 0);
+    std::sort(files.begin(), files.end());
+    for (const std::string& path : files)
+        compatLogFmt("script preload: %s", path.c_str());
+}
 void compatProbePakArchives(const char* dataRoot) {
     const std::string root = dataRoot ? dataRoot : "";
     std::string fcdata = root;
