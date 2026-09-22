@@ -916,6 +916,55 @@ static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
     }
 
     const uint32_t old = *insn;
+
+    // Find direct branches in the preceding 0x400 bytes that target the BRK.
+    // This identifies the real error/abort path without executing or modifying
+    // the guest instruction.
+    const uint64_t scanStart = kBrkOffset > 0x400 ? kBrkOffset - 0x400 : 0;
+    for (uint64_t off = scanStart; off < kBrkOffset; off += 4) {
+        const uint32_t w = *reinterpret_cast<const uint32_t*>(
+            stage_base + min_vaddr + off);
+        bool hits = false;
+        const char* kind = nullptr;
+        int64_t target = 0;
+
+        if ((w & 0x7c000000u) == 0x14000000u ||
+            (w & 0xfc000000u) == 0x94000000u) {
+            int32_t imm26 = (int32_t)(w & 0x03ffffffu);
+            if (imm26 & 0x02000000)
+                imm26 |= (int32_t)0xfc000000;
+            target = (int64_t)off + ((int64_t)imm26 << 2);
+            hits = (target == (int64_t)kBrkOffset);
+            kind = ((w & 0x7c000000u) == 0x14000000u) ? "B" : "BL";
+        } else if ((w & 0xff000010u) == 0x54000000u) {
+            int32_t imm19 = (int32_t)((w >> 5) & 0x7ffffu);
+            if (imm19 & 0x40000)
+                imm19 |= (int32_t)0xfff80000;
+            target = (int64_t)off + ((int64_t)imm19 << 2);
+            hits = (target == (int64_t)kBrkOffset);
+            kind = "B.cond";
+        } else if ((w & 0x7e000000u) == 0x34000000u) {
+            int32_t imm19 = (int32_t)((w >> 5) & 0x7ffffu);
+            if (imm19 & 0x40000)
+                imm19 |= (int32_t)0xfff80000;
+            target = (int64_t)off + ((int64_t)imm19 << 2);
+            hits = (target == (int64_t)kBrkOffset);
+            kind = ((w >> 24) & 1) ? "CBNZ" : "CBZ";
+        } else if ((w & 0x7f000000u) == 0x36000000u) {
+            int32_t imm14 = (int32_t)((w >> 5) & 0x3fffu);
+            if (imm14 & 0x2000)
+                imm14 |= (int32_t)0xffffc000;
+            target = (int64_t)off + ((int64_t)imm14 << 2);
+            hits = (target == (int64_t)kBrkOffset);
+            kind = ((w >> 24) & 1) ? "TBNZ" : "TBZ";
+        }
+
+        if (hits) {
+            compatLogFmt("CrySystem BRK TARGETED BY: from=0x%llx word=%08x kind=%s",
+                         (unsigned long long)off, w, kind);
+        }
+    }
+
     compatLogFmt("CrySystem BRK DIAG: off=0x%llx word=%08x (instruction left unchanged)",
                  (unsigned long long)kBrkOffset, old);
 }
