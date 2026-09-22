@@ -909,7 +909,9 @@ static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
         return true;
     };
 
-    const uint8_t* bytes = stage_base;
+    // stage_base is the ELF load-bias pointer (stage - min_vaddr). The
+    // actual staged image begins at stage_base + min_vaddr.
+    const uint8_t* bytes = stage_base + min_vaddr;
     for (size_t off = 0; off + 12 <= alloc_size; off += 4) {
         uint32_t w0, w1, w2;
         std::memcpy(&w0, bytes + off + 0, sizeof(w0));
@@ -934,8 +936,8 @@ static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
         matchOffset = (uint32_t)off;
         fieldOffset = imm12;
 
-        compatLogFmt("VIDEO PANEL SIGNATURE CANDIDATE: off=0x%llx field=0x%x words=%08x %08x %08x",
-                     (unsigned long long)off, imm12, w0, w1, w2);
+        compatLogFmt("VIDEO PANEL SIGNATURE CANDIDATE: vaddr=0x%llx field=0x%x words=%08x %08x %08x",
+                     (unsigned long long)(min_vaddr + off), imm12, w0, w1, w2);
     }
 
     if (matches == 0) {
@@ -963,8 +965,8 @@ static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
 
     g_near_video_panel_finished_offset = fieldOffset;
 
-    compatLogFmt("VIDEO PANEL PATCH: IsPlaying @0x%08x -> return 0 (field=0x%x)",
-                 matchOffset, fieldOffset);
+    compatLogFmt("VIDEO PANEL PATCH: IsPlaying vaddr=0x%08x -> return 0 (field=0x%x)",
+                 (unsigned)(min_vaddr + matchOffset), fieldOffset);
     compatLogFmt("VIDEO PANEL PATCH OLD: %08x %08x %08x",
                  old0, old1, old2);
     return true;
@@ -995,6 +997,9 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
     base = base ? base + 1 : path;
 
     if (std::strcmp(base, "libCryGame.so") == 0) {
+        compatLogFmt("VIDEO PANEL PATCH: scanning libCryGame image min_vaddr=0x%llx size=0x%llx",
+                     (unsigned long long)min_vaddr,
+                     (unsigned long long)alloc_size);
         if (!patchVideoPanelIsPlaying(so, stage_base, min_vaddr, alloc_size))
             compatLog("VIDEO PANEL PATCH: not applied");
         return;
