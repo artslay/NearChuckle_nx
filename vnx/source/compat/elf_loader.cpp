@@ -633,6 +633,62 @@ static void logUnrecoveredFault(ThreadExceptionDump* ctx) {
         compatLogRaw(buf);
     }
 
+    // Extra shader-crash forensics: the current FAR is not a valid Switch
+    // pointer. Dump the actual faulting instruction and the nearby heap bytes
+    // referenced by the live registers so we can distinguish parser corruption
+    // from an ABI/layout problem inside libXRenderOGL.
+    {
+        MemoryInfo pcMi = {};
+        u32 pcPi = 0;
+        if (!R_FAILED(svcQueryMemory(&pcMi, &pcPi, ctx->pc.x)) &&
+            (pcMi.perm & Perm_X)) {
+            const uint64_t region_end = pcMi.addr + pcMi.size;
+            uint64_t start = ctx->pc.x & ~0xFULL;
+            if (start < pcMi.addr) start = pcMi.addr;
+            if (start + 0x30 <= region_end) {
+                for (uint64_t a = start; a < start + 0x30; a += 4) {
+                    const uint32_t insn =
+                        *(const volatile uint32_t*)(uintptr_t)a;
+                    snprintf(buf, sizeof(buf),
+                             "UNRECOVERED FAULT PC+0x%llx @%p insn=%08x",
+                             (unsigned long long)(a - ctx->pc.x),
+                             (void*)a, insn);
+                    compatLogRaw(buf);
+                }
+            }
+        }
+    }
+
+    auto dumpFaultMemory = [&](const char* label, uint64_t addr) {
+        if (!addr) return;
+        MemoryInfo mi = {};
+        u32 pi = 0;
+        if (R_FAILED(svcQueryMemory(&mi, &pi, addr)) ||
+            !(mi.perm & Perm_R)) {
+            return;
+        }
+
+        const uint64_t region_end = mi.addr + mi.size;
+        uint64_t start = (addr >= 0x20) ? (addr - 0x20) : addr;
+        start &= ~0x7ULL;
+        if (start < mi.addr) start = mi.addr;
+        const uint64_t end = start + 0x40;
+        if (end > region_end) return;
+
+        for (uint64_t a = start; a < end; a += 8) {
+            const uint64_t v =
+                *(const volatile uint64_t*)(uintptr_t)a;
+            snprintf(buf, sizeof(buf),
+                     "UNRECOVERED FAULT MEM %s @%p = %016llx",
+                     label, (void*)a, (unsigned long long)v);
+            compatLogRaw(buf);
+        }
+    };
+
+    dumpFaultMemory("x0", ctx->cpu_gprs[0].x);
+    dumpFaultMemory("x3", ctx->cpu_gprs[3].x);
+    dumpFaultMemory("x23", ctx->cpu_gprs[23].x);
+
     elfLogAddrInfo("UNRECOVERED FAULT pc", ctx->pc.x);
     elfLogAddrInfo("UNRECOVERED FAULT far", ctx->far.x);
 }
