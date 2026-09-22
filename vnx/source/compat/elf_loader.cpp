@@ -1077,7 +1077,13 @@ static bool patchFarCryInputThunkCrashPath(LoadedSo* so, uint8_t* stage_base,
 // leaving renderer, input, PAK and the rest of the game initialization untouched.
 static void patchFarCrySkipLoadConfiguration(LoadedSo* so, uint8_t* stage_base,
                                               uint64_t min_vaddr, size_t alloc_size) {
-    if (!so || !stage_base || std::strcmp(so->path.c_str(), "libCryGame.so") != 0)
+    if (!so || !stage_base)
+        return;
+
+    const char* path = so->path.c_str();
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (std::strcmp(base, "libCryGame.so") != 0)
         return;
 
     constexpr uint64_t kOffset = 0xF96B8;
@@ -1088,9 +1094,13 @@ static void patchFarCrySkipLoadConfiguration(LoadedSo* so, uint8_t* stage_base,
         return;
     }
 
-    uint32_t* insn = reinterpret_cast<uint32_t*>(stage_base + min_vaddr + kOffset);
+    uint8_t* target = stage_base + min_vaddr + kOffset;
+    uint32_t* insn = reinterpret_cast<uint32_t*>(target);
     const uint32_t old = *insn;
+    compatLogFmt("FARCRY LOADCFG A/B: candidate path=%s base=%p +0x%llx old=%08x",
+                 path, (void*)insn, (unsigned long long)kOffset, old);
     *insn = 0xD65F03C0u; // RET
+    armICacheInvalidate(target, 4);
     compatLogFmt("FARCRY LOADCFG A/B: patched +0x%llx old=%08x new=%08x",
                  (unsigned long long)kOffset, old, *insn);
 }
