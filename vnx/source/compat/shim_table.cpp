@@ -4867,7 +4867,11 @@ static void stub_gnu_unwind_frame(void*, void*) {}
 // char index (the exact thing that faulted at poison-4) lands in mapped,
 // zeroed memory instead of crashing.
 static unsigned char g_ctype_storage[128 + 1 + 256 + 128];
-static const unsigned char* g_ctype_base = nullptr;  // points at the [c+1]=EOF slot
+// Bionic exports _ctype_ as a DATA symbol of type "const char*": the symbol
+// itself is the pointer variable, whose contents point at the classification
+// table. Keep the pointer initialized statically so relocation can always use
+// a valid object address even before CtypeInit runs.
+static const unsigned char* g_ctype_base = g_ctype_storage + 128;  // _ctype_ variable -> table
 struct CtypeInit {
     CtypeInit() {
         // Bit flags match Bionic/BSD <ctype.h>: _U _L _N _S _P _C _X _B.
@@ -6280,9 +6284,13 @@ void* shimResolve(const char* name) {
 // shadow a game that ships its own copies of these symbols.
 void* shimResolveFallback(const char* name) {
     if (!name) return nullptr;
-    // _ctype_ is a data symbol whose ADDRESS is the classification table.
+    // Bionic defines _ctype_ as a data object of type "const char*".
+    // Relocations therefore need the ADDRESS OF THE POINTER VARIABLE; code
+    // first loads [GOT] -> &_ctype_, then loads [_ctype_] -> table address.
+    // Returning the table directly makes that second load read the first eight
+    // bytes of the table as a pointer (which was exactly our 0x202020... crash).
     if (strcmp(name, "_ctype_") == 0)
-        return (void*)(g_ctype_base ? g_ctype_base : g_ctype_storage + 128);
+        return (void*)&g_ctype_base;
     for (size_t i = 0; g_unity_fallback_shims[i].name; i++) {
         if (strcmp(g_unity_fallback_shims[i].name, name) == 0)
             return g_unity_fallback_shims[i].ptr;
