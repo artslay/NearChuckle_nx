@@ -243,6 +243,13 @@ static char* stub_realpath(const char* p, char* out) {
                 free(out);
             return nullptr;
         }
+        if (p && strcasestr(p, "sidle_loop.caf")) {
+            char caller[256];
+            elfDescribePc((uint64_t)__builtin_return_address(0),
+                          caller, sizeof(caller));
+            compatLogFmt("realpath WRITE DIAG: out=%p len=%zu caller=%s",
+                         (void*)out, canonical.size() + 1, caller);
+        }
         memcpy(out, canonical.c_str(), canonical.size() + 1);
         compatLogFmt("realpath RESULT: %s -> %s", p, out);
         return out;
@@ -575,6 +582,16 @@ static void sh_abort() {
     logTermCaller("abort called", __builtin_return_address(0));
     logBacktrace(__builtin_frame_address(0));
     abort();
+}
+
+extern "C" void __stack_chk_fail(void);
+static void sh_stack_chk_fail(void) {
+    void* ra = __builtin_return_address(0);
+    char where[256];
+    elfDescribePc((uint64_t)ra, where, sizeof(where));
+    compatLogFmt("STACK CHK FAIL from %p %s", ra, where);
+    compatLogFlush();
+    __stack_chk_fail();
 }
 static void sh_exit_raw(int code) {
     compatLogFmt("game called _exit(%d)", code);
@@ -5554,7 +5571,7 @@ static const ShimEntry g_shims[] = {
     {"setenv",      (void*)stub_setenv},
     {"unsetenv",    (void*)stub_unsetenv},
     {"__errno",     (void*)bionic_errno},
-    {"__stack_chk_fail",   (void*)__stack_chk_fail},
+    {"__stack_chk_fail",   (void*)sh_stack_chk_fail},
     {"__cxa_atexit",       (void*)__cxa_atexit},
     {"__cxa_pure_virtual", (void*)__cxa_pure_virtual},
     {"__cxa_thread_atexit_impl", (void*)stub___cxa_thread_atexit_impl},
