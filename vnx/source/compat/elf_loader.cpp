@@ -1159,6 +1159,54 @@ static bool patchFarCrySetGlobalTagHandlerString(LoadedSo* so, uint8_t* stage_ba
     return true;
 }
 
+// A/B experiment for the next crash after disabling the string-tag setter.
+// The crash is now reported in CScriptSink::OnSetGlobal +0xa4. The original
+// Far Cry implementation only calls CXConsole::RefreshVariable(), so bypass
+// this callback to determine whether RefreshVariable/console synchronization
+// is the next incompatible host path. This is diagnostic-only.
+static bool patchFarCryScriptSinkOnSetGlobal(LoadedSo* so, uint8_t* stage_base,
+                                             uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* path = so->path.c_str();
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (std::strcmp(base, "libCrySystem.so") != 0)
+        return false;
+
+    constexpr const char* kSym = "_ZN11CScriptSink11OnSetGlobalEPKc";
+    void* fn = so->findSym(kSym);
+    if (!fn) {
+        compatLogFmt("FARCRY SCRIPTSINK A/B: symbol not found: %s", kSym);
+        return false;
+    }
+
+    const uintptr_t imageBase = (uintptr_t)so->base;
+    const uintptr_t addr = (uintptr_t)fn;
+    if (addr < imageBase || addr - imageBase >= alloc_size) {
+        compatLogFmt(
+            "FARCRY SCRIPTSINK A/B: symbol outside image fn=%p base=%p size=0x%llx",
+            fn, (void*)imageBase, (unsigned long long)alloc_size);
+        return false;
+    }
+
+    const uint64_t off = (uint64_t)(addr - imageBase);
+    uint32_t* insn = reinterpret_cast<uint32_t*>(
+        stage_base + min_vaddr + off);
+    const uint32_t old0 = insn[0];
+    const uint32_t old1 = insn[1];
+
+    insn[0] = 0xd65f03c0u; // RET
+    insn[1] = 0xd503201fu; // NOP (keeps the log/decode stable if inspected)
+    armICacheInvalidate(insn, 8);
+
+    compatLogFmt(
+        "FARCRY SCRIPTSINK A/B: patched OnSetGlobal +0x%llx old=%08x %08x new=%08x %08x",
+        (unsigned long long)off, old0, old1, insn[0], insn[1]);
+    return true;
+}
+
 // ─── Per-game binary quirk patches ─────────────────────────────────────────────
 // The actual fixups live in source/compat/games/ (one file per title), reached
 // through compat/games.h, so game-specific patches stay isolated from the shared
@@ -1186,6 +1234,12 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
     if (std::strcmp(base, "libCryScriptSystem.so") == 0) {
         if (!patchFarCrySetGlobalTagHandlerString(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY SCRIPT SETGLOBAL A/B: patch not applied");
+        return;
+    }
+
+    if (std::strcmp(base, "libCrySystem.so") == 0) {
+        if (!patchFarCryScriptSinkOnSetGlobal(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY SCRIPTSINK A/B: patch not applied");
         return;
     }
 
