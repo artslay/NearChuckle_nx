@@ -571,7 +571,7 @@ static int run_farcry(LoadedSo* game_so) {
 
     std::snprintf(arg2, sizeof(arg2), "%d", config.screen_width);
     std::snprintf(arg4, sizeof(arg4), "%d", config.screen_height);
-    std::snprintf(arg6, sizeof(arg6), "%s", arg8);
+    std::snprintf(arg6, sizeof(arg6), "%d", config.screen_height);
     std::snprintf(arg10, sizeof(arg10), "%d", config.fov);
 
     char* argv[25];
