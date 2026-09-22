@@ -869,16 +869,16 @@ LoadedSo* elfDlopen(const char* name) {
 static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
                                  uint64_t min_vaddr, size_t alloc_size,
                                  const char* path) {
-    // Diagnostic-only handling for the current Far Cry bring-up crash.
-    // The original image contains BRK #1 at libCrySystem.so + 0x7d0e0.
-    // We previously replaced that BRK with NOP, but the resulting
-    // "stack smash" was not trustworthy: the instruction immediately before
-    // it is part of a completed epilogue, so falling through after BRK can
-    // execute a different code block/function and manufacture a canary failure.
+    // Diagnostic/experimental handling for the current Far Cry bring-up crash.
+    // libCrySystem.so + 0x7d0e0 contains BRK #1. The preceding CBNZ at
+    // +0x7d01c jumps directly into it when the helper at +0xff4d0 returns
+    // non-zero. Replacing the BRK itself with NOP previously caused execution
+    // to fall through inside the error/cleanup block and produced an unrelated
+    // heap/stack failure.
     //
-    // Do NOT modify the guest instruction here. Dump its branch targets and
-    // leave the original BRK intact so the next crash report represents the
-    // real guest control flow.
+    // This experiment keeps the BRK untouched and instead NOPs only that
+    // conditional branch, so execution follows the normal fall-through path
+    // of GetFileSize. All original instructions are still dumped first.
     if (!path || !stage_base)
         return;
 
@@ -917,6 +917,7 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
     }
 
     const uint32_t old = *insn;
+    bool patchCbnzToBrk = false;
 
     // Extra load-time diagnostics for the exact path that reaches BRK #1.
     // The crash LR showed that execution returns to 0x7d01c, where CBNZ X0
@@ -938,6 +939,8 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
                          nonzero ? "CBNZ" : "CBZ",
                          rt,
                          (unsigned long long)cbTarget);
+            if (nonzero && rt == 0 && cbTarget == (int64_t)kBrkOffset)
+                patchCbnzToBrk = true;
         }
 
         const uint64_t callOff = 0x7d018;
@@ -967,7 +970,7 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
         const uint32_t add  = *reinterpret_cast<const uint32_t*>(
             stage_base + min_vaddr + addOff);
         if ((adrp & 0x9f000000u) == 0x90000000u &&
-            ((add & 0xffc003e0u) == 0x91000000u)) {
+            ((add & 0xffc00000u) == 0x91000000u)) {
             int64_t imm21 = (int64_t)(((adrp >> 5) & 0x7ffffu) << 2) |
                               (int64_t)((adrp >> 29) & 3u);
             if (imm21 & (1ll << 20))
@@ -1042,7 +1045,19 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
         }
     }
 
-    compatLogFmt("CrySystem BRK DIAG: off=0x%llx word=%08x (instruction left unchanged)",
+    if (patchCbnzToBrk) {
+        constexpr uint64_t kCbnzOffset = 0x7d01c;
+        uint32_t* cbnzInsn = reinterpret_cast<uint32_t*>(
+            stage_base + min_vaddr + kCbnzOffset);
+        const uint32_t cbnzOld = *cbnzInsn;
+        *cbnzInsn = 0xd503201fu; // NOP
+        compatLogFmt("CrySystem BRK EXPERIMENT: NOP CBNZ at 0x%llx old=%08x new=%08x",
+                     (unsigned long long)kCbnzOffset,
+                     cbnzOld,
+                     *cbnzInsn);
+    }
+
+    compatLogFmt("CrySystem BRK DIAG: off=0x%llx word=%08x (BRK left unchanged)",
                  (unsigned long long)kBrkOffset, old);
 }
 
