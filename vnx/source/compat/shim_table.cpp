@@ -2444,10 +2444,11 @@ static int stub_open(const char* path, int flags, ...) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
-    if (path && ioPathStorage != path)
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
+
+    if (path && ioPathStorage != path)
         compatLogFmt("path NORMALIZE: open %s -> %s", path, ioPathStorage.c_str());
 
     int vfd = devUrandomOpen(ioPath);
