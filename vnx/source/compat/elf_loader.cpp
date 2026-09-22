@@ -1124,7 +1124,7 @@ static bool patchFarCrySetGlobalTagHandlerString(LoadedSo* so, uint8_t* stage_ba
         return false;
 
     constexpr const char* kSym =
-        "_ZN13CScriptSystem26SetGlobalTagHandlerStringEP9lua_State";
+        "_ZN13CScriptSystem25SetGlobalTagHandlerStringEP9lua_State";
 
     void* fn = so->findSym(kSym);
     if (!fn) {
