@@ -549,6 +549,11 @@ static int run_farcry(LoadedSo* game_so) {
     char arg8[] = "r_NoPS20 0";
     char arg9[] = "r_GL_NV30_PS20 1";
     char arg10[] = "GL_NV30_PS20 1";
+    // CryEngine's shader bootstrap only loads HWScripts when this CVar is
+    // enabled. Keep the guest on the Android hardware-shader path so shared
+    // CG scripts such as PosCommon are registered before individual .crycg
+    // vertex programs are compiled.
+    char arg12[] = "r_UseHWShaders 1";
     // The menu background movie is not usable on the Switch port yet.
     // Disable it at launch so later menu updates do not try to play AMD64.bik.
     char arg11[] = "ui_BackGroundVideo 0";
@@ -557,7 +562,7 @@ static int run_farcry(LoadedSo* game_so) {
     std::snprintf(arg3, sizeof(arg3), "r_Height %d", config.screen_height);
     std::snprintf(arg5, sizeof(arg5), "game_fov %d", config.fov);
 
-    char* argv[12];
+    char* argv[13];
     argv[0] = arg0;
     argv[1] = arg1;
     argv[2] = arg2;
@@ -568,8 +573,9 @@ static int run_farcry(LoadedSo* game_so) {
     argv[7] = arg8;
     argv[8] = arg9;
     argv[9] = arg10;
+    argv[10] = arg12;
 
-    int argc = 10;
+    int argc = 11;
     if (config.vsync) {
         argv[argc++] = arg6;
     }
@@ -582,6 +588,7 @@ static int run_farcry(LoadedSo* game_so) {
 
     compatLog("Far Cry: Android-style graphics CVars queued (space-separated parser syntax)");
     compatLog("Far Cry: ui_BackGroundVideo=0 queued for post-init console parsing");
+    compatLog("Far Cry: r_UseHWShaders=1 queued for shader script registration");
     compatLog("Far Cry: command-line CVars use name value syntax");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
