@@ -739,6 +739,33 @@ volatile unsigned long g_sh_free_calls = 0;
 volatile unsigned long g_sh_malloc_calls = 0;
 volatile unsigned long g_sh_calloc_calls = 0;
 volatile unsigned long g_sh_realloc_calls = 0;
+volatile uint32_t g_last_allocator_kind = 0;
+volatile uint32_t g_last_allocator_phase = 0;
+volatile uint64_t g_last_allocator_pc = 0;
+volatile uint64_t g_last_allocator_ptr = 0;
+volatile uint64_t g_last_allocator_size = 0;
+volatile uint64_t g_last_allocator_size2 = 0;
+
+static void recordAllocatorEvent(uint32_t kind, uint64_t ptr, uint64_t size,
+                                  uint64_t size2, uint32_t phase) {
+    g_last_allocator_kind = kind;
+    g_last_allocator_ptr = ptr;
+    g_last_allocator_size = size;
+    g_last_allocator_size2 = size2;
+    g_last_allocator_pc = (uint64_t)(uintptr_t)__builtin_return_address(0);
+    g_last_allocator_phase = phase;
+}
+
+void shimLastAllocatorEvent(uint32_t* kind, uint32_t* phase, uint64_t* caller,
+                            uint64_t* ptr, uint64_t* size, uint64_t* size2) {
+    if (kind)  *kind  = g_last_allocator_kind;
+    if (phase) *phase = g_last_allocator_phase;
+    if (caller) *caller = g_last_allocator_pc;
+    if (ptr)   *ptr   = g_last_allocator_ptr;
+    if (size)  *size  = g_last_allocator_size;
+    if (size2) *size2 = g_last_allocator_size2;
+}
+
 unsigned long shimFreeCallCount(void) { return g_sh_free_calls; }
 void shimAllocCounts(unsigned long* m, unsigned long* c, unsigned long* r, unsigned long* f) {
     if (m) *m = g_sh_malloc_calls;
@@ -770,8 +797,24 @@ static void arenaGate(const char* who) {
                  who, elfCurrentModule(), elfCurrentCtor(), why);
 }
 
-static void* sh_malloc(size_t n) { g_sh_malloc_calls++; arenaGate("malloc"); return malloc(n); }
-static void* sh_calloc(size_t a, size_t b) { g_sh_calloc_calls++; arenaGate("calloc"); return calloc(a, b); }
+static void* sh_malloc(size_t n) {
+    g_sh_malloc_calls++;
+    recordAllocatorEvent(1, 0, n, 0, 1);
+    arenaGate("malloc");
+    void* r = malloc(n);
+    g_last_allocator_phase = 2;
+    g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
+    return r;
+}
+static void* sh_calloc(size_t a, size_t b) {
+    g_sh_calloc_calls++;
+    recordAllocatorEvent(2, 0, a, b, 1);
+    arenaGate("calloc");
+    void* r = calloc(a, b);
+    g_last_allocator_phase = 2;
+    g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
+    return r;
+}
 
 // ─── Heap integrity walk ────────────────────────────────────────────────────
 // The arena is corrupt before anything faults: _malloc_r calls _free_r
@@ -1072,6 +1115,7 @@ bool shimHeapCheck(char* why, size_t whysz) {
 static void sh_free(void* p) {
     if (!p) return;
     g_sh_free_calls++;
+    recordAllocatorEvent(3, (uint64_t)(uintptr_t)p, 0, 0, 1);
     arenaGate("free");
 
     // Android's original CMTSafeHeap::Free() calls plain ::free(p) on Linux.
@@ -1091,9 +1135,11 @@ static void sh_free(void* p) {
     }
 
     free(p);
+    g_last_allocator_phase = 2;
 }
 static void* sh_realloc(void* p, size_t n) {
     g_sh_realloc_calls++;
+    recordAllocatorEvent(4, (uint64_t)(uintptr_t)p, n, 0, 1);
     arenaGate("realloc");
 
     if (!p)
@@ -1116,7 +1162,10 @@ static void* sh_realloc(void* p, size_t n) {
                          p, n, oldUsable, where);
         }
 
-        return realloc(p, n);
+        void* r = realloc(p, n);
+        g_last_allocator_phase = 2;
+        g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
+        return r;
     }
 
     // Keep protection for pointers that are not part of the Switch heap at all.
@@ -1128,7 +1177,10 @@ static void* sh_realloc(void* p, size_t n) {
 
     compatLogFmt("realloc: SKIP non-heap ptr=%p size=%zu from %s",
                  p, n, where);
-    return malloc(n);
+    void* r = malloc(n);
+    g_last_allocator_phase = 2;
+    g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
+    return r;
 }
 
 // ─── /dev/urandom virtual fd ─────────────────────────────────────────────────
