@@ -551,9 +551,9 @@ static int run_farcry(LoadedSo* game_so) {
 }
 
 int main(int, char**) {
-    // Keep visible startup diagnostics on the Switch while the guest runtime
-    // and CryEngine are starting. The console remains active through Far Cry
-    // initialization so black-screen shader failures are visible.
+    // Keep visible startup diagnostics on the Switch until Far Cry is ready to
+    // create its real SDL/EGL window. The startup console is released before
+    // game_main() begins, so it cannot interfere with the game's framebuffer.
     compatUiInit();
 
     if (read_config("/switch/NearChuckle_nx/config.txt") != 0)
