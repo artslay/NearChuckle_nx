@@ -1645,7 +1645,8 @@ static bool tryMaterializePakPath(const char* targetPath, std::string& materiali
 
 static bool pakFindUniqueBasename(const std::string& pakPath,
                                   const std::string& wantedBasename,
-                                  std::string& matchedEntry) {
+                                  std::string& matchedEntry,
+                                  bool quietDiag = false) {
     matchedEntry.clear();
 
     FILE* pak = fopen(pakPath.c_str(), "rb");
@@ -1754,9 +1755,10 @@ static bool pakFindUniqueBasename(const std::string& pakPath,
     }
 
     if (matches > 1) {
-        compatLogFmt(
-            "PAK BASENAME AMBIGUOUS: %s <- %s (%d matches)",
-            wantedBasename.c_str(), pakPath.c_str(), matches);
+        if (!quietDiag)
+            compatLogFmt(
+                "PAK BASENAME AMBIGUOUS: %s <- %s (%d matches)",
+                wantedBasename.c_str(), pakPath.c_str(), matches);
     }
 
     return false;
@@ -1832,7 +1834,8 @@ static bool tryMaterializeUniquePakBasename(const char* targetPath) {
             pakPath += name;
 
             std::string matchedEntry;
-            if (!pakFindUniqueBasename(pakPath, wantedBasename, matchedEntry))
+            if (!pakFindUniqueBasename(pakPath, wantedBasename, matchedEntry,
+                                       isShaderPathForDiag(targetPath)))
                 continue;
 
             ++globalMatches;
@@ -2389,7 +2392,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
 
     if (apkcache::adopt(f, ioPath)) {
         setvbuf(f, nullptr, _IOFBF, 16 * 1024);
-        compatLogFmt("apkcache: caching reads from %s", ioPath ? ioPath : "?");
+        if (!shaderIo)
+            compatLogFmt("apkcache: caching reads from %s", ioPath ? ioPath : "?");
         return f;
     }
     setvbuf(f, nullptr, _IOFBF, 64 * 1024);
