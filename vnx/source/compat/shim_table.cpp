@@ -4124,7 +4124,7 @@ static void countLuaScriptsRecursive(const std::string& directory,
 }
 
 static const char* kScriptPrepMarker = ".nearchuckle_scripts_ready_v1";
-static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v2";
+static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v3";
 
 static bool prepMarkerExists(const char* marker) {
     if (!marker || !*marker)
@@ -4172,9 +4172,12 @@ static bool scriptPrepCacheReady() {
 }
 
 static bool shaderPrepCacheReady() {
-    // The persistent marker lets us skip all PAK directory scans after the
-    // preparation pass. For older installs created before the marker existed,
-    // accept an already-materialized shader tree and create the marker now.
+    // Only a matching persistent marker makes the shader preparation cache
+    // valid. Merely finding old materialized files is not enough: generated
+    // compatibility files may have changed between builds.
+    if (!prepMarkerExists(kShaderPrepMarker))
+        return false;
+
     const char* required[] = {
         "Shaders/HWScripts/Declarations/CGVProgramms.csl",
         "Shaders/HWScripts/Declarations/CGVPMacro.csi",
@@ -4191,10 +4194,45 @@ static bool shaderPrepCacheReady() {
             return false;
     }
 
-    if (!prepMarkerExists(kShaderPrepMarker))
-        writePrepMarker(kShaderPrepMarker);
-
     return true;
+}
+
+static bool refreshCoreShaderDeclarationsFromPak() {
+    const struct {
+        const char* entry;
+        const char* out;
+    } files[] = {
+        {"shaders/hwscripts/declarations/cgvprogramms.csl",
+         "Shaders/HWScripts/Declarations/CGVProgramms.csl"},
+        {"shaders/hwscripts/declarations/cgvpmacro.csi",
+         "Shaders/HWScripts/Declarations/CGVPMacro.csi"},
+        {"shaders/hwscripts/declarations/cgpshaders.csl",
+         "Shaders/HWScripts/Declarations/CGPShaders.csl"},
+        {"shaders/hwscripts/declarations/cgvprogramms.csl",
+         "Shaders/HWScripts/CGVProgramms.csl"},
+        {"shaders/hwscripts/declarations/cgvpmacro.csi",
+         "Shaders/HWScripts/CGVPMacro.csi"},
+        {"shaders/hwscripts/declarations/cgpshaders.csl",
+         "Shaders/HWScripts/CGPShaders.csl"},
+        {nullptr, nullptr}
+    };
+
+    std::string pakPath;
+    if (!resolvePathCaseInsensitive("FCData/Shaders.pak", pakPath))
+        return false;
+
+    bool allOk = true;
+    for (size_t i = 0; files[i].entry; ++i) {
+        if (!pakExtractEntry(pakPath, files[i].entry, files[i].out)) {
+            allOk = false;
+            compatLogFmt("shader declaration restore: FAIL %s",
+                         files[i].entry);
+            continue;
+        }
+        compatLogFmt("shader declaration restore: %s -> %s",
+                     files[i].entry, files[i].out);
+    }
+    return allOk;
 }
 
 void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
@@ -4309,9 +4347,8 @@ static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
 
 void compatPrepareShaderDirectories(const char* dataRoot) {
-    // Shader source files are materialized only during the first preparation.
-    // The generated files and the _pakcache_v3 entries persist on the SD card,
-    // so repeating the PAK directory/entry scans on every launch is unnecessary.
+    // A matching persistent marker means the known-good prepared tree can
+    // be reused. Otherwise perform the normal preparation pass once.
     if (shaderPrepCacheReady()) {
         compatLog("shader preload: cached=1 (skip FCData PAK scan)");
         return;
@@ -4358,6 +4395,11 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     (void)rootCgvProgramms;
     (void)rootCgvMacro;
     (void)rootCgpShaders;
+
+    // This pass is intentionally only part of the versioned first-run shader
+    // preparation. It restores the exact original declaration sources from
+    // Shaders.pak instead of trusting files left by an older compatibility build.
+    const bool declarationsRestored = refreshCoreShaderDeclarationsFromPak();
 
     // Keep the original CryEngine shader declaration layout intact:
     // CGVPMacro.csi contains the SubrScript placeholder, while
