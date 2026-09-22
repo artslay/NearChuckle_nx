@@ -19,31 +19,23 @@ static LoadedSo* g_game_so = nullptr;
 
 static bool g_boot_console = false;
 static const devoptab_t* g_boot_stdout_dotab = nullptr;
-static char g_ui_lines[18][128] = {};
-static int g_ui_line_count = 0;
 
-static bool bootUiInteresting(const char* msg) {
-    if (!msg || !*msg) return false;
-    static const char* const keys[] = {
-        "=== NearChuckle_nx start ===", "data_root=", "lib_dir=",
-        "mesa_driver=", "resolution=", "shader source", "PAK PROBE",
-        "pak DIR", "SHADER fopen CALL", "fopen FAIL: Shaders",
-        "bind: fopen", "bind: fopen64", "bind: opendir",
-        "bind: _findfirst64", "Starting Far Cry", "SDL:", "EGL:",
-        "GL context:", "ERROR:", "FATAL:", "UNRECOVERED FAULT"
-    };
-    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i)
-        if (std::strstr(msg, keys[i])) return true;
-    return false;
-}
-
-static void bootUiRender() {
+static void bootUiHeader() {
     if (!g_boot_console) return;
     consoleClear();
-    std::printf("NearChuckle_nx | startup / shader diagnostics\n");
-    std::printf("------------------------------------------------------------\n");
-    for (int i = 0; i < g_ui_line_count; ++i)
-        std::printf("%s\n", g_ui_lines[i]);
+    std::printf("NearChuckle_nx | full startup log (until CXGame::Run main loop)\n");
+    std::printf("------------------------------------------------------------------\n");
+    consoleUpdate(nullptr);
+}
+
+static void bootUiWrite(const char* msg) {
+    if (!g_boot_console || !msg || !*msg)
+        return;
+
+    // Mirror every compatibility log line to the active Switch console.
+    // Do not filter or keep only a small ring buffer: the console should show
+    // the complete startup stream in order until the main-loop marker.
+    std::printf("%s\n", msg);
     consoleUpdate(nullptr);
 }
 
@@ -55,8 +47,7 @@ void compatUiInit() {
     g_boot_stdout_dotab = devoptab_list[STD_OUT];
     consoleInit(nullptr);
     g_boot_console = true;
-    g_ui_line_count = 0;
-    bootUiRender();
+    bootUiHeader();
 }
 
 void compatUiShutdown() {
@@ -174,33 +165,29 @@ CompatLayer* compatGet() {
 }
 
 void compatLog(const char* msg) {
+    const bool main_loop = is_main_loop_marker(msg);
+
     mutexLock(&g_log_lock);
 
-    if (suppressCompatShaderDiag(msg)) {
-        mutexUnlock(&g_log_lock);
-        return;
-    }
-    log_write(msg);
+    // The Switch startup console is intentionally the complete live log until
+    // CXGame::Run enters the main game loop. Shader diagnostics are still
+    // filtered from the file log below when appropriate, but never from the
+    // visible console stream.
+    bootUiWrite(msg);
 
-    // Keep the diagnostic log open after the main-loop marker so the first
-    // rendered frames and SDL/EGL swaps can be captured. The graphics shim
-    // closes the log after its first few swap calls.
-    if (g_boot_console && bootUiInteresting(msg)) {
-        if (g_ui_line_count < 18) {
-            std::snprintf(g_ui_lines[g_ui_line_count],
-                          sizeof(g_ui_lines[g_ui_line_count]), "%s", msg ? msg : "");
-            ++g_ui_line_count;
-        } else {
-            for (int i = 1; i < 18; ++i)
-                std::memmove(g_ui_lines[i - 1], g_ui_lines[i],
-                             sizeof(g_ui_lines[i - 1]));
-            std::snprintf(g_ui_lines[17], sizeof(g_ui_lines[17]),
-                          "%s", msg ? msg : "");
-        }
-        bootUiRender();
-    }
+    if (!suppressCompatShaderDiag(msg))
+        log_write(msg);
+
+    if (main_loop)
+        log_close_locked();
 
     mutexUnlock(&g_log_lock);
+
+    // Return ownership of the framebuffer to the real SDL/EGL game window
+    // immediately after the marker has been displayed. From this point onward
+    // the diagnostic log is closed and the game owns the screen.
+    if (main_loop)
+        compatUiShutdown();
 }
 
 void compatLogFmt(const char* fmt, ...) {
@@ -215,11 +202,19 @@ void compatLogFmt(const char* fmt, ...) {
 }
 
 void compatLogRaw(const char* msg) {
+    const bool main_loop = is_main_loop_marker(msg);
+
     mutexLock(&g_log_lock);
+    bootUiWrite(msg);
     log_write(msg);
-    // Keep raw logging open past the main-loop marker for the first-frame
-    // graphics diagnostics. The SDL swap probe closes the log later.
+
+    if (main_loop)
+        log_close_locked();
+
     mutexUnlock(&g_log_lock);
+
+    if (main_loop)
+        compatUiShutdown();
 }
 
 void compatLogFlush() {
