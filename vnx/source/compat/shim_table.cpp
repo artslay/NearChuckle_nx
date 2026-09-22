@@ -370,7 +370,6 @@ static char* stub_realpath(const char* p, char* out) {
         (strchr(p, '/') || strchr(p, '\\'))) {
         std::string materialized;
         if (tryMaterializePakPath(p, materialized)) {
-            compatLogFmt("realpath PAK EXACT: %s -> %s", p, materialized.c_str());
             return writeCanonical(materialized);
         }
 
