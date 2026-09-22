@@ -496,12 +496,16 @@ static int run_farcry(LoadedSo* game_so) {
     char arg9[] = "r_ShadersRemoteCompiler 0";
     char arg10[] = "r_ShadersSubmitRequestline 0";
     char arg11[] = "r_ShadersCompileAutoActivate 0";
+    // The menu background movie is not usable on the Switch port yet.
+    // Disable it at launch so CXGame can enter the normal menu UI instead of
+    // waiting in the Bink/message path for AMD64.bik.
+    char arg12[] = "ui_BackGroundVideo 0";
 
     std::snprintf(arg2, sizeof(arg2), "r_Width %d", config.screen_width);
     std::snprintf(arg3, sizeof(arg3), "r_Height %d", config.screen_height);
     std::snprintf(arg5, sizeof(arg5), "game_fov %d", config.fov);
 
-    char* argv[12];
+    char* argv[13];
     argv[0] = arg0;
     argv[1] = arg1;
     argv[2] = arg2;
@@ -524,6 +528,9 @@ static int run_farcry(LoadedSo* game_so) {
         compatLog("Shader compilation disabled by config");
         compatLog("Shader CVars: AllowCompilation=0 AsyncCompiling=0 RemoteCompiler=0 SubmitRequestline=0 CompileAutoActivate=0");
     }
+
+    argv[argc++] = arg12;
+    compatLog("Far Cry: ui_BackGroundVideo=0 (skip menu background video)");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
     compatLog("Startup diagnostics complete; closing startup log before entering Far Cry");
