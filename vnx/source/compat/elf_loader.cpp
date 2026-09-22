@@ -1108,7 +1108,7 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
                     if (c == 0) break;
                     literal[n++] = (c >= 32 && c < 127) ? (char)c : '.';
                 }
-                literal[n] = '\\0';
+                literal[n] = '\0';
                 compatLogFmt("CrySystem BRK ARG LITERAL: off=0x%llx text=\\\"%s\\\"",
                              (unsigned long long)litVaddr, literal);
             } else {
