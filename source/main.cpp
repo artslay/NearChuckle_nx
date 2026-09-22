@@ -537,80 +537,62 @@ static int run_farcry(LoadedSo* game_so) {
 
     char arg0[] = "FarCry";
 
-    // CryEngine's CXConsole expects command-line CVars as two tokens:
-    //   name value
-    // ParseArguments() forwards each token separately, and ExecuteString()
-    // interprets the first token as the variable name and the second as its
-    // value. A single "name=value" token is treated as an unknown command.
-    char arg1[] = "r_Driver";
+    // CryEngine's Android command-line parser keeps quoted arguments intact.
+    // Each quoted entry below therefore becomes one complete console command,
+    // e.g. "r_Width 1280", which ExecuteString() parses as CVar + value.
+    // Without the quotes the parser receives "r_Width" and "1280" separately
+    // and reports the value as an unknown command.
+    char arg1[64];
     char arg2[64];
-    char arg3[] = "r_Width";
+    char arg3[64];
     char arg4[64];
-    char arg5[] = "r_Height";
+    char arg5[64];
     char arg6[64];
-    char arg7[] = "r_Fullscreen";
-    char arg8[] = "0";
-    char arg9[] = "game_fov";
+    char arg7[64];
+    char arg8[64];
+    char arg9[64];
     char arg10[64];
-    char arg11[] = "r_Quality_BumpMapping";
-    char arg12[] = "3";
-    char arg13[] = "r_NoPS20";
-    char arg14[] = "0";
-    char arg15[] = "r_GL_NV30_PS20";
-    char arg16[] = "1";
-    char arg17[] = "GL_NV30_PS20";
-    char arg18[] = "1";
-    char arg19[] = "r_UseHWShaders";
-    char arg20[] = "1";
-    char arg21[] = "r_VSync";
-    char arg22[] = "0";
-    char arg23[] = "ui_BackGroundVideo";
-    char arg24[] = "0";
+    char arg11[64];
+    char arg12[64];
 
-    char arg0_value[] = "OpenGL";
+    std::snprintf(arg1, sizeof(arg1), "\"r_Driver OpenGL\"");
+    std::snprintf(arg2, sizeof(arg2), "\"r_Width %d\"", config.screen_width);
+    std::snprintf(arg3, sizeof(arg3), "\"r_Height %d\"", config.screen_height);
+    std::snprintf(arg4, sizeof(arg4), "\"r_Fullscreen 0\"");
+    std::snprintf(arg5, sizeof(arg5), "\"game_fov %d\"", config.fov);
+    std::snprintf(arg6, sizeof(arg6), "\"r_Quality_BumpMapping 3\"");
+    std::snprintf(arg7, sizeof(arg7), "\"r_NoPS20 0\"");
+    std::snprintf(arg8, sizeof(arg8), "\"r_GL_NV30_PS20 1\"");
+    std::snprintf(arg9, sizeof(arg9), "\"GL_NV30_PS20 1\"");
+    std::snprintf(arg10, sizeof(arg10), "\"r_UseHWShaders 1\"");
+    std::snprintf(arg11, sizeof(arg11), "\"r_VSync 0\"");
+    std::snprintf(arg12, sizeof(arg12), "\"ui_BackGroundVideo 0\"");
 
-    std::snprintf(arg2, sizeof(arg2), "%d", config.screen_width);
-    std::snprintf(arg4, sizeof(arg4), "%d", config.screen_height);
-    std::snprintf(arg6, sizeof(arg6), "%d", config.screen_height);
-    std::snprintf(arg10, sizeof(arg10), "%d", config.fov);
-
-    char* argv[25];
+    char* argv[13];
     argv[0] = arg0;
     argv[1] = arg1;
-    argv[2] = arg0_value;
+    argv[2] = arg2;
     argv[3] = arg3;
-    argv[4] = arg2;
+    argv[4] = arg4;
     argv[5] = arg5;
-    argv[6] = arg4;
+    argv[6] = arg6;
     argv[7] = arg7;
     argv[8] = arg8;
     argv[9] = arg9;
     argv[10] = arg10;
     argv[11] = arg11;
     argv[12] = arg12;
-    argv[13] = arg13;
-    argv[14] = arg14;
-    argv[15] = arg15;
-    argv[16] = arg16;
-    argv[17] = arg17;
-    argv[18] = arg18;
-    argv[19] = arg19;
-    argv[20] = arg20;
-    argv[21] = arg21;
-    argv[22] = arg22;
-    argv[23] = arg23;
-    argv[24] = arg24;
 
-    const int argc = 25;
+    const int argc = 13;
 
     // Keep shader compilation enabled, matching the working Android build.
     // Missing/experimental Switch shader caches must not turn the menu into a
     // black frame just because this wrapper was built from a shader-debug branch.
 
-    compatLog("Far Cry: Android-style graphics CVars queued (name + value syntax)");
+    compatLog("Far Cry: Android-style graphics CVars queued (quoted command syntax)");
     compatLog("Far Cry: ui_BackGroundVideo 0 queued for post-init console parsing");
     compatLog("Far Cry: r_UseHWShaders 1 queued for shader script registration");
-    compatLog("Far Cry: command-line CVars use separate name/value arguments");
+    compatLog("Far Cry: command-line CVars use quoted name + value commands");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
     compatLog("Startup diagnostics complete; waiting for CXGame::Run main-loop marker");
