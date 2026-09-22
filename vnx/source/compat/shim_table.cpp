@@ -4746,12 +4746,9 @@ static int stub_findclose64(intptr_t handle) {
     return 0;
 }
 
-// The original Android game can ask the C runtime to remove configuration
-// files while resetting profiles. Never let a guest-side cleanup operation
-// delete the root configs that control the Switch launch.
-//
-// Profile-specific files such as Profiles/Player/Maximk_system.cfg are NOT
-// protected because their basename is different.
+// The original Android game can remove configuration files while
+// resetting profiles. Keep these operations real on Switch so the filesystem
+// behaves like the Android port; there is intentionally no root-config guard.
 static int stub_remove(const char* path) {
     return ::remove(path);
 }
@@ -4760,8 +4757,24 @@ static int stub_rename(const char* old_path, const char* new_path) {
     return ::rename(old_path, new_path);
 }
 
+// libnx/newlib does not provide the POSIX unlinkat() symbol. The Android game
+// uses ordinary file-removal semantics for the configuration cleanup paths,
+// so route the supported form through plain unlink().
 static int stub_unlinkat(int dirfd, const char* path, int flags) {
-    return ::unlinkat(dirfd, path, flags);
+    (void)dirfd;
+
+    if (!path) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    // The current callers use flags=0 (remove a file, not a directory).
+    if (flags != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    return ::unlink(path);
 }
 static int stub_utimensat(int, const char*, const void*, int) { return 0; }
 static int stub_fchmodat(int, const char*, mode_t, int) { return 0; }
