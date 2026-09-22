@@ -900,7 +900,7 @@ static void patchKnownGameQuirks(uint8_t* stage_base, uint64_t min_vaddr,
     // instructions are especially important.
     if (kGetFileSizeBrkOffset >= 0x10 &&
         kGetFileSizeBrkOffset + 0x10 + sizeof(uint32_t) <= alloc_size) {
-        for (int i = -4; i <= 4; ++i) {
+        for (int i = -12; i <= 8; ++i) {
             const uint32_t word = insn[i];
             compatLogFmt("CrySystem GetFileSize BRK CTX: off=0x%llx word=%08x",
                          (unsigned long long)(kGetFileSizeBrkOffset + (int64_t)i * 4),
