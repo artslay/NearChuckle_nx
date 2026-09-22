@@ -1922,7 +1922,12 @@ static bool tryMaterializeUniquePakBasename(const char* targetPath) {
 // not loose. CryPak can load shader content from PAKs, so a full-tree crawl is
 // unnecessary for runtime and is kept out of startup.
 static void prepareShaderSourceFiles(const char* /*dataRoot*/) {
-    const char* wanted[] = {
+    // These legacy *.ext/CommonSubroutines probes used to call
+    // tryMaterializeUniquePakBasename() for every missing file. That function
+    // scans every PAK's central directory, so 24 missing files meant hundreds
+    // of full archive scans during startup. CryPak already has a lazy PAK lookup
+    // path for these assets; only inspect loose files here.
+    static const char* const wanted[] = {
         "Shaders/statenocull.ext",
         "Shaders/hdrprocess.ext",
         "Shaders/sunflares.ext",
@@ -1949,30 +1954,14 @@ static void prepareShaderSourceFiles(const char* /*dataRoot*/) {
         nullptr
     };
 
-    int foundCount = 0;
-    int materializedCount = 0;
-
     for (size_t i = 0; wanted[i]; ++i) {
         std::string resolved;
-        if (!resolvePathCaseInsensitive(wanted[i], resolved)) {
-            // The renderer expects these shader control files as normal files
-            // during Init Shaders. Do not rely on CryPak directory enumeration
-            // to discover them from FCData/*.pak: materialize a unique PAK entry
-            // into the exact requested path first.
-            if (tryMaterializeUniquePakBasename(wanted[i])) {
-                ++materializedCount;
-            }
-            if (!resolvePathCaseInsensitive(wanted[i], resolved))
-                continue;
-        }
+        if (!resolvePathCaseInsensitive(wanted[i], resolved))
+            continue;
 
         struct stat st = {};
-        if (stat(resolved.c_str(), &st) == 0 && S_ISREG(st.st_mode))
-            ++foundCount;
+        (void)stat(resolved.c_str(), &st);
     }
-
-    (void)foundCount;
-    (void)materializedCount;
 }
 
 static std::string pakAssetRelativeName(const char* requested) {
@@ -4183,12 +4172,9 @@ static bool scriptPrepCacheReady() {
 }
 
 static bool shaderPrepCacheReady() {
-    if (!prepMarkerExists(kShaderPrepMarker))
-        return false;
-
-    // The marker is persistent, but also verify the core declaration files that
-    // the shader bootstrap materializes. If the user deletes the prepared tree,
-    // the next launch is allowed to rebuild it instead of trusting a stale marker.
+    // The persistent marker lets us skip all PAK directory scans after the
+    // preparation pass. For older installs created before the marker existed,
+    // accept an already-materialized shader tree and create the marker now.
     const char* required[] = {
         "Shaders/HWScripts/Declarations/CGVProgramms.csl",
         "Shaders/HWScripts/Declarations/CGVPMacro.csi",
@@ -4196,8 +4182,6 @@ static bool shaderPrepCacheReady() {
         "Shaders/HWScripts/CGVProgramms.csl",
         "Shaders/HWScripts/CGVPMacro.csi",
         "Shaders/HWScripts/CGPShaders.csl",
-        "Shaders/Scripts/CommonSubroutines.csl",
-        "Shaders/Scripts/CommonSubroutines.csi",
         nullptr
     };
 
@@ -4206,6 +4190,9 @@ static bool shaderPrepCacheReady() {
         if (::stat(required[i], &st) != 0 || !S_ISREG(st.st_mode))
             return false;
     }
+
+    if (!prepMarkerExists(kShaderPrepMarker))
+        writePrepMarker(kShaderPrepMarker);
 
     return true;
 }
@@ -4330,10 +4317,11 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
         return;
     }
 
+    // One HWScripts pass also materializes its nested Declarations tree, so
+    // scanning Declarations separately only repeats the same 17-Pak walk.
     const char* dirs[] = {
-        "Shaders/HWScripts/Declarations",
-        "Shaders/Scripts",
         "Shaders/HWScripts",
+        "Shaders/Scripts",
         nullptr
     };
 
@@ -4341,19 +4329,14 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
 
     for (size_t i = 0; dirs[i]; ++i) {
         const bool ready = tryMaterializePakDirectory(dirs[i]);
-        int cslCount = 0;
-        int csiCount = 0;
-
         if (ready) {
+            int cslCount = 0;
+            int csiCount = 0;
             std::string resolved = dirs[i];
             if (!resolvePathCaseInsensitive(dirs[i], resolved))
                 resolved = dirs[i];
             countShaderScriptsRecursive(resolved, cslCount, csiCount);
         }
-
-        (void)ready;
-        (void)cslCount;
-        (void)csiCount;
     }
 
     // The Android CryPak implementation used by the guest shader loader can
@@ -4381,16 +4364,9 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
         "Shaders/HWScripts/Declarations/CGVProgramms.csl");
     (void)commonPatch;
 
-    const bool commonCsl =
-        tryMaterializeUniquePakBasename(
-            "Shaders/Scripts/CommonSubroutines.csl");
-    const bool commonCsi =
-        tryMaterializeUniquePakBasename(
-            "Shaders/Scripts/CommonSubroutines.csi");
-
-    (void)commonCsl;
-    (void)commonCsi;
-
+    // CommonSubroutines is patched directly into the declaration macro above.
+    // Do not scan every PAK again just to look for optional loose copies that may
+    // not exist in the shipped archives.
     // Reaching this point means the one-time preparation pass has completed.
     // Record the marker only when the core files are really present.
     if (shaderPrepCacheReady()) {
