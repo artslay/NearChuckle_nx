@@ -343,8 +343,15 @@ static void setup_environment() {
     normalize_engine_data_dirs();
     compatPrepareShaderDirectories(config.data_root);
     compatPrepareScriptDirectories(config.data_root);
-    compatProbePakArchives(config.data_root);
-    probe_engine_data_layout();
+
+    // PAK layout probes are intentionally diagnostic-only. The runtime already
+    // knows the game data root and FCData directory; do not enumerate all PAKs
+    // on every startup unless an explicit diagnostic run is requested.
+    const pakDiag = std::getenv("NEARCHUCKLE_PAK_DIAG");
+    if (pakDiag && pakDiag[0] == '1') {
+        compatProbePakArchives(config.data_root);
+        probe_engine_data_layout();
+    }
 }
 
 static void log_system_resources(const char* stage) {
