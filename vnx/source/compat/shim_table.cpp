@@ -3209,28 +3209,23 @@ static bool w_SDL_GetWindowSizeInPixels(void* window, int* w, int* h) {
 }
 
 static bool w_SDL_GL_SwapWindow(void* window) {
-    using Fn = bool (*)(void*);
-    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GL_SwapWindow"));
-    const bool guest_ok = fn ? fn(window) : false;
-    bool ok = guest_ok;
+    (void)window;
 
     static unsigned int swap_count = 0;
     ++swap_count;
 
-    // If the guest SDL Android path reports a failed swap, present the already
-    // current EGL surface directly. This keeps the renderer alive even when
-    // the Java-side swap path cannot be reproduced on Switch.
-    bool egl_fallback = false;
-    if (!ok) {
-        EGLDisplay display = eglGetCurrentDisplay();
-        EGLSurface surface = eglGetCurrentSurface(EGL_DRAW);
-        if (display != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE) {
-            if (eglSwapBuffers(display, surface) == EGL_TRUE) {
-                ok = true;
-                egl_fallback = true;
-            }
-        }
-    }
+    // Do not call the guest Android SDL_GL_SwapWindow(). Its Android backend can
+    // block in the Java/UI presentation path, which is not present on Switch.
+    // CryEngine is already rendering into the active EGL surface, so direct
+    // eglSwapBuffers is the correct native presentation operation here.
+    const EGLDisplay display = eglGetCurrentDisplay();
+    const EGLSurface surface = eglGetCurrentSurface(EGL_DRAW);
+    const EGLBoolean egl_ok =
+        (display != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE)
+            ? eglSwapBuffers(display, surface)
+            : EGL_FALSE;
+    const bool ok = (egl_ok == EGL_TRUE);
+    const bool egl_fallback = true;
 
     // Bring-up probe: keep the startup log open through the first few actual
     // frame presentations so a black screen can be distinguished from a render
@@ -3249,10 +3244,10 @@ static bool w_SDL_GL_SwapWindow(void* window) {
         const GLenum gl_error = glGetError();
 
         compatLogFmt(
-            "SDL: Swap[%u] window=%p guest=%d final=%d egl_fallback=%d "
+            "SDL: Swap[%u] window=%p guest=0 final=%d egl_fallback=%d "
             "viewport=%d,%d %dx%d fbo=%d program=%d clear=%.3f,%.3f,%.3f,%.3f "
             "glerr=0x%x sdlerr=%s",
-            swap_count, window, guest_ok ? 1 : 0, ok ? 1 : 0,
+            swap_count, window, ok ? 1 : 0,
             egl_fallback ? 1 : 0,
             viewport[0], viewport[1], viewport[2], viewport[3],
             framebuffer, current_program,
@@ -4155,7 +4150,7 @@ static void countLuaScriptsRecursive(const std::string& directory,
 }
 
 static const char* kScriptPrepMarker = ".nearchuckle_scripts_ready_v1";
-static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v6";
+static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v7";
 
 static bool prepMarkerExists(const char* marker) {
     if (!marker || !*marker)
@@ -4450,6 +4445,12 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     (void)rootCgvMacro;
     (void)rootCgpShaders;
 
+    // This pass is intentionally only part of the versioned first-run shader
+    // preparation. It restores the exact original declaration sources from
+    // Shaders.pak instead of trusting files left by an older compatibility build.
+    const bool declarationsRestored = refreshCoreShaderDeclarationsFromPak();
+    const bool commonStandaloneReady = materializeCommonSubroutinesScript();
+
     // CryEngine's runtime Cg loader resolves dependent scripts such as
     // CommonSubroutines and PosCommon from the Shaders/Scripts enumeration,
     // even though the original declaration files are stored below
@@ -4513,12 +4514,6 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     compatLogFmt("shader dependency scripts: CGVProgramms=%d CGPShaders=%d",
                  scriptCgvProgrammsReady ? 1 : 0,
                  scriptCgpShadersReady ? 1 : 0);
-
-    // This pass is intentionally only part of the versioned first-run shader
-    // preparation. It restores the exact original declaration sources from
-    // Shaders.pak instead of trusting files left by an older compatibility build.
-    const bool declarationsRestored = refreshCoreShaderDeclarationsFromPak();
-    const bool commonStandaloneReady = materializeCommonSubroutinesScript();
 
     // Keep the original CryEngine shader declaration layout intact:
     // CGVPMacro.csi contains the SubrScript placeholder, while
