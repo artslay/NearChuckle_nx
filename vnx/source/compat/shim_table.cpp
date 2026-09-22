@@ -4311,6 +4311,71 @@ static void stub_syslog(int, const char* fmt, ...) {
     compatLog(buf);
 }
 
+// ─── Android UTF-8 multibyte compatibility ───────────────────────────────────
+// CryEngine's Linux path uses mbstowcs() when loading LANGUAGES/*.xml. The
+// Android ARM64 build leaves mbstowcs unresolved, so the ELF loader otherwise
+// poisons the PLT slot and jumps to 0xBAD0BAD0BAD00000 on the first localized
+// string. Android's locale path is UTF-8; decode it explicitly instead of
+// relying on the process locale being configured on Switch.
+static size_t stub_mbstowcs(wchar_t* dst, const char* src, size_t len) {
+    if (!src) {
+        errno = EINVAL;
+        return (size_t)-1;
+    }
+    if (!dst || len == 0)
+        return 0;
+
+    size_t out = 0;
+    const unsigned char* p = (const unsigned char*)src;
+    while (*p && out < len) {
+        uint32_t cp = 0;
+        size_t need = 0;
+        unsigned char c = *p++;
+        if (c < 0x80) {
+            cp = c;
+            need = 0;
+        } else if (c >= 0xC2 && c <= 0xDF) {
+            cp = c & 0x1F;
+            need = 1;
+        } else if (c >= 0xE0 && c <= 0xEF) {
+            cp = c & 0x0F;
+            need = 2;
+        } else if (c >= 0xF0 && c <= 0xF4) {
+            cp = c & 0x07;
+            need = 3;
+        } else {
+            errno = EILSEQ;
+            return (size_t)-1;
+        }
+
+        for (size_t i = 0; i < need; ++i) {
+            unsigned char d = p[i];
+            if ((d & 0xC0) != 0x80) {
+                errno = EILSEQ;
+                return (size_t)-1;
+            }
+            cp = (cp << 6) | (d & 0x3F);
+        }
+
+        // Reject overlong encodings, UTF-16 surrogate code points and values
+        // outside Unicode. wchar_t on devkitA64 is 32-bit, matching the
+        // wchar_t representation expected by this CryEngine path.
+        if ((need == 1 && cp < 0x80) ||
+            (need == 2 && cp < 0x800) ||
+            (need == 3 && cp < 0x10000) ||
+            (cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF) {
+            errno = EILSEQ;
+            return (size_t)-1;
+        }
+
+        p += need;
+        dst[out++] = (wchar_t)cp;
+    }
+    if (out < len)
+        dst[out] = L'\\0';
+    return out;
+}
+
 // ─── Locale POSIX extensions (stub — newlib may lack these) ──────────────────
 typedef void* bnx_locale_t;
 static bnx_locale_t stub_newlocale(int, const char*, bnx_locale_t) { return (bnx_locale_t)1; }
@@ -5847,6 +5912,7 @@ static const ShimEntry g_shims[] = {
     {"newlocale",              (void*)stub_newlocale},
     {"freelocale",             (void*)stub_freelocale},
     {"uselocale",              (void*)stub_uselocale},
+    {"mbstowcs",               (void*)stub_mbstowcs},
     {"__ctype_get_mb_cur_max", (void*)stub_mb_cur_max},
 
     // ── strtod locale variants ───────────────────────────────────────────────
