@@ -2217,6 +2217,32 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     if (path && ioPathStorage != path)
         compatLogFmt("path NORMALIZE: fopen %s -> %s", path, ioPathStorage.c_str());
 
+    // Far Cry's AMD64 build expects an intro movie named AMD64.bik.
+    // The official 64-bit patch uses a different movie set/format, so this
+    // legacy Bink request can be absent even though the game itself can
+    // continue without the intro. A real file from a PAK always wins above
+    // (tryOpenFromPaks happens later), and only this exact missing request gets
+    // a zero-length stream. Far Cry is known to skip intro movies when their
+    // files are empty, so this avoids leaving the main loop waiting on a
+    // permanently unavailable Bink asset.
+    if (ioPath && mode && mode[0] == 'r') {
+        const std::string videoPath = pakNormalizeName(ioPath);
+        if (videoPath == "languages/movies/english/amd64.bik" ||
+            videoPath == "./languages/movies/english/amd64.bik" ||
+            videoPath == "languages/movies/amd64.bik" ||
+            videoPath == "./languages/movies/amd64.bik") {
+            FILE* emptyVideo = tmpfile();
+            if (emptyVideo) {
+                compatLogFmt("fopen VIDEO EMPTY FALLBACK: %s mode=%s",
+                             ioPath, mode);
+                setvbuf(emptyVideo, nullptr, _IOFBF, 64 * 1024);
+                return emptyVideo;
+            }
+            compatLogFmt("fopen VIDEO EMPTY FALLBACK FAILED: %s mode=%s",
+                         ioPath, mode);
+        }
+    }
+
     if (std::string mapped = obbRemap(ioPath); !mapped.empty()) {
         FILE* mf = fopen(mapped.c_str(), mode);
         compatLogFmt("obb: fopen %s -> %s (%s)", ioPath ? ioPath : "?",
