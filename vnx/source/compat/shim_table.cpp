@@ -4134,13 +4134,48 @@ static void countLuaScriptsRecursive(const std::string& directory,
     closedir(d);
 }
 
+static const char* kScriptPrepMarker = ".nearchuckle_scripts_ready_v1";
+static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v1";
+
+static bool prepMarkerExists(const char* marker) {
+    if (!marker || !*marker)
+        return false;
+    struct stat st = {};
+    return ::stat(marker, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static void writePrepMarker(const char* marker) {
+    if (!marker || !*marker)
+        return;
+
+    FILE* f = fopen(marker, "wb");
+    if (!f)
+        return;
+    static const char text[] =
+        "NearChuckle_nx persistent PAK materialization cache ready\n";
+    (void)fwrite(text, 1, sizeof(text) - 1, f);
+    fclose(f);
+}
+
+static bool scriptPrepCacheReady() {
+    struct stat st = {};
+    return prepMarkerExists(kScriptPrepMarker) &&
+           ::stat("scripts/materials/mat_default.lua", &st) == 0 &&
+           S_ISREG(st.st_mode);
+}
+
 void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
-    // Materialize the entire Scripts tree before CryEngine starts. This ensures
-    // nested directories such as scripts/materials exist when the engine scans
-    // them and makes every script stored in FCData PAKs available as a normal
-    // Switch file before the first Lua load.
+    // The first run materializes the full Scripts tree from FCData/*.pak.
+    // Once that tree is present, keep a persistent marker and do not reopen or
+    // rescan every PAK on subsequent launches. Missing individual files still
+    // use the normal lazy PAK fallback later in the file.
     mkdir("scripts", 0755);
     mkdir("scripts/materials", 0755);
+
+    if (scriptPrepCacheReady()) {
+        compatLog("scripts preload: cached=1 (skip FCData PAK scan)");
+        return;
+    }
 
     const bool ready = tryMaterializePakDirectory("scripts");
 
@@ -4154,50 +4189,18 @@ void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
     const bool matDefault =
         (stat("scripts/materials/mat_default.lua", &mat) == 0) &&
         S_ISREG(mat.st_mode);
+
     compatLogFmt("scripts preload: ready=%d lua=%d mat_default=%s",
                  ready ? 1 : 0, luaCount, matDefault ? "present" : "MISSING");
 
-    // Keep script diagnostics, but only for actual Lua files. This gives us a
-    // complete deterministic list without flooding the log with directories.
-    std::vector<std::string> files;
-    std::function<void(const std::string&, int)> collect =
-        [&](const std::string& directory, int depth) {
-            if (depth > 32)
-                return;
-            DIR* d = opendir(directory.c_str());
-            if (!d)
-                return;
-            while (struct dirent* ent = readdir(d)) {
-                const char* name = ent->d_name;
-                if (!name || !*name || !std::strcmp(name, ".") || !std::strcmp(name, ".."))
-                    continue;
-                std::string full = directory;
-                if (!full.empty() && full.back() != '/')
-                    full += '/';
-                full += name;
-                struct stat st = {};
-                if (stat(full.c_str(), &st) != 0)
-                    continue;
-                if (S_ISDIR(st.st_mode)) {
-                    collect(full, depth + 1);
-                    continue;
-                }
-                const size_t len = std::strlen(name);
-                if (len >= 4 &&
-                    std::tolower((unsigned char)name[len - 4]) == '.' &&
-                    std::tolower((unsigned char)name[len - 3]) == 'l' &&
-                    std::tolower((unsigned char)name[len - 2]) == 'u' &&
-                    std::tolower((unsigned char)name[len - 1]) == 'a') {
-                    files.push_back(full);
-                }
-            }
-            closedir(d);
-        };
+    if (ready && matDefault) {
+        writePrepMarker(kScriptPrepMarker);
+        compatLog("scripts preload: persistent cache marker created");
+    }
 
-    collect("scripts", 0);
-    std::sort(files.begin(), files.end());
-    for (const std::string& path : files)
-        compatLogFmt("script preload: %s", path.c_str());
+    // Do not dump hundreds of successful Lua paths on every startup. The
+    // individual files are already physically present and can be inspected
+    // from the Switch filesystem when needed; runtime failures remain logged.
 }
 void compatProbePakArchives(const char* dataRoot) {
     const std::string root = dataRoot ? dataRoot : "";
@@ -4273,6 +4276,14 @@ static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
 
 void compatPrepareShaderDirectories(const char* dataRoot) {
+    // Shader source files are materialized only during the first preparation.
+    // The generated files and the _pakcache_v3 entries persist on the SD card,
+    // so repeating the PAK directory/entry scans on every launch is unnecessary.
+    if (prepMarkerExists(kShaderPrepMarker)) {
+        compatLog("shader preload: cached=1 (skip FCData PAK scan)");
+        return;
+    }
+
     const char* dirs[] = {
         "Shaders/HWScripts/Declarations",
         "Shaders/Scripts",
@@ -4305,9 +4316,6 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     // CSL files live below HWScripts/Declarations and are required to register
     // logical Cg scripts such as CommonSubroutines. Materialize these few
     // declaration sources at the HWScripts root as a compatibility fallback.
-    //
-    // CGVProgramms.csl includes CGVPMacro.csi with a relative include, so both
-    // files must be present together at the fallback location.
     const bool rootCgvProgramms =
         tryMaterializeUniquePakBasename(
             "Shaders/HWScripts/CGVProgramms.csl");
@@ -4322,10 +4330,6 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
     (void)rootCgvMacro;
     (void)rootCgpShaders;
 
-    // Android CGP shader files can reference CommonSubroutines before
-    // the guest loader has successfully registered CGVProgramms.csl.
-    // Materialize the exact declaration tree and make the macro self-contained
-    // so the shared script is available regardless of the guest loader path.
     const bool commonPatch = patchCommonSubroutinesIntoShaderMacro(
         "Shaders/HWScripts/Declarations/CGVPMacro.csi",
         "Shaders/HWScripts/Declarations/CGVProgramms.csl");
@@ -4340,6 +4344,12 @@ void compatPrepareShaderDirectories(const char* dataRoot) {
 
     (void)commonCsl;
     (void)commonCsi;
+
+    // Reaching this point means the one-time preparation pass has completed.
+    // Subsequent launches can trust the persistent marker and go straight to
+    // the already-materialized shader files.
+    writePrepMarker(kShaderPrepMarker);
+    compatLog("shader preload: persistent cache marker created");
 }
 
 
