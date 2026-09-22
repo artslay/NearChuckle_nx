@@ -9,4 +9,4 @@ mesa_driver zink
 # Experimental: disable runtime shader compilation.
 # 0 = normal shader behavior
 # 1 = pass shader-compilation-off CVars to the Android CryEngine runtime
-disable_shader_compilation 1
+disable_shader_compilation 0

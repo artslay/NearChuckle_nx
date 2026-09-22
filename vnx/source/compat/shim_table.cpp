@@ -3014,6 +3014,132 @@ static const char* sdl3_error() {
     return fn ? fn() : "";
 }
 
+// SDL3's Android display structures are needed here without depending on the
+// Android build's SDL headers. The layout matches SDL 3.2+ exactly.
+struct NearSDLDisplayMode {
+    uint32_t displayID;
+    uint32_t format;
+    int w;
+    int h;
+    float pixel_density;
+    float refresh_rate;
+    int refresh_rate_numerator;
+    int refresh_rate_denominator;
+    void* internal;
+};
+
+static uint32_t w_SDL_GetPrimaryDisplay() {
+    using Fn = uint32_t (*)();
+    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GetPrimaryDisplay"));
+    const uint32_t id = fn ? fn() : 1u;
+    return id ? id : 1u;
+}
+
+static const NearSDLDisplayMode* w_SDL_GetCurrentDisplayMode(uint32_t displayID) {
+    using Fn = const NearSDLDisplayMode* (*)(uint32_t);
+    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GetCurrentDisplayMode"));
+    const NearSDLDisplayMode* real = fn ? fn(displayID) : nullptr;
+
+    static NearSDLDisplayMode mode = {};
+    if (real)
+        mode = *real;
+    else
+        std::memset(&mode, 0, sizeof(mode));
+
+    CompatLayer* cl = compatGet();
+    if (cl && cl->window.width > 0 && cl->window.height > 0) {
+        mode.displayID = displayID;
+        mode.w = cl->window.width;
+        mode.h = cl->window.height;
+        if (mode.pixel_density <= 0.0f)
+            mode.pixel_density = 1.0f;
+        if (mode.refresh_rate <= 0.0f)
+            mode.refresh_rate = 60.0f;
+        if (mode.refresh_rate_numerator == 0)
+            mode.refresh_rate_numerator = 60;
+        if (mode.refresh_rate_denominator == 0)
+            mode.refresh_rate_denominator = 1;
+    }
+
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        compatLogFmt("SDL: display mode forced to %dx%d (display=%u, real=%dx%d)",
+                     mode.w, mode.h, displayID,
+                     real ? real->w : 0, real ? real->h : 0);
+    }
+    return &mode;
+}
+
+static const NearSDLDisplayMode* w_SDL_GetDesktopDisplayMode(uint32_t displayID) {
+    // The Android CryEngine only needs the current mode for renderer startup,
+    // but keeping desktop mode consistent prevents later fullscreen queries
+    // from reintroducing a 1024x768/phone-sized mode.
+    using Fn = const NearSDLDisplayMode* (*)(uint32_t);
+    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GetDesktopDisplayMode"));
+    const NearSDLDisplayMode* real = fn ? fn(displayID) : nullptr;
+
+    static NearSDLDisplayMode mode = {};
+    if (real)
+        mode = *real;
+
+    CompatLayer* cl = compatGet();
+    if (cl && cl->window.width > 0 && cl->window.height > 0) {
+        mode.displayID = displayID;
+        mode.w = cl->window.width;
+        mode.h = cl->window.height;
+        if (mode.pixel_density <= 0.0f)
+            mode.pixel_density = 1.0f;
+    }
+    return &mode;
+}
+
+static bool w_SDL_GetWindowSizeInPixels(void* window, int* w, int* h) {
+    using Fn = bool (*)(void*, int*, int*);
+    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GetWindowSizeInPixels"));
+    const bool ok = fn ? fn(window, w, h) : false;
+
+    if (ok && w && h && *w > 0 && *h > 0)
+        return true;
+
+    CompatLayer* cl = compatGet();
+    if (cl && w && h && cl->window.width > 0 && cl->window.height > 0) {
+        *w = cl->window.width;
+        *h = cl->window.height;
+        compatLogFmt("SDL: SDL_GetWindowSizeInPixels fallback -> %dx%d",
+                     *w, *h);
+        return true;
+    }
+    return ok;
+}
+
+static bool w_SDL_GL_SwapWindow(void* window) {
+    using Fn = bool (*)(void*);
+    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GL_SwapWindow"));
+    bool ok = fn ? fn(window) : false;
+
+    static unsigned int swap_count = 0;
+    ++swap_count;
+
+    // If the guest SDL Android path reports a failed swap, present the already
+    // current EGL surface directly. This keeps the renderer alive even when
+    // the Java-side swap path cannot be reproduced on Switch.
+    if (!ok) {
+        EGLDisplay display = eglGetCurrentDisplay();
+        EGLSurface surface = eglGetCurrentSurface(EGL_DRAW);
+        if (display != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE) {
+            if (eglSwapBuffers(display, surface) == EGL_TRUE)
+                ok = true;
+        }
+    }
+
+    if (swap_count <= 5 || !ok) {
+        compatLogFmt("SDL: SDL_GL_SwapWindow(%p) -> %d err=%s",
+                     window, ok ? 1 : 0, sdl3_error());
+    }
+    return ok;
+}
+
 static void* w_SDL_CreateWindow(const char* title, int w, int h, uint32_t flags) {
     using Fn = void* (*)(const char*, int, int, uint32_t);
     Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_CreateWindow"));
@@ -4626,51 +4752,16 @@ static int stub_findclose64(intptr_t handle) {
 //
 // Profile-specific files such as Profiles/Player/Maximk_system.cfg are NOT
 // protected because their basename is different.
-static bool isProtectedRootConfigPath(const char* path) {
-    if (!path || !*path)
-        return false;
-
-    const char* base = strrchr(path, '/');
-    const char* back = strrchr(path, '\\');
-    if (back && (!base || back > base))
-        base = back;
-    if (base)
-        ++base;
-    else
-        base = path;
-
-    return strcasecmp(base, "system.cfg") == 0 ||
-           strcasecmp(base, "game.cfg") == 0;
-}
-
 static int stub_remove(const char* path) {
-    if (isProtectedRootConfigPath(path)) {
-        compatLogFmt("remove BLOCKED: protected config %s", path);
-        errno = EROFS;
-        return -1;
-    }
     return ::remove(path);
 }
 
 static int stub_rename(const char* old_path, const char* new_path) {
-    if (isProtectedRootConfigPath(old_path) ||
-        isProtectedRootConfigPath(new_path)) {
-        compatLogFmt("rename BLOCKED: protected config %s -> %s",
-                     old_path ? old_path : "?",
-                     new_path ? new_path : "?");
-        errno = EROFS;
-        return -1;
-    }
     return ::rename(old_path, new_path);
 }
 
-static int stub_unlinkat(int, const char* path, int) {
-    if (isProtectedRootConfigPath(path)) {
-        compatLogFmt("unlinkat BLOCKED: protected config %s", path);
-        errno = EROFS;
-        return -1;
-    }
-    return ::remove(path);
+static int stub_unlinkat(int dirfd, const char* path, int flags) {
+    return ::unlinkat(dirfd, path, flags);
 }
 static int stub_utimensat(int, const char*, const void*, int) { return 0; }
 static int stub_fchmodat(int, const char*, mode_t, int) { return 0; }
@@ -5489,10 +5580,7 @@ static stub_div_t stub_div(int n, int d) { stub_div_t r; r.quot = d ? n/d : 0; r
 
 // ── filesystem (fail gracefully; nothing here needs them to succeed) ──
 static int  stub_unlink(const char* path) {
-    if (isProtectedRootConfigPath(path))
-        compatLogFmt("unlink BLOCKED: protected config %s", path);
-    errno = EROFS;
-    return -1;
+    return ::unlink(path);
 }
 static int  stub_rmdir(const char*)              { errno = EROFS; return -1; }
 static int  stub_truncate(const char*, long)     { errno = EROFS; return -1; }
@@ -5944,9 +6032,14 @@ static const ShimEntry g_shims[] = {
     {"dlerror", (void*)fake_dlerror},
 
     // ── SDL3 graphics-init probes ───────────────────────────────────────────
-    {"SDL_CreateWindow",     (void*)w_SDL_CreateWindow},
-    {"SDL_GL_CreateContext",(void*)w_SDL_GL_CreateContext},
-    {"SDL_GL_MakeCurrent",  (void*)w_SDL_GL_MakeCurrent},
+    {"SDL_GetPrimaryDisplay",      (void*)w_SDL_GetPrimaryDisplay},
+    {"SDL_GetCurrentDisplayMode",  (void*)w_SDL_GetCurrentDisplayMode},
+    {"SDL_GetDesktopDisplayMode",  (void*)w_SDL_GetDesktopDisplayMode},
+    {"SDL_GetWindowSizeInPixels",  (void*)w_SDL_GetWindowSizeInPixels},
+    {"SDL_CreateWindow",           (void*)w_SDL_CreateWindow},
+    {"SDL_GL_CreateContext",       (void*)w_SDL_GL_CreateContext},
+    {"SDL_GL_MakeCurrent",         (void*)w_SDL_GL_MakeCurrent},
+    {"SDL_GL_SwapWindow",          (void*)w_SDL_GL_SwapWindow},
 
     // ── libandroid ───────────────────────────────────────────────────────────
     {"AAssetManager_fromJava",      (void*)assetMgr_fromJava},

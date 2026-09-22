@@ -286,12 +286,23 @@ static void setup_environment() {
         setenv("GALLIUM_DRIVER", config.mesa_driver, 1);
     }
 
+    setenv("ZINK_DESCRIPTORS", "lazy", 1);
     setenv("MESA_GL_VERSION_OVERRIDE", "2.1COMPAT", 1);
     setenv("MESA_GLSL_VERSION_OVERRIDE", "140", 1);
-    // Do not advertise legacy ARB program extensions manually.
-    // CryEngine/XRenderOGL resolves the actual entry points at runtime, and
-    // forcing the extensions on without providing every function leaves the
-    // renderer with null GL function pointers.
+
+    // Match the Android launcher environment used by the reference build.
+    // CryEngine 1 expects desktop OpenGL 2.1 through the GLES compatibility
+    // layer, and the Android build explicitly exposes its ARB program paths.
+    setenv("MESA_EXTENSION_OVERRIDE",
+           "+GL_ARB_vertex_program +GL_ARB_fragment_program", 1);
+    setenv("LIBGL_ES", "2", 1);
+    setenv("LIBGL_GL", "21", 1);
+    setenv("LIBGL_NPOT", "2", 1);
+    setenv("LIBGL_MIPMAP", "1", 1);
+    setenv("LIBGL_NOBANNER", "1", 1);
+    setenv("LIBGL_NORMALIZE", "1", 1);
+    setenv("LIBGL_NOTEXMAT", "0", 1);
+    setenv("LIBGL_NODOWNSAMPLING", "1", 1);
 
     chdir(config.data_root);
 
@@ -494,11 +505,6 @@ static int run_farcry(LoadedSo* game_so) {
     char arg4[] = "r_Fullscreen=1";
     char arg5[64];
     char arg6[] = "r_VSync=1";
-    char arg7[] = "r_ShadersAllowCompilation=0";
-    char arg8[] = "r_ShadersAsyncCompiling=0";
-    char arg9[] = "r_ShadersRemoteCompiler=0";
-    char arg10[] = "r_ShadersSubmitRequestline=0";
-    char arg11[] = "r_ShadersCompileAutoActivate=0";
     // The menu background movie is not usable on the Switch port yet.
     // Disable it at launch so CXGame can enter the normal menu UI instead of
     // waiting in the Bink/message path for AMD64.bik.
@@ -521,16 +527,9 @@ static int run_farcry(LoadedSo* game_so) {
         argv[argc++] = arg6;
     }
 
-    if (config.disable_shader_compilation) {
-        argv[argc++] = arg7;
-        argv[argc++] = arg8;
-        argv[argc++] = arg9;
-        argv[argc++] = arg10;
-        argv[argc++] = arg11;
-
-        compatLog("Shader compilation disabled by config");
-        compatLog("Shader CVars: AllowCompilation=0 AsyncCompiling=0 RemoteCompiler=0 SubmitRequestline=0 CompileAutoActivate=0");
-    }
+    // Keep shader compilation enabled, matching the working Android build.
+    // Missing/experimental Switch shader caches must not turn the menu into a
+    // black frame just because this wrapper was built from a shader-debug branch.
 
     argv[argc++] = arg12;
     compatLog("Far Cry: ui_BackGroundVideo=0 (skip menu background video)");
