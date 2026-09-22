@@ -575,62 +575,52 @@ static void logUnrecoveredFault(ThreadExceptionDump* ctx) {
     snprintf(buf, sizeof(buf), "UNRECOVERED FAULT lr in %s", where);
     compatLogRaw(buf);
 
-    // PC=0 with LR inside a guest function means an indirect branch reached
-    // a null target. Decode the call instruction immediately before LR, then
-    // dump the nearby instruction window and callee-saved registers. The latter
-    // are where AArch64 normally keeps C++ "this" and long-lived object pointers.
-    const uint64_t lr = ctx->lr.x;
-    if (lr >= 0x40 && (lr & 3) == 0) {
-        const uint32_t insn = *(const volatile uint32_t*)(uintptr_t)(lr - 4);
-        const uint32_t op = insn & 0xFFFFFC1Fu;
-        const bool is_blr = (op == 0xD63F0000u);
-        const bool is_br  = (op == 0xD61F0000u);
-        if (is_blr || is_br) {
-            const unsigned rn = (insn >> 5) & 31u;
-            uint64_t target = (rn < 31) ? ctx->cpu_gprs[rn].x : ctx->lr.x;
+    // Always scan the faulting thread's stack. LR can legitimately be zero
+    // when the crashing frame was entered through a thread/tail-call path, so
+    // gating all caller diagnostics on LR loses the most useful evidence.
+    {
+        const uint64_t sp = ctx->sp.x;
+        MemoryInfo stackMi = {};
+        u32 stackPi = 0;
+        if (sp && (sp & 7) == 0 &&
+            R_SUCCEEDED(svcQueryMemory(&stackMi, &stackPi, sp))) {
+            const uint64_t stackEnd = stackMi.addr + stackMi.size;
+            int found = 0;
+            for (uint64_t a = sp; a + 8 <= stackEnd && a < sp + 0x800; a += 8) {
+                const uint64_t candidate =
+                    *(const volatile uint64_t*)(uintptr_t)a;
+                char candidateWhere[192];
+                if (!addrIsCode(candidate, candidateWhere, sizeof(candidateWhere)))
+                    continue;
+
+                snprintf(buf, sizeof(buf),
+                         "UNRECOVERED FAULT STACK +0x%llx %p %s",
+                         (unsigned long long)(a - sp),
+                         (void*)candidate, candidateWhere);
+                compatLogRaw(buf);
+                if (++found >= 20)
+                    break;
+            }
+            if (!found)
+                compatLogRaw("UNRECOVERED FAULT STACK: no executable return addresses found");
+        } else {
+            compatLogRaw("UNRECOVERED FAULT STACK: SP not mapped/aligned");
+        }
+    }
+
+    // Decode the exact instruction when it is the NULL halfword store seen in
+    // the current crash. Keeping this here turns the hex word into a directly
+    // actionable register relationship in the next log.
+    {
+        const uint32_t faultInsn =
+            *(const volatile uint32_t*)(uintptr_t)ctx->pc.x;
+        if (faultInsn == 0x78245941u) {
             snprintf(buf, sizeof(buf),
-                     "UNRECOVERED FAULT indirect-call: [lr-4]=0x%08x %s x%u=%p",
-                     insn, is_blr ? "BLR" : "BR", rn, (void*)target);
+                     "UNRECOVERED FAULT DECODE: STRH W1,[X10,W4,UXTW#1] x10=%p w4=0x%x",
+                     (void*)ctx->cpu_gprs[10].x,
+                     (unsigned)(uint32_t)ctx->cpu_gprs[4].x);
             compatLogRaw(buf);
         }
-
-        const uint32_t i0 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x40);
-        const uint32_t i1 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x3c);
-        const uint32_t i2 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x38);
-        const uint32_t i3 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x34);
-        const uint32_t i4 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x30);
-        const uint32_t i5 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x2c);
-        const uint32_t i6 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x28);
-        const uint32_t i7 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x24);
-        const uint32_t i8 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x20);
-        const uint32_t i9 = *(const volatile uint32_t*)(uintptr_t)(lr - 0x1c);
-        const uint32_t ia = *(const volatile uint32_t*)(uintptr_t)(lr - 0x18);
-        const uint32_t ib = *(const volatile uint32_t*)(uintptr_t)(lr - 0x14);
-        const uint32_t ic = *(const volatile uint32_t*)(uintptr_t)(lr - 0x10);
-        const uint32_t id = *(const volatile uint32_t*)(uintptr_t)(lr - 0x0c);
-        const uint32_t ie = *(const volatile uint32_t*)(uintptr_t)(lr - 0x08);
-        const uint32_t iff= *(const volatile uint32_t*)(uintptr_t)(lr - 0x04);
-        snprintf(buf, sizeof(buf),
-                 "UNRECOVERED FAULT LR insns -40=%08x -3c=%08x -38=%08x -34=%08x -30=%08x -2c=%08x -28=%08x -24=%08x",
-                 i0,i1,i2,i3,i4,i5,i6,i7);
-        compatLogRaw(buf);
-        snprintf(buf, sizeof(buf),
-                 "UNRECOVERED FAULT LR insns -20=%08x -1c=%08x -18=%08x -14=%08x -10=%08x -0c=%08x -08=%08x -04=%08x",
-                 i8,i9,ia,ib,ic,id,ie,iff);
-        compatLogRaw(buf);
-
-        snprintf(buf, sizeof(buf),
-                 "UNRECOVERED FAULT callee-saved x19=%p x20=%p x21=%p x22=%p x23=%p",
-                 (void*)ctx->cpu_gprs[19].x, (void*)ctx->cpu_gprs[20].x,
-                 (void*)ctx->cpu_gprs[21].x, (void*)ctx->cpu_gprs[22].x,
-                 (void*)ctx->cpu_gprs[23].x);
-        compatLogRaw(buf);
-        snprintf(buf, sizeof(buf),
-                 "UNRECOVERED FAULT callee-saved x24=%p x25=%p x26=%p x27=%p x28=%p",
-                 (void*)ctx->cpu_gprs[24].x, (void*)ctx->cpu_gprs[25].x,
-                 (void*)ctx->cpu_gprs[26].x, (void*)ctx->cpu_gprs[27].x,
-                 (void*)ctx->cpu_gprs[28].x);
-        compatLogRaw(buf);
     }
 
     // Extra shader-crash forensics: the current FAR is not a valid Switch
@@ -687,11 +677,9 @@ static void logUnrecoveredFault(ThreadExceptionDump* ctx) {
 
     dumpFaultMemory("x0", ctx->cpu_gprs[0].x);
     dumpFaultMemory("x3", ctx->cpu_gprs[3].x);
-    dumpFaultMemory("x23", ctx->cpu_gprs[23].x);
-    // x20 is the base object used by the crashing instruction sequence:
-    //   ldr x9, [x20]
-    // Dump it so we can see the field that supplied the invalid x9 pointer.
+    dumpFaultMemory("x10", ctx->cpu_gprs[10].x);
     dumpFaultMemory("x20", ctx->cpu_gprs[20].x);
+    dumpFaultMemory("x23", ctx->cpu_gprs[23].x);
 
     elfLogAddrInfo("UNRECOVERED FAULT pc", ctx->pc.x);
     elfLogAddrInfo("UNRECOVERED FAULT far", ctx->far.x);
