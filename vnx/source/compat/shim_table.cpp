@@ -4158,10 +4158,28 @@ static void writePrepMarker(const char* marker) {
 }
 
 static bool scriptPrepCacheReady() {
-    struct stat st = {};
-    return prepMarkerExists(kScriptPrepMarker) &&
-           ::stat("scripts/materials/mat_default.lua", &st) == 0 &&
-           S_ISREG(st.st_mode);
+    if (prepMarkerExists(kScriptPrepMarker))
+        return true;
+
+    // Existing installs may already contain the complete materialized script
+    // tree from an older build, but not the new marker yet. Detect that state
+    // from several core files so we can immediately skip the expensive PAK scan.
+    const char* required[] = {
+        "scripts/materials/mat_default.lua",
+        "scripts/ClassRegistry.lua",
+        "scripts/main.lua",
+        "scripts/common.lua",
+        nullptr
+    };
+
+    for (size_t i = 0; required[i]; ++i) {
+        struct stat st = {};
+        if (::stat(required[i], &st) != 0 || !S_ISREG(st.st_mode))
+            return false;
+    }
+
+    writePrepMarker(kScriptPrepMarker);
+    return true;
 }
 
 static bool shaderPrepCacheReady() {
