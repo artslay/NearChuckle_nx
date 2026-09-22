@@ -265,6 +265,29 @@ static void normalize_engine_data_dirs() {
     }
 }
 
+static void ensureFarCryGameConfig() {
+    struct stat st = {};
+    if (stat("game.cfg", &st) == 0 && S_ISREG(st.st_mode)) {
+        return;
+    }
+
+    FILE* f = std::fopen("game.cfg", "w");
+    if (!f) {
+        compatLogFmt("game.cfg: create FAILED errno=%d", errno);
+        return;
+    }
+
+    // Android itself tolerates a missing game.cfg, but then executes its
+    // Input:BindCommandToKey fallback. Those Input:* callbacks are still an
+    // ABI-sensitive path on the Switch port. Keep the file comment-only so
+    // the engine skips that fallback and continues the normal Init() path.
+    std::fputs("-- NearChuckle_nx generated fallback game.cfg\n", f);
+    std::fputs("-- Input bindings are provided by the Switch input bridge.\n", f);
+    std::fclose(f);
+
+    compatLog("game.cfg: generated safe fallback (no Input:* commands)");
+}
+
 static void setup_environment() {
     setenv("FARCRY_DATA_DIR", config.data_root, 1);
     setenv("MODULE_PATH", config.lib_dir, 1);
@@ -305,6 +328,10 @@ static void setup_environment() {
     setenv("LIBGL_NODOWNSAMPLING", "1", 1);
 
     chdir(config.data_root);
+
+    // Keep a root game.cfg available so the Android missing-file Input:* fallback
+    // is not entered on the Switch ABI path.
+    ensureFarCryGameConfig();
 
     // Normalize the existing data tree first, then materialize the shader
     // directories with their original CryEngine spelling (Shaders/...).
