@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
+#include <string>
 
 static CompatLayer g_compat = {};
 static Mutex g_log_lock;
@@ -91,41 +93,49 @@ static bool suppressCompatShaderDiag(const char* msg) {
     if (!msg || !*msg)
         return false;
 
-    const char* shader = std::strstr(msg, "Shaders/");
-    if (!shader)
-        shader = std::strstr(msg, "shaders/");
-
-    if (shader) {
-        if (std::strstr(msg, "PAK EXACT MISS:") ||
-            std::strstr(msg, "PAK BASENAME MATCH:") ||
-            std::strstr(msg, "PAK BASENAME NOT FOUND:") ||
-            std::strstr(msg, "PAK BASENAME AMBIGUOUS:") ||
-            std::strstr(msg, "realpath RESULT:") ||
-            std::strstr(msg, "realpath PAK EXACT:") ||
-            std::strstr(msg, "realpath SHADER CACHE BYPASS:") ||
-            std::strstr(msg, "fopen FAIL:") ||
-            std::strstr(msg, "fopen CASEFIX:") ||
-            std::strstr(msg, "fopen FCDATA:") ||
-            std::strstr(msg, "PAK FOPEN REQUEST:") ||
-            std::strstr(msg, "opendir ") ||
-            std::strstr(msg, "readdir[") ||
-            std::strstr(msg, "readdir64[") ||
-            std::strstr(msg, "pak DIR READY:") ||
-            std::strstr(msg, "shader source files:") ||
-            std::strstr(msg, "shader dir:") ||
-            std::strstr(msg, "shader root fallback:") ||
-            std::strstr(msg, "shader common") ||
-            std::strstr(msg, "shader common patch:")) {
-            return true;
-        }
+    std::string normalized(msg);
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+        else
+            c = (char)std::tolower((unsigned char)c);
     }
 
-    return std::strstr(msg, "shader source files:") != nullptr ||
-           std::strstr(msg, "shader dir:") != nullptr ||
-           std::strstr(msg, "shader root fallback:") != nullptr ||
-           std::strstr(msg, "shader common") != nullptr;
-}
+    const bool shaderPath = normalized.find("shaders/") != std::string::npos;
+    const bool shaderArchive = normalized.find("shaders.pak") != std::string::npos;
+    const bool shaderDiagWord =
+        normalized.find("shader source files:") != std::string::npos ||
+        normalized.find("shader dir:") != std::string::npos ||
+        normalized.find("shader root fallback:") != std::string::npos ||
+        normalized.find("shader common") != std::string::npos ||
+        normalized.find("shader cache") != std::string::npos;
 
+    if (!(shaderPath || shaderArchive || shaderDiagWord))
+        return false;
+
+    // Suppress compatibility-layer lookup/path diagnostics only. CryEngine's
+    // own warnings/errors are retained because they do not use these prefixes.
+    return normalized.find("pak exact miss:") != std::string::npos ||
+           normalized.find("pak basename match:") != std::string::npos ||
+           normalized.find("pak basename not found:") != std::string::npos ||
+           normalized.find("pak basename ambiguous:") != std::string::npos ||
+           normalized.find("realpath result:") != std::string::npos ||
+           normalized.find("realpath pak exact:") != std::string::npos ||
+           normalized.find("realpath shader cache bypass:") != std::string::npos ||
+           normalized.find("fopen fail:") != std::string::npos ||
+           normalized.find("fopen casefix:") != std::string::npos ||
+           normalized.find("fopen fcdata:") != std::string::npos ||
+           normalized.find("pak fopen request:") != std::string::npos ||
+           normalized.find("opendir ") != std::string::npos ||
+           normalized.find("readdir[") != std::string::npos ||
+           normalized.find("readdir64[") != std::string::npos ||
+           normalized.find("pak dir ready:") != std::string::npos ||
+           normalized.find("shader source files:") != std::string::npos ||
+           normalized.find("shader dir:") != std::string::npos ||
+           normalized.find("shader root fallback:") != std::string::npos ||
+           normalized.find("shader common") != std::string::npos ||
+           normalized.find("shader cache") != std::string::npos;
+}
 static void log_close_locked() {
     if (g_log) {
         std::fflush(g_log);
