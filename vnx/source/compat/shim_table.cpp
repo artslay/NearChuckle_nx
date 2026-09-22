@@ -84,6 +84,7 @@ extern "C" {
 #include <string>
 #include <algorithm>
 #include <unordered_map>
+#include <atomic>
 
 // Diagnostic logging policy. Keep crash/loader/path failures visible, but suppress
 // high-frequency allocator and successful realpath chatter that can drown the
@@ -2655,13 +2656,96 @@ static int android_log_buf_print(int, int, const char* tag, const char* fmt, ...
 //   Bionic pthread_rwlock_t= 56 B  ⊇ _LOCK_RECURSIVE_T (writer-lock semantics)
 // Recursive semantics everywhere: cocos2d-x uses std::recursive_mutex, and
 // plain mutexes tolerate it.
-static void* g_pthread_tls[64] = {};
-static int   g_tls_key_count   = 0;
+// pthread keys are process-global, but every key's value is thread-local.
+// The old implementation used one global value array for every thread. That is
+// incorrect for Bionic/POSIX and lets one CryEngine worker thread consume another
+// thread's locale/EH/TLS state.
+//
+// Keep a fixed, allocation-free table keyed by the current libnx Thread handle.
+// Allocation-free lookup is important because pthread TLS can be queried from
+// inside allocator/libc internals where taking a C++ heap allocation would be
+// unsafe.
+static constexpr size_t PTHREAD_TLS_ROWS = 32;
 
-// Per-key zeroed scratch buffers (512 bytes each).  Returned by pt_getspecific
-// when a slot is uninitialized, so code that doesn't null-check can read/write
-// without faulting (e.g. ios_base::Init accessing [tls+0x28]).
-static uint8_t g_tls_scratch[64][512];
+struct PthreadTlsRow {
+    std::atomic<uintptr_t> owner;
+    void* values[64];
+    uint8_t scratch[64][512];
+};
+
+static PthreadTlsRow g_pthread_tls[PTHREAD_TLS_ROWS] = {};
+static int g_tls_key_count = 0;
+
+static PthreadTlsRow* pthreadTlsRowForCurrent() {
+    const uintptr_t self =
+        reinterpret_cast<uintptr_t>(threadGetCurHandle());
+    if (!self)
+        return nullptr;
+
+    for (size_t i = 0; i < PTHREAD_TLS_ROWS; ++i) {
+        if (g_pthread_tls[i].owner.load(std::memory_order_acquire) == self)
+            return &g_pthread_tls[i];
+    }
+
+    for (size_t i = 0; i < PTHREAD_TLS_ROWS; ++i) {
+        uintptr_t expected = 0;
+        if (g_pthread_tls[i].owner.compare_exchange_strong(
+                expected, self, std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            return &g_pthread_tls[i];
+        }
+    }
+
+    // More than 32 simultaneously-live guest threads is not expected by the
+    // Android game. Failing here is preferable to cross-wiring TLS state.
+    compatLogFmt("pthread TLS: no free row for thread=%p",
+                 (void*)self);
+    return nullptr;
+}
+
+static int pt_key_create(int* k, void (*dtor)(void*)) {
+    if (!k || g_tls_key_count >= 64)
+        return 11; // EAGAIN
+    *k = g_tls_key_count++;
+    compatLogFmt("pthread_key_create → key=%d dtor=%p", *k, (void*)dtor);
+    return 0;
+}
+static int pt_key_delete(int) { return 0; }
+
+static void* pt_getspecific(int k) {
+    if (k < 0 || k >= 64)
+        return nullptr;
+
+    PthreadTlsRow* row = pthreadTlsRowForCurrent();
+    if (!row)
+        return nullptr;
+
+    void* v = row->values[k];
+    if (!v) {
+        // Preserve the old compatibility behavior for callers that assume
+        // Bionic's locale/EH TLS object exists, but make the scratch state
+        // genuinely thread-local.
+        v = row->scratch[k];
+        row->values[k] = v;
+        compatLogFmt("pthread_getspecific(key=%d) → thread-local scratch=%p",
+                     k, v);
+    }
+    return v;
+}
+
+static int pt_setspecific(int k, const void* v) {
+    if (k < 0 || k >= 64)
+        return 22; // EINVAL
+
+    PthreadTlsRow* row = pthreadTlsRowForCurrent();
+    if (!row)
+        return 11; // EAGAIN
+
+    row->values[k] = (void*)v;
+    compatLogFmt("pthread_setspecific(key=%d, val=%p thread=%p)",
+                 k, v, (void*)threadGetCurHandle());
+    return 0;
+}
 
 // Bionic's PTHREAD_RECURSIVE/ERRORCHECK_MUTEX_INITIALIZER put the mutex type
 // in bits 14-15 of the first word (0x8000 / 0x4000). To a libnx Mutex that
