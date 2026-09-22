@@ -568,6 +568,10 @@ int main(int, char**) {
     compatLogFmt("lib_dir=%s", config.lib_dir);
     compatLogFmt("mesa_driver=%s", config.mesa_driver);
     compatLogFmt("resolution=%dx%d", config.screen_width, config.screen_height);
+    compatLogFmt("host diag anchors: compatLog=%p compatLogFmt=%p compatLogRaw=%p",
+                 reinterpret_cast<void*>(&compatLog),
+                 reinterpret_cast<void*>(&compatLogFmt),
+                 reinterpret_cast<void*>(&compatLogRaw));
 
     setup_android_runtime();
     androidTlsInstall();
