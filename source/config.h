@@ -8,7 +8,6 @@ struct Config {
     int screen_height;
     int fov;
     int vsync;
-    int disable_shader_compilation;
 };
 
 extern Config config;
