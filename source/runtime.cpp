@@ -114,6 +114,17 @@ static bool suppressCompatShaderDiag(const char* msg) {
             c = (char)std::tolower((unsigned char)c);
     }
 
+    // Keep the one-time preparation result visible. These messages are
+    // compatibility diagnostics too, but they are needed to distinguish a
+    // successful CommonSubroutines materialization from a failed directory scan.
+    const bool keepShaderPrepDiag =
+        normalized.find("shader common standalone:") != std::string::npos ||
+        normalized.find("shader prep dir:") != std::string::npos ||
+        normalized.find("shader prep tree:") != std::string::npos;
+
+    if (keepShaderPrepDiag)
+        return false;
+
     const bool shaderPath = normalized.find("shaders/") != std::string::npos;
     const bool shaderArchive = normalized.find("shaders.pak") != std::string::npos;
     const bool shaderDiagWord =
