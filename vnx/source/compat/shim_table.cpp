@@ -92,6 +92,7 @@ static bool compatIsPakPath(const char* path);
 static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
 static bool tryMaterializeUniquePakBasename(const char* targetPath);
+static bool tryMaterializePakPath(const char* targetPath, std::string& materialized);
 static bool isShaderCacheLookupPath(const char* path);
 static void compatLogPakOpenState(FILE* f, const char* path);
 
@@ -314,18 +315,31 @@ static char* stub_realpath(const char* p, char* out) {
     // embedded shader fallback path instead of feeding a cached Cg program into
     // CCGPShader_GL::mfLoad on Switch.
     if (!isShaderCacheLookupPath(p) &&
-        strchr(p, '/') && tryMaterializeUniquePakBasename(p)) {
-        struct stat pakSt = {};
-        if (::stat(p, &pakSt) == 0 && S_ISREG(pakSt.st_mode)) {
+        (strchr(p, '/') || strchr(p, '\\\\'))) {
+        std::string materialized;
+        if (tryMaterializePakPath(p, materialized)) {
+            compatLogFmt("realpath PAK EXACT: %s -> %s", p, materialized.c_str());
+            return writeCanonical(materialized);
+        }
+
+        // Keep the basename fallback for legacy content whose virtual path is
+        // known only by filename. This is deliberately second: exact virtual
+        // paths are authoritative and avoid collisions between PAKs.
+        if (tryMaterializeUniquePakBasename(p)) {
+            std::string normalizedOut = pakNormalizeName(p);
+            // The basename helper writes using the normalized target path below;
+            // use the canonical game-rooted path only when the file now exists.
             char cwd[PATH_MAX];
             if (::getcwd(cwd, sizeof(cwd))) {
                 std::string absolute = cwd;
                 if (!absolute.empty() && absolute.back() != '/')
                     absolute += '/';
-                absolute += p;
-                compatLogFmt("realpath PAK FALLBACK: %s materialized from FCData PAK",
-                             p);
-                return writeCanonical(absolute);
+                for (char c : normalizedOut) absolute += c;
+                struct stat pakSt = {};
+                if (::stat(absolute.c_str(), &pakSt) == 0 && S_ISREG(pakSt.st_mode)) {
+                    compatLogFmt("realpath PAK BASENAME: %s -> %s", p, absolute.c_str());
+                    return writeCanonical(absolute);
+                }
             }
         }
     }
@@ -1390,6 +1404,91 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     return wrote;
 }
 
+
+// Materialize an exact CryPak virtual path from its PAK entry. Unlike the
+// basename fallback below, this preserves the directory portion of the entry and
+// can handle Windows-style '\\' paths used by the Android CryEngine build.
+static bool tryMaterializePakPath(const char* targetPath, std::string& materialized) {
+    materialized.clear();
+    if (!targetPath || !*targetPath)
+        return false;
+
+    std::string wanted = pakNormalizeName(targetPath);
+    if (wanted.empty())
+        return false;
+
+    const std::string gameMarker = "/game/";
+    const size_t gamePos = wanted.find(gameMarker);
+    if (gamePos != std::string::npos)
+        wanted.erase(0, gamePos + gameMarker.size());
+
+    while (wanted.rfind("./", 0) == 0)
+        wanted.erase(0, 2);
+    if (wanted.rfind("fcdata/", 0) == 0)
+        wanted.erase(0, 7);
+
+    const bool inCgfCache = wanted.rfind("ccgf_cache/", 0) == 0;
+    if (inCgfCache)
+        wanted.erase(0, 11);
+
+    if (wanted.empty() || wanted[0] == '/')
+        return false;
+
+    std::vector<std::string> pakCandidates;
+    if (inCgfCache) {
+        pakCandidates.push_back("FCData/CCGF_CACHE.PAK");
+        pakCandidates.push_back("FCData/ccgf_cache.pak");
+        pakCandidates.push_back("fcdata/CCGF_CACHE.PAK");
+        pakCandidates.push_back("fcdata/ccgf_cache.pak");
+    } else {
+        const char* roots[] = {
+            "FCData", "fcdata", ".", nullptr
+        };
+        for (size_t r = 0; roots[r]; ++r) {
+            DIR* dir = opendir(roots[r]);
+            if (!dir) continue;
+            while (dirent* ent = readdir(dir)) {
+                const char* n = ent->d_name;
+                const size_t len = strlen(n);
+                if (len < 4 || std::tolower((unsigned char)n[len-4]) != '.' ||
+                    std::tolower((unsigned char)n[len-3]) != 'p' ||
+                    std::tolower((unsigned char)n[len-2]) != 'a' ||
+                    std::tolower((unsigned char)n[len-1]) != 'k')
+                    continue;
+                std::string pp = std::string(roots[r]);
+                if (pp != ".") pp += "/";
+                pp += n;
+                pakCandidates.push_back(pp);
+            }
+            closedir(dir);
+        }
+    }
+
+    const std::string cacheRoot = "_pakcache_v3";
+    std::string safe = wanted;
+    for (char& c : safe) if (c == '/') c = '_';
+    const std::string outPath = cacheRoot + "/" + safe;
+
+    struct stat cached = {};
+    if (::stat(outPath.c_str(), &cached) == 0 && S_ISREG(cached.st_mode)) {
+        materialized = outPath;
+        return true;
+    }
+
+    for (const std::string& pakPath : pakCandidates) {
+        struct stat st = {};
+        if (::stat(pakPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+            continue;
+        if (pakExtractEntry(pakPath, wanted, outPath)) {
+            materialized = outPath;
+            compatLogFmt("PAK EXACT MATCH: %s <- %s", wanted.c_str(), pakPath.c_str());
+            return true;
+        }
+    }
+
+    compatLogFmt("PAK EXACT MISS: %s%s", inCgfCache ? "CCGF_CACHE/" : "", wanted.c_str());
+    return false;
+}
 
 static bool pakFindUniqueBasename(const std::string& pakPath,
                                   const std::string& wantedBasename,
