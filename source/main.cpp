@@ -11,6 +11,7 @@ extern void compatProbePakArchives(const char* dataRoot);
 #include <cstdio>
 #include <cstdlib>
 #include <cctype>
+#include <cerrno>
 #include <cstring>
 #include <string>
 #include <vector>
