@@ -2678,7 +2678,7 @@ static int g_tls_key_count = 0;
 
 static PthreadTlsRow* pthreadTlsRowForCurrent() {
     const uintptr_t self =
-        reinterpret_cast<uintptr_t>(threadGetCurHandle());
+        static_cast<uintptr_t>(threadGetCurHandle());
     if (!self)
         return nullptr;
 
@@ -2743,7 +2743,7 @@ static int pt_setspecific(int k, const void* v) {
 
     row->values[k] = (void*)v;
     compatLogFmt("pthread_setspecific(key=%d, val=%p thread=%p)",
-                 k, v, (void*)threadGetCurHandle());
+                 k, v, reinterpret_cast<void*>(static_cast<uintptr_t>(threadGetCurHandle())));
     return 0;
 }
 
@@ -2844,33 +2844,6 @@ static int pt_join(void* th, void** ret) {
 static int pt_detach(void*)            { return 0; }  // struct leaks; harmless
 static void* pt_self(void)             { return threadGetSelf(); }
 static int pt_equal(void* a, void* b)  { return a == b ? 1 : 0; }
-static int pt_key_create(int* k, void (*dtor)(void*)) {
-    if (g_tls_key_count >= 64) return 11; // EAGAIN
-    *k = g_tls_key_count++;
-    compatLogFmt("pthread_key_create → key=%d dtor=%p", *k, (void*)dtor);
-    return 0;
-}
-static int pt_key_delete(int) { return 0; }
-static void* pt_getspecific(int k) {
-    if (k < 0 || k >= 64) return nullptr;
-    void* v = g_pthread_tls[k];
-    if (!v) {
-        // Return per-key scratch buffer instead of null so code that skips
-        // null-checks (e.g. Bionic libc++ accessing [tls+0x28] for locale/EH
-        // state) can read and write without faulting.  If the game later calls
-        // setspecific, pt_setspecific replaces this with the real value.
-        compatLogFmt("pthread_getspecific(key=%d) → scratch buf (first use)", k);
-        g_pthread_tls[k] = g_tls_scratch[k];
-        return g_tls_scratch[k];
-    }
-    return v;
-}
-static int pt_setspecific(int k, const void* v) {
-    if (k < 0 || k >= 64) return 22; // EINVAL
-    g_pthread_tls[k] = (void*)v;
-    compatLogFmt("pthread_setspecific(key=%d, val=%p)", k, v);
-    return 0;
-}
 static int pt_once(int* ctrl, void (*fn)(void)) {
     static Mutex s_once_lock;
     mutexLock(&s_once_lock);
