@@ -499,40 +499,52 @@ static int run_farcry(LoadedSo* game_so) {
     MainFn game_main = reinterpret_cast<MainFn>(entry);
 
     char arg0[] = "FarCry";
-    char arg1[] = "r_Driver=OpenGL";
+    // CryEngine's Android command-line parser expects "name value" rather than
+    // shell-style "name=value". The Android launcher passes each of these as a
+    // single quoted argument; libFarCry's SDL_main joins argv with spaces.
+    char arg1[] = "r_Driver OpenGL";
     char arg2[64];
     char arg3[64];
-    char arg4[] = "r_Fullscreen=1";
+    char arg4[] = "r_Fullscreen 1";
     char arg5[64];
-    char arg6[] = "r_VSync=1";
+    char arg6[] = "r_VSync 1";
+    char arg7[] = "r_Quality_BumpMapping 3";
+    char arg8[] = "r_NoPS20 0";
+    char arg9[] = "r_GL_NV30_PS20 1";
+    char arg10[] = "GL_NV30_PS20 1";
     // The menu background movie is not usable on the Switch port yet.
-    // Disable it at launch so CXGame can enter the normal menu UI instead of
-    // waiting in the Bink/message path for AMD64.bik.
-    char arg12[] = "ui_BackGroundVideo=0";
+    // Disable it at launch so later menu updates do not try to play AMD64.bik.
+    char arg11[] = "ui_BackGroundVideo 0";
 
-    std::snprintf(arg2, sizeof(arg2), "r_Width=%d", config.screen_width);
-    std::snprintf(arg3, sizeof(arg3), "r_Height=%d", config.screen_height);
-    std::snprintf(arg5, sizeof(arg5), "game_fov=%d", config.fov);
+    std::snprintf(arg2, sizeof(arg2), "r_Width %d", config.screen_width);
+    std::snprintf(arg3, sizeof(arg3), "r_Height %d", config.screen_height);
+    std::snprintf(arg5, sizeof(arg5), "game_fov %d", config.fov);
 
-    char* argv[13];
+    char* argv[12];
     argv[0] = arg0;
     argv[1] = arg1;
     argv[2] = arg2;
     argv[3] = arg3;
     argv[4] = arg4;
     argv[5] = arg5;
+    argv[6] = arg7;
+    argv[7] = arg8;
+    argv[8] = arg9;
+    argv[9] = arg10;
 
-    int argc = 6;
+    int argc = 10;
     if (config.vsync) {
         argv[argc++] = arg6;
     }
+
+    argv[argc++] = arg11;
 
     // Keep shader compilation enabled, matching the working Android build.
     // Missing/experimental Switch shader caches must not turn the menu into a
     // black frame just because this wrapper was built from a shader-debug branch.
 
-    argv[argc++] = arg12;
-    compatLog("Far Cry: ui_BackGroundVideo=0 (skip menu background video)");
+    compatLog("Far Cry: Android-style graphics CVars queued (space-separated parser syntax)");
+    compatLog("Far Cry: ui_BackGroundVideo=0 queued for post-init console parsing");
     compatLog("Far Cry: command-line CVars use name=value syntax");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
