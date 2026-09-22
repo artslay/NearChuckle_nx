@@ -104,6 +104,22 @@ static bool tryMaterializePakPath(const char* targetPath, std::string& materiali
 static std::string pakNormalizeName(const char* name);
 static bool isShaderCacheLookupPath(const char* path);
 static void compatLogPakOpenState(FILE* f, const char* path);
+ 
+extern "C" volatile int g_near_video_open_failed = 0;
+extern "C" volatile uint32_t g_near_video_panel_finished_offset = 0xffffffffu;
+
+extern "C" int compatVideoPanelIsPlaying(void* self) {
+    if (g_near_video_open_failed)
+        return 0;
+
+    const uint32_t offset = g_near_video_panel_finished_offset;
+    if (!self || offset == 0xffffffffu || offset >= 0x10000u)
+        return 0;
+
+    const uint8_t finished = *(const volatile uint8_t*)
+        ((const uint8_t*)self + offset);
+    return finished ? 0 : 1;
+}
 
 // Normalize Switch virtual-device paths before they reach newlib's POSIX I/O.
 //
@@ -130,6 +146,21 @@ static std::string normalizeSwitchFsPath(const char* input) {
     // A normal sdmc:/ absolute path maps directly to the Switch POSIX root.
     return path.substr(5); // "sdmc:" -> "/switch/..."
 }
+ 
+static std::string pakPreserveCasePath(const char* input) {
+    if (!input)
+        return std::string();
+
+    std::string path(input);
+    for (char& ch : path) {
+        if ((unsigned char)ch == 92)
+            ch = '/';
+    }
+    while (path.rfind("./", 0) == 0)
+        path.erase(0, 2);
+    return path;
+}
+
 
 
 
@@ -343,15 +374,16 @@ static char* stub_realpath(const char* p, char* out) {
         // known only by filename. This is deliberately second: exact virtual
         // paths are authoritative and avoid collisions between PAKs.
         if (tryMaterializeUniquePakBasename(p)) {
-            std::string normalizedOut = pakNormalizeName(p);
-            // The basename helper writes using the normalized target path below;
-            // use the canonical game-rooted path only when the file now exists.
+            const std::string materializedOut = pakPreserveCasePath(p);
             char cwd[PATH_MAX];
             if (::getcwd(cwd, sizeof(cwd))) {
-                std::string absolute = cwd;
-                if (!absolute.empty() && absolute.back() != '/')
-                    absolute += '/';
-                for (char c : normalizedOut) absolute += c;
+                std::string absolute = materializedOut;
+                if (absolute.empty() || absolute[0] != '/') {
+                    absolute = cwd;
+                    if (!absolute.empty() && absolute.back() != '/')
+                        absolute += '/';
+                    absolute += materializedOut;
+                }
                 struct stat pakSt = {};
                 if (::stat(absolute.c_str(), &pakSt) == 0 && S_ISREG(pakSt.st_mode)) {
                     compatLogFmt("realpath PAK BASENAME: %s -> %s", p, absolute.c_str());
@@ -1541,7 +1573,14 @@ static bool tryMaterializePakPath(const char* targetPath, std::string& materiali
         pakCandidates.push_back("fcdata/ccgf_cache.pak");
     } else {
         const char* roots[] = {
-            "FCData", "fcdata", ".", nullptr
+            "FCData",
+            "fcdata",
+            "FCData/Localized",
+            "fcdata/Localized",
+            "FCData/localized",
+            "fcdata/localized",
+            ".",
+            nullptr
         };
         for (size_t r = 0; roots[r]; ++r) {
             DIR* dir = opendir(roots[r]);
@@ -1723,11 +1762,8 @@ static bool tryMaterializeUniquePakBasename(const char* targetPath) {
     if (!targetPath || !*targetPath)
         return false;
 
-    const std::string normalizedTarget =
-        pakNormalizeName(targetPath);
-
-    const size_t slash =
-        normalizedTarget.find_last_of('/');
+    const std::string normalizedTarget = pakNormalizeName(targetPath);
+    const size_t slash = normalizedTarget.find_last_of('/');
     const std::string wantedBasename =
         (slash == std::string::npos)
             ? normalizedTarget
@@ -1736,76 +1772,67 @@ static bool tryMaterializeUniquePakBasename(const char* targetPath) {
     if (wantedBasename.empty())
         return false;
 
-    std::string resolvedRoot;
-    if (!resolvePathCaseInsensitive("FCData", resolvedRoot)) {
-        compatLogFmt(
-            "PAK BASENAME NOT FOUND: %s (FCData missing)",
-            targetPath);
-        return false;
-    }
-
-    DIR* root = opendir(resolvedRoot.c_str());
-    if (!root) {
-        compatLogFmt(
-            "PAK BASENAME NOT FOUND: %s (cannot open FCData)",
-            targetPath);
-        return false;
-    }
+    const char* roots[] = {
+        "FCData",
+        "fcdata",
+        "FCData/Localized",
+        "fcdata/Localized",
+        "FCData/localized",
+        "fcdata/localized",
+        ".",
+        nullptr
+    };
 
     std::string uniquePak;
     std::string uniqueEntry;
     int globalMatches = 0;
 
-    for (struct dirent* ent = readdir(root); ent; ent = readdir(root)) {
-        const char* name = ent->d_name;
-        const size_t len = std::strlen(name);
-        if (len < 4 ||
-            std::tolower((unsigned char)name[len - 4]) != '.' ||
-            std::tolower((unsigned char)name[len - 3]) != 'p' ||
-            std::tolower((unsigned char)name[len - 2]) != 'a' ||
-            std::tolower((unsigned char)name[len - 1]) != 'k')
+    for (size_t r = 0; roots[r]; ++r) {
+        DIR* root = opendir(roots[r]);
+        if (!root)
             continue;
 
-        const std::string pakPath =
-            resolvedRoot + "/" + name;
-        std::string matchedEntry;
+        for (struct dirent* ent = readdir(root); ent; ent = readdir(root)) {
+            const char* name = ent->d_name;
+            const size_t len = std::strlen(name);
+            if (len < 4 ||
+                std::tolower((unsigned char)name[len - 4]) != '.' ||
+                std::tolower((unsigned char)name[len - 3]) != 'p' ||
+                std::tolower((unsigned char)name[len - 2]) != 'a' ||
+                std::tolower((unsigned char)name[len - 1]) != 'k')
+                continue;
 
-        if (!pakFindUniqueBasename(
-                pakPath, wantedBasename, matchedEntry))
-            continue;
+            std::string pakPath = std::string(roots[r]);
+            if (pakPath != ".")
+                pakPath += "/";
+            pakPath += name;
 
-        ++globalMatches;
-        if (globalMatches == 1) {
-            uniquePak = pakPath;
-            uniqueEntry = matchedEntry;
+            std::string matchedEntry;
+            if (!pakFindUniqueBasename(pakPath, wantedBasename, matchedEntry))
+                continue;
+
+            ++globalMatches;
+            if (globalMatches == 1) {
+                uniquePak = pakPath;
+                uniqueEntry = matchedEntry;
+            }
         }
+        closedir(root);
     }
 
-    closedir(root);
-
     if (globalMatches == 0) {
-        compatLogFmt(
-            "PAK BASENAME NOT FOUND: %s",
-            targetPath);
+        compatLogFmt("PAK BASENAME NOT FOUND: %s", targetPath);
         return false;
     }
 
     if (globalMatches > 1) {
-        compatLogFmt(
-            "PAK BASENAME AMBIGUOUS: %s (%d PAKs)",
-            targetPath, globalMatches);
+        compatLogFmt("PAK BASENAME AMBIGUOUS: %s (%d PAKs)",
+                     targetPath, globalMatches);
         return false;
     }
 
-    if (!pakExtractEntry(
-            uniquePak, uniqueEntry, targetPath)) {
-        return false;
-    }
-
-    return true;
+    return pakExtractEntry(uniquePak, uniqueEntry, targetPath);
 }
-
-
 
 // ─── Shader source discovery ────────────────────────────────────────────────
 // Only check the expected loose paths. The old recursive scan walked the entire
@@ -2203,6 +2230,9 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
     const bool shaderIo = isShaderPathForDiag(ioPath);
+    const bool videoIo =
+        ioPath && (shaderPathHasExt(ioPath, ".bik") ||
+                   shaderPathHasExt(ioPath, ".avi"));
     const bool shaderSourceIo =
         shaderIo &&
         (shaderPathHasExt(ioPath, ".csl") ||
@@ -2221,7 +2251,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         FILE* mf = fopen(mapped.c_str(), mode);
         compatLogFmt("obb: fopen %s -> %s (%s)", ioPath ? ioPath : "?",
                      mapped.c_str(), mf ? "ok" : "still not there");
-        if (mf) { setvbuf(mf, nullptr, _IOFBF, 64 * 1024); return mf; }
+        if (mf) { if (videoIo) g_near_video_open_failed = 0; setvbuf(mf, nullptr, _IOFBF, 64 * 1024); return mf; }
     }
 
     if (ioPath && compatIsPakPath(ioPath))
@@ -2236,6 +2266,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
+                if (videoIo) g_near_video_open_failed = 0;
                 compatLogFmt("fopen CASEFIX: %s -> %s", ioPath, resolved.c_str());
                 if (shaderSourceIo)
                     compatLogFmt("fopen SHADER CASEFIX: requested=%s resolved=%s result=OK",
@@ -2265,8 +2296,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         // renderer's embedded fallback immediately.
         if (!isShaderCacheLookupPath(ioPath)) {
             FILE* pakFile = tryOpenFromPaks(ioPath, mode);
-            if (pakFile)
+            if (pakFile) {
+                if (videoIo) g_near_video_open_failed = 0;
                 return pakFile;
+            }
         }
 
         // Missing PAKs are not fatal packaging artifacts on Switch. Return
@@ -2322,6 +2355,9 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             compatLogFmt("fopen SHADER FINAL FAIL: path=%s mode=%s",
                          ioPath ? ioPath : "?", mode ? mode : "?");
 
+        if (videoIo)
+            g_near_video_open_failed = 1;
+
         if (!shaderCacheIo || g_shader_cache_miss_logs < 64) {
             compatLogFmt("fopen FAIL: %s (mode=%s)",
                          ioPath ? ioPath : "?", mode ? mode : "?");
@@ -2339,6 +2375,9 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     }
 
     logShaderScriptDiagnostics(f, ioPath);
+
+    if (videoIo)
+        g_near_video_open_failed = 0;
 
     if (apkcache::adopt(f, ioPath)) {
         setvbuf(f, nullptr, _IOFBF, 16 * 1024);
@@ -2406,6 +2445,9 @@ static int stub_open(const char* path, int flags, ...) {
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
     if (path && ioPathStorage != path)
+    const bool videoIo =
+        ioPath && (shaderPathHasExt(ioPath, ".bik") ||
+                   shaderPathHasExt(ioPath, ".avi"));
         compatLogFmt("path NORMALIZE: open %s -> %s", path, ioPathStorage.c_str());
 
     int vfd = devUrandomOpen(ioPath);
@@ -2474,6 +2516,7 @@ static int stub_open(const char* path, int flags, ...) {
         if (tryMaterializePakPath(ioPath, materialized)) {
             int mfd = doOpen(materialized.c_str());
             if (mfd >= 0) {
+                if (videoIo) g_near_video_open_failed = 0;
                 compatLogFmt("open VIDEO PAK EXACT: %s -> %s fd=%d",
                              ioPath, materialized.c_str(), mfd);
                 return mfd;
@@ -2485,16 +2528,20 @@ static int stub_open(const char* path, int flags, ...) {
         // Match the Android path fallback: if the virtual directory differs but
         // the basename is unique in the PAK set, use that single unambiguous match.
         if (tryMaterializeUniquePakBasename(ioPath)) {
-            std::string normalizedName = pakNormalizeName(ioPath);
+            const std::string materializedName = pakPreserveCasePath(ioPath);
             char cwd[PATH_MAX];
             if (::getcwd(cwd, sizeof(cwd))) {
-                std::string materializedPath = std::string(cwd);
-                if (!materializedPath.empty() && materializedPath.back() != '/')
-                    materializedPath += '/';
-                materializedPath += normalizedName;
+                std::string materializedPath = materializedName;
+                if (materializedPath.empty() || materializedPath[0] != '/') {
+                    materializedPath = std::string(cwd);
+                    if (!materializedPath.empty() && materializedPath.back() != '/')
+                        materializedPath += '/';
+                    materializedPath += materializedName;
+                }
 
                 int mfd = doOpen(materializedPath.c_str());
                 if (mfd >= 0) {
+                    if (videoIo) g_near_video_open_failed = 0;
                     compatLogFmt("open VIDEO PAK BASENAME: %s -> %s fd=%d",
                                  ioPath, materializedPath.c_str(), mfd);
                     return mfd;
@@ -2505,7 +2552,10 @@ static int stub_open(const char* path, int flags, ...) {
         }
     }
 
-    if (fd < 0) compatLogFmt("open FAIL: %s flags=0x%x", ioPath ? ioPath : "?", flags);
+    if (fd < 0) {
+        if (videoIo) g_near_video_open_failed = 1;
+        compatLogFmt("open FAIL: %s flags=0x%x", ioPath ? ioPath : "?", flags);
+    }
     else        compatLogFmt("open OK:   %s flags=0x%x fd=%d", ioPath ? ioPath : "?", flags, fd);
     return fd;
 }
