@@ -4945,7 +4945,7 @@ static void countLuaScriptsRecursive(const std::string& directory,
 }
 
 static const char* kScriptPrepMarker = ".nearchuckle_scripts_ready_v1";
-static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v7";
+static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v8";
 
 static bool prepMarkerExists(const char* marker) {
     if (!marker || !*marker)
