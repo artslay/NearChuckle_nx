@@ -1386,12 +1386,24 @@ static bool patchFarCryProfilePathTrapBranches(LoadedSo* so, uint8_t* stage_base
     auto isTestBranch = [](uint32_t w) {
         return (w & 0x7f000000u) == 0x36000000u; // TBZ/TBNZ
     };
+    auto isUnconditionalBranch = [](uint32_t w) {
+        return (w & 0x7c000000u) == 0x14000000u; // B
+    };
 
     auto isConditionalBranch = [&](uint32_t w) {
         return isCondBranch(w) || isCompareBranch(w) || isTestBranch(w);
     };
 
+    auto isAnyBranch = [&](uint32_t w) {
+        return isConditionalBranch(w) || isUnconditionalBranch(w);
+    };
+
     auto branchTarget = [&](uint32_t w, uintptr_t pc) -> uintptr_t {
+        if (isUnconditionalBranch(w)) {
+            const int64_t imm = signExtend(
+                (static_cast<uint64_t>(w & 0x03ffffffu)) << 2, 28);
+            return static_cast<uintptr_t>(static_cast<int64_t>(pc) + imm);
+        }
         if (isCondBranch(w) || isCompareBranch(w)) {
             const int64_t imm = signExtend(
                 (static_cast<uint64_t>(w >> 5) & 0x7ffffULL) << 2, 21);
@@ -1427,12 +1439,16 @@ static bool patchFarCryProfilePathTrapBranches(LoadedSo* so, uint8_t* stage_base
         //   A) branch target is inside the trap block -> NOP the branch;
         //   B) trap is the branch fall-through -> turn the conditional branch
         //      into an unconditional B to its original non-trap target.
-        const size_t lookback = std::min<size_t>(0x40, brk_off);
+        const size_t lookback = std::min<size_t>(0x100, brk_off);
+        compatLogFmt(
+            "FARCRY PROFILE PATH: BRK candidate +0x%zx within GetPlayerProfilePath",
+            brk_off);
+
         for (size_t dist = 4; dist <= lookback; dist += 4) {
             const size_t off = brk_off - dist;
             uint32_t* insn = reinterpret_cast<uint32_t*>(code + off);
             const uint32_t old = *insn;
-            if (!isConditionalBranch(old))
+            if (!isAnyBranch(old))
                 continue;
 
             const uintptr_t pc = reinterpret_cast<uintptr_t>(code + off);
@@ -1442,7 +1458,7 @@ static bool patchFarCryProfilePathTrapBranches(LoadedSo* so, uint8_t* stage_base
 
             // Case A: target lands in the small trap block immediately before
             // BRK. Removing that jump follows the normal fall-through path.
-            if (target >= brk_pc - 0x10 && target <= brk_pc) {
+            if (target >= brk_pc - 0x30 && target <= brk_pc) {
                 *insn = 0xd503201fu;
                 armICacheInvalidate(insn, 4);
                 ++patched_to_trap;
@@ -1455,7 +1471,7 @@ static bool patchFarCryProfilePathTrapBranches(LoadedSo* so, uint8_t* stage_base
 
             // Case B: the trap is the fall-through path and the branch target
             // lies beyond the trap block. Preserve that target unconditionally.
-            if (target > brk_pc && dist <= 0x20) {
+            if (isConditionalBranch(old) && target > brk_pc && dist <= 0x40) {
                 const int64_t delta =
                     static_cast<int64_t>(target) - static_cast<int64_t>(pc);
                 if ((delta & 3) == 0) {
