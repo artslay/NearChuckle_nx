@@ -230,7 +230,7 @@ static constexpr SwitchKeyBinding kSwitchKeyBindings[] = {
 
     // Digital pad stays available as Android DPAD keys for menu navigation.
     {HidNpadButton_Up,          19, "DPAD UP"},
-    {HidNpadButton_Down,        20, "DPAD DOWN"},
+    {HidNpadButton_Down,        50, "DPAD DOWN -> V"},
     {HidNpadButton_Left,        21, "DPAD LEFT"},
     {HidNpadButton_Right,       22, "DPAD RIGHT"},
 
