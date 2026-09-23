@@ -158,30 +158,43 @@ extern "C" bool compatGuestActivateReadStream(void* self) {
         PakEntryMeta meta;
         if (pakFindVirtualEntry(name, pakPath, meta)) {
             const uintptr_t base = reinterpret_cast<uintptr_t>(self);
-            const uintptr_t badHandle = UINTPTR_MAX;
             size_t handleOff = 0;
 
-            const uintptr_t h40 = *reinterpret_cast<const uintptr_t*>(base + 40);
-            const uintptr_t h48 = *reinterpret_cast<const uintptr_t*>(base + 48);
+            // HANDLE is platform/configuration dependent here. On the
+            // Android/libc++ layout used by the original game it may occupy
+            // four bytes even though the surrounding object is AArch64, so
+            // reading it only as UINTPTR_MAX (0xffffffffffffffff) misses the
+            // actual INVALID_HANDLE_VALUE (0xffffffff).
+            //
+            // The known libc++ layouts are:
+            //   m_hFile       +0x28
+            //   m_nFileSize   +0x3c
+            // or, with the wider string layout:
+            //   m_hFile       +0x30
+            //   m_nFileSize   +0x44
+            const uint32_t h28_32 = *reinterpret_cast<const uint32_t*>(base + 0x28);
+            const uint32_t h30_32 = *reinterpret_cast<const uint32_t*>(base + 0x30);
+            const uint64_t h28_64 = *reinterpret_cast<const uint64_t*>(base + 0x28);
+            const uint64_t h30_64 = *reinterpret_cast<const uint64_t*>(base + 0x30);
 
-            if (h40 == badHandle)
-                handleOff = 40;
-            else if (h48 == badHandle)
-                handleOff = 48;
+            if (h28_32 == 0xffffffffu || h28_64 == UINT64_MAX)
+                handleOff = 0x28;
+            else if (h30_32 == 0xffffffffu || h30_64 == UINT64_MAX)
+                handleOff = 0x30;
             else {
-                compatLogFmt("PAK STREAM ACTIVATE: invalid HANDLE slot for %s (h40=%p h48=%p)",
-                             name, (void*)h40, (void*)h48);
+                compatLogFmt("PAK STREAM ACTIVATE: invalid HANDLE slot for %s (h28=%08x/%p h30=%08x/%p)",
+                             name, h28_32, (void*)h28_64, h30_32, (void*)h30_64);
             }
 
             if (handleOff) {
                 // m_nFileSize is immediately after HANDLE, CCachedFileDataPtr,
-                // sector size: HANDLE+20 for the layouts above.
+                // sector size: HANDLE+20 for both supported layouts.
                 *reinterpret_cast<uint32_t*>(base + handleOff + 20) =
                     meta.uncompressedSize;
 
-                compatLogFmt("PAK STREAM ACTIVATE: %s <- %s size=%u",
+                compatLogFmt("PAK STREAM ACTIVATE: %s <- %s size=%u handle=+0x%zx",
                              name, pakPath.c_str(),
-                             (unsigned)meta.uncompressedSize);
+                             (unsigned)meta.uncompressedSize, handleOff);
                 return true;
             }
         }
