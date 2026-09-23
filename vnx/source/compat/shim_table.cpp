@@ -4684,7 +4684,7 @@ static struct dirent* vpakDirRead(DIR* dir) {
         return nullptr;
     }
 
-    std::memset(&state->current, 0, sizeof(state->current));
+    state->current = AndroidDirentCompat{};
     const std::string& name = state->names[state->pos++];
     const size_t maxName = sizeof(state->current.d_name) - 1;
     const size_t copy = name.size() < maxName ? name.size() : maxName;
