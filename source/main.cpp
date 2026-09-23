@@ -116,69 +116,32 @@ static std::vector<SoFile> find_guest_libraries() {
     return result;
 }
 
-static void normalize_engine_data_dirs() {
-    struct Pair {
-        const char* from;
-        const char* to;
+static void log_engine_data_dirs() {
+    const struct Check {
+        const char* label;
+        const char* relative;
     };
 
-    const Pair root_dirs[] = {
-        {"FCData", "fcdata"},
-        {"Shaders", "shaders"},
+    const Check checks[] = {
+        {"FCData", "FCData"},
+        {"Shaders", "Shaders"},
+        {"FCData/Localized", "FCData/Localized"},
     };
 
-    for (const Pair& p : root_dirs) {
-        const std::string from = std::string(config.data_root) + "/" + p.from;
-        const std::string to = std::string(config.data_root) + "/" + p.to;
-
-        struct stat st_from = {};
-        struct stat st_to = {};
-        const bool has_from = (stat(from.c_str(), &st_from) == 0) && S_ISDIR(st_from.st_mode);
-        const bool has_to = (stat(to.c_str(), &st_to) == 0) && S_ISDIR(st_to.st_mode);
-
-        if (has_from && !has_to) {
-            if (rename(from.c_str(), to.c_str()) == 0) {
-                compatLogFmt("data casefix: %s -> %s", from.c_str(), to.c_str());
-            } else {
-                compatLogFmt("data casefix FAILED: %s -> %s errno=%d",
-                             from.c_str(), to.c_str(), errno);
-            }
-        } else {
-            compatLogFmt("data dir: %s=%s %s=%s",
-                         p.from, has_from ? "present" : "missing",
-                         p.to, has_to ? "present" : "missing");
-        }
-    }
-
-    const std::string localized_from =
-        std::string(config.data_root) + "/fcdata/Localized";
-    const std::string localized_to =
-        std::string(config.data_root) + "/fcdata/localized";
-
-    struct stat loc_from_st = {};
-    struct stat loc_to_st = {};
-    const bool has_loc_from =
-        (stat(localized_from.c_str(), &loc_from_st) == 0) &&
-        S_ISDIR(loc_from_st.st_mode);
-    const bool has_loc_to =
-        (stat(localized_to.c_str(), &loc_to_st) == 0) &&
-        S_ISDIR(loc_to_st.st_mode);
-
-    if (has_loc_from && !has_loc_to) {
-        if (rename(localized_from.c_str(), localized_to.c_str()) == 0) {
-            compatLogFmt("data casefix: %s -> %s",
-                         localized_from.c_str(), localized_to.c_str());
-        } else {
-            compatLogFmt("data casefix FAILED: %s -> %s errno=%d",
-                         localized_from.c_str(), localized_to.c_str(), errno);
-        }
-    } else {
-        compatLogFmt("data dir: FCData/Localized=%s FCData/localized=%s",
-                     has_loc_from ? "present" : "missing",
-                     has_loc_to ? "present" : "missing");
+    for (const Check& c : checks) {
+        const std::string path = std::string(config.data_root) + "/" + c.relative;
+        struct stat st = {};
+        const bool present =
+            (stat(path.c_str(), &st) == 0) &&
+            ((std::strcmp(c.label, "FCData") == 0 ||
+              std::strcmp(c.label, "Shaders") == 0 ||
+              std::strcmp(c.label, "FCData/Localized") == 0)
+                ? S_ISDIR(st.st_mode)
+                : true);
+        compatLogFmt("data dir: %s=%s",
+                     c.label, present ? "present" : "missing");
     }
 }
-
 
 static void setup_environment() {
     setenv("FARCRY_DATA_DIR", config.data_root, 1);
@@ -221,9 +184,9 @@ static void setup_environment() {
 
     chdir(config.data_root);
 
-    // Keep the Android data layout as-is. PAKs are opened by the guest
-    // CryPak implementation; never preload, scan, or extract their entries.
-    normalize_engine_data_dirs();
+    // Keep the Android data layout as-is. Do not rename or relocate resource
+    // directories; the guest CryPak must see the original FCData/Shaders tree.
+    log_engine_data_dirs();
     compatLog("PAK IO: Android-style virtual mode; no resource extraction/preload");
 }
 
