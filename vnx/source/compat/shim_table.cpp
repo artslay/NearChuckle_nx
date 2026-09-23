@@ -1980,6 +1980,48 @@ static int vpakFdFstat(int fd, struct stat* st) {
 
 static Mutex g_pak_index_lock;
 static std::unordered_map<std::string, PakIndex> g_pak_indexes;
+static std::vector<std::string> g_active_level_paks;
+
+static void rememberActiveLevelPak(const char* path) {
+    if (!path || !*path)
+        return;
+
+    std::string candidate = normalizeSwitchFsPath(path);
+    std::string lower = candidate;
+    for (char& c : lower)
+        c = (char)std::tolower((unsigned char)c);
+
+    const bool levelPak =
+        (lower.find("/levels/") != std::string::npos ||
+         lower.rfind("levels/", 0) == 0) &&
+        lower.size() >= 4 &&
+        lower.compare(lower.size() - 4, 4, ".pak") == 0;
+    if (!levelPak)
+        return;
+
+    struct stat st = {};
+    if (::stat(candidate.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+        return;
+
+    if (!candidate.empty() && candidate[0] != '/') {
+        char cwd[PATH_MAX];
+        if (::getcwd(cwd, sizeof(cwd))) {
+            std::string absolute(cwd);
+            if (!absolute.empty() && absolute.back() != '/')
+                absolute += '/';
+            absolute += candidate;
+            candidate = absolute;
+        }
+    }
+
+    mutexLock(&g_pak_index_lock);
+    if (std::find(g_active_level_paks.begin(),
+                  g_active_level_paks.end(), candidate) ==
+        g_active_level_paks.end()) {
+        g_active_level_paks.emplace_back(std::move(candidate));
+    }
+    mutexUnlock(&g_pak_index_lock);
+}
 
 static bool buildPakIndexLocked(const std::string& pakPath, PakIndex& index) {
     FILE* pak = fopen(pakPath.c_str(), "rb");
@@ -2292,8 +2334,26 @@ static bool pakFindVirtualEntry(const char* requested,
     if (wanted.empty())
         return false;
 
-    // Only level-local assets get the extra lookup. All global assets retain
-    // the exact Android-style FCData/. search order used previously.
+    // CryPak mounts level PAKs globally after entering a level. Assets inside
+    // those archives still request ordinary names such as Objects/foo.cgf, so
+    // the request itself does not identify the level directory. Snapshot the
+    // PAKs observed through the level-pack open/opendir path and search them
+    // before the global FCData archives.
+    {
+        std::vector<std::string> activeLevelPaks;
+        mutexLock(&g_pak_index_lock);
+        activeLevelPaks = g_active_level_paks;
+        mutexUnlock(&g_pak_index_lock);
+
+        for (const std::string& levelPak : activeLevelPaks) {
+            if (pakFindEntryCached(levelPak, wanted, metaOut)) {
+                pakPathOut = levelPak;
+                return true;
+            }
+        }
+    }
+
+    // Only level-local paths get the direct directory lookup as a fallback.
     if (pakFindLevelLocalEntry(wanted, pakPathOut, metaOut))
         return true;
 
@@ -2662,6 +2722,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
+    rememberActiveLevelPak(ioPath);
+
     const bool shaderIo = isShaderPathForDiag(ioPath);
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
@@ -2855,6 +2917,9 @@ static int sh_fclose(FILE* f) {
 static int stub_open(const char* path, int flags, ...) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
+
+    rememberActiveLevelPak(ioPath);
+
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
@@ -4834,6 +4899,8 @@ static struct dirent* stub_readdir64(DIR* dir) {
 static DIR* stub_opendir(const char* path) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
+
+    rememberActiveLevelPak(ioPath);
 
     if (path && ioPathStorage != path)
     // Shader directories are often present as empty loose mount points while
