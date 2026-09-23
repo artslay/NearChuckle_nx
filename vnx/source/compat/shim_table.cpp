@@ -4702,6 +4702,14 @@ static DIR* stub_opendir(const char* path) {
     if (path && ioPathStorage != path)
         compatLogFmt("path NORMALIZE: opendir %s -> %s", path, ioPathStorage.c_str());
 
+    // Shader directories are often present as empty loose mount points while
+    // their real children live in FCData PAKs. Prefer the merged virtual view
+    // for shader paths so the engine sees both sources, like Android CryPak.
+    if (ioPath && isShaderPathForDiag(ioPath)) {
+        if (DIR* virtualDir = vpakDirOpen(ioPath))
+            return virtualDir;
+    }
+
     DIR* d = opendir(ioPath);
     if (d) {
         std::string low = ioPath ? asciiLower(ioPath) : std::string();
@@ -4736,9 +4744,9 @@ static DIR* stub_opendir(const char* path) {
         }
     }
 
-    // A shader/resource directory can exist only inside registered PAK
-    // content. Expose it as an in-memory DIR* just like Android CryPak's
-    // ZipDir enumeration; do not create a directory on the filesystem.
+    // A resource directory can exist only inside PAK content. Expose it as
+    // an in-memory DIR* just like Android CryPak's ZipDir enumeration; do not
+    // create a directory on the filesystem.
     if (ioPath) {
         if (DIR* virtualDir = vpakDirOpen(ioPath)) {
             if (!isShaderPathForDiag(ioPath))
