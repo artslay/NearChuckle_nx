@@ -4560,6 +4560,26 @@ static DIR* vpakDirOpen(const char* directory) {
     if (!collectPakDirectoryEntries(directory, names))
         return nullptr;
 
+    // Android CryPak enumerates the union of loose filesystem entries and
+    // entries contributed by PAKs. Preserve any real children as well when a
+    // physical directory exists as an empty/mount-point directory.
+    std::unordered_set<std::string> seen(names.begin(), names.end());
+    if (directory && *directory) {
+        if (DIR* physical = ::opendir(directory)) {
+            while (dirent* ent = ::readdir(physical)) {
+                if (!ent->d_name[0] ||
+                    std::strcmp(ent->d_name, ".") == 0 ||
+                    std::strcmp(ent->d_name, "..") == 0)
+                    continue;
+                if (seen.insert(ent->d_name).second)
+                    names.emplace_back(ent->d_name);
+            }
+            ::closedir(physical);
+        }
+    }
+
+    std::sort(names.begin(), names.end());
+
     VirtualPakDir* state = new VirtualPakDir();
     if (!state)
         return nullptr;
