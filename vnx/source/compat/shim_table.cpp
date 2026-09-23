@@ -4364,7 +4364,7 @@ static struct dirent* vpakDirRead(DIR* dir) {
     const size_t maxName = sizeof(state->current.d_name) - 1;
     const size_t copy = name.size() < maxName ? name.size() : maxName;
     std::memcpy(state->current.d_name, name.c_str(), copy);
-    state->current.d_name[copy] = ' ';
+    state->current.d_name[copy] = '\0';
     mutexUnlock(&g_vpak_dir_lock);
     return &state->current;
 }
