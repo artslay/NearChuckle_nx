@@ -4945,6 +4945,7 @@ static void countLuaScriptsRecursive(const std::string& directory,
 }
 
 static const char* kScriptPrepMarker = ".nearchuckle_scripts_ready_v1";
+static const char* kMaterialPrepMarker = ".nearchuckle_materials_ready_v1";
 static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v8";
 
 static bool prepMarkerExists(const char* marker) {
@@ -5078,6 +5079,15 @@ static bool refreshCoreShaderDeclarationsFromPak() {
     return allOk;
 }
 
+static bool materialPrepCacheReady() {
+    if (!prepMarkerExists(kMaterialPrepMarker))
+        return false;
+
+    struct stat st = {};
+    return ::stat("scripts/materials/mat_default.lua", &st) == 0 &&
+           S_ISREG(st.st_mode);
+}
+
 void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
     // PAK-backed scripts stay virtual. Do not materialize the Scripts tree
     // onto the SD card. Individual Lua/material assets are served lazily by
@@ -5085,15 +5095,20 @@ void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
     mkdir("scripts", 0755);
     mkdir("scripts/materials", 0755);
 
-    // The general Lua tree remains virtual. Material definitions are a
-    // small exception because CryEngine enumerates this directory rather than
-    // opening a single known file when constructing physical materials.
+    // The general Lua tree remains virtual. Physical material definitions are
+    // the one targeted exception because CryEngine enumerates this directory
+    // while constructing physical materials instead of opening one known file.
+    if (materialPrepCacheReady()) {
+        compatLog("scripts preload: virtual PAK mode, materials=cached");
+        return;
+    }
+
     const bool materialsReady = tryMaterializePakDirectory("scripts/materials");
+    if (materialsReady)
+        writePrepMarker(kMaterialPrepMarker);
+
     compatLogFmt("scripts preload: virtual PAK mode, materials=%s",
                  materialsReady ? "materialized" : "not found");
-
-    // Do not create the old persistent "ready" marker here: that marker means
-    // a physical extracted tree exists, which is intentionally no longer true.
 }
 void compatProbePakArchives(const char* dataRoot) {
     const std::string root = dataRoot ? dataRoot : "";
