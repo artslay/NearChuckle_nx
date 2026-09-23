@@ -35,6 +35,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+extern void compatPollSwitchInput();
+
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
@@ -3444,6 +3446,11 @@ static bool w_SDL_GetWindowSizeInPixels(void* window, int* w, int* h) {
 
 static bool w_SDL_GL_SwapWindow(void* window) {
     (void)window;
+
+    // SDL_GL_SwapWindow is our per-frame presentation hook. Poll Switch HID
+    // immediately before presenting so button/DPAD/stick transitions reach the
+    // guest SDL Android input callbacks without requiring a separate thread.
+    compatPollSwitchInput();
 
     static unsigned int swap_count = 0;
     ++swap_count;
