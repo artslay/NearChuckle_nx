@@ -367,10 +367,30 @@ static char* stub_realpath(const char* p, char* out) {
 
         std::string resolvedParent;
         if (resolvePathCaseInsensitive(parent.c_str(), resolvedParent)) {
-            std::string resolvedPattern = resolvedParent;
+            std::string resolvedPattern;
+
+            if (!normalized.empty() && normalized[0] == '/') {
+                resolvedPattern = resolvedParent;
+            } else {
+                char cwd[PATH_MAX];
+                if (!::getcwd(cwd, sizeof(cwd))) {
+                    if (!callerOwnsBuffer)
+                        free(out);
+                    return nullptr;
+                }
+
+                resolvedPattern = cwd;
+                if (!resolvedParent.empty() && resolvedParent != ".") {
+                    if (!resolvedPattern.empty() && resolvedPattern.back() != '/')
+                        resolvedPattern += '/';
+                    resolvedPattern += resolvedParent;
+                }
+            }
+
             if (!resolvedPattern.empty() && resolvedPattern.back() != '/')
                 resolvedPattern += '/';
             resolvedPattern += tail;
+
             compatLogFmt("realpath WILDCARD: %s -> %s",
                          p, resolvedPattern.c_str());
             return writeCanonical(resolvedPattern);
