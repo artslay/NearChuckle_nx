@@ -39,17 +39,14 @@ static void bootUiWrite(const char* msg, bool force_update = false) {
     if (!g_boot_console || !msg || !*msg)
         return;
 
-    // Rendering every diagnostic line through libnx's software console is
-    // still expensive even when consoleUpdate() is batched. Keep the complete
-    // diagnostic stream in nearchuckle_debug.log, but only paint a compact
-    // progress snapshot to the startup console.
-    ++g_boot_ui_pending_lines;
-    if (!force_update && g_boot_ui_pending_lines < kBootUiUpdateBatch)
-        return;
-
-    std::printf("[startup] %s\n", msg);
-    consoleUpdate(nullptr);
-    g_boot_ui_pending_lines = 0;
+    // Printing is cheap enough to keep every startup line visible, but
+    // consoleUpdate() is expensive on the Switch. Batch framebuffer updates
+    // so the startup console does not turn into thousands of full redraws.
+    std::printf("%s\n", msg);
+    if (force_update || ++g_boot_ui_pending_lines >= kBootUiUpdateBatch) {
+        consoleUpdate(nullptr);
+        g_boot_ui_pending_lines = 0;
+    }
 }
 
 void compatUiInit() {

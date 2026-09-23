@@ -31,6 +31,7 @@
 #include <locale.h>
 #include <setjmp.h>
 #include <semaphore.h>
+#include <unordered_map>
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
@@ -1424,22 +1425,46 @@ static bool pakInflateRaw(const unsigned char* src, size_t srcSize,
     return ok;
 }
 
-static bool pakFindEntry(FILE* pak, const std::string& wanted,
-                         uint32_t& localOffset, uint32_t& compressedSize,
-                         uint32_t& uncompressedSize, uint16_t& method,
-                         uint32_t& expectedCrc) {
-    if (!pak || fseek(pak, 0, SEEK_END) != 0)
+struct PakEntryMeta {
+    uint32_t localOffset = 0;
+    uint32_t compressedSize = 0;
+    uint32_t uncompressedSize = 0;
+    uint16_t method = 0;
+    uint32_t expectedCrc = 0;
+};
+
+struct PakIndex {
+    bool valid = false;
+    std::unordered_map<std::string, PakEntryMeta> entries;
+};
+
+static Mutex g_pak_index_lock;
+static std::unordered_map<std::string, PakIndex> g_pak_indexes;
+
+static bool buildPakIndexLocked(const std::string& pakPath, PakIndex& index) {
+    FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak)
         return false;
+
+    if (fseek(pak, 0, SEEK_END) != 0) {
+        fclose(pak);
+        return false;
+    }
 
     const long fileSize = ftell(pak);
-    if (fileSize < 22)
+    if (fileSize < 22) {
+        fclose(pak);
         return false;
+    }
 
-    const size_t tailSize = (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
+    const size_t tailSize =
+        (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
     std::vector<unsigned char> tail(tailSize);
     if (fseek(pak, fileSize - (long)tailSize, SEEK_SET) != 0 ||
-        !pakReadExact(pak, tail.data(), tail.size()))
+        !pakReadExact(pak, tail.data(), tail.size())) {
+        fclose(pak);
         return false;
+    }
 
     size_t eocd = tail.size();
     while (eocd >= 22) {
@@ -1448,20 +1473,30 @@ static bool pakFindEntry(FILE* pak, const std::string& wanted,
             pakRd32(tail.data() + eocd) == 0x06054b50u)
             break;
     }
-    if (eocd + 22 > tail.size())
+    if (eocd + 22 > tail.size()) {
+        fclose(pak);
         return false;
+    }
 
     const uint16_t entries = pakRd16(tail.data() + eocd + 10);
     const uint32_t cdSize = pakRd32(tail.data() + eocd + 12);
     const uint32_t cdOffset = pakRd32(tail.data() + eocd + 16);
 
-    if (!entries || !cdSize || cdSize > 128 * 1024 * 1024u)
+    if (!entries || !cdSize || cdSize > 128 * 1024 * 1024u ||
+        (uint64_t)cdOffset + (uint64_t)cdSize > (uint64_t)fileSize) {
+        fclose(pak);
         return false;
+    }
 
     std::vector<unsigned char> cd(cdSize);
     if (fseek(pak, (long)cdOffset, SEEK_SET) != 0 ||
-        !pakReadExact(pak, cd.data(), cd.size()))
+        !pakReadExact(pak, cd.data(), cd.size())) {
+        fclose(pak);
         return false;
+    }
+    fclose(pak);
+
+    index.entries.reserve((size_t)entries * 2u);
 
     size_t pos = 0;
     for (uint16_t i = 0; i < entries && pos + 46 <= cd.size(); ++i) {
@@ -1476,36 +1511,73 @@ static bool pakFindEntry(FILE* pak, const std::string& wanted,
         if (pos + recordSize > cd.size())
             break;
 
-        std::string name((const char*)h + 46, nameLen);
-        if (pakNormalizeName(name.c_str()) == pakNormalizeName(wanted.c_str())) {
-            method = pakRd16(h + 10);
-            compressedSize = pakRd32(h + 20);
-            uncompressedSize = pakRd32(h + 24);
-            expectedCrc = pakRd32(h + 16);
-            localOffset = pakRd32(h + 42);
-            return true;
-        }
+        const std::string name((const char*)h + 46, nameLen);
+        const std::string normalized = pakNormalizeName(name.c_str());
+
+        PakEntryMeta meta;
+        meta.method = pakRd16(h + 10);
+        meta.compressedSize = pakRd32(h + 20);
+        meta.uncompressedSize = pakRd32(h + 24);
+        meta.expectedCrc = pakRd32(h + 16);
+        meta.localOffset = pakRd32(h + 42);
+
+        // Keep the first matching entry, matching the old linear lookup.
+        index.entries.emplace(normalized, meta);
+
         pos += recordSize;
     }
-    return false;
+
+    index.valid = true;
+    compatLogFmt("PAK INDEX: %s entries=%zu cd=%u",
+                 pakPath.c_str(), index.entries.size(), (unsigned)cdSize);
+    return true;
+}
+
+static bool pakFindEntryCached(const std::string& pakPath,
+                               const std::string& wanted,
+                               PakEntryMeta& meta) {
+    const std::string normalizedWanted = pakNormalizeName(wanted.c_str());
+
+    mutexLock(&g_pak_index_lock);
+
+    auto it = g_pak_indexes.find(pakPath);
+    if (it == g_pak_indexes.end()) {
+        PakIndex fresh;
+        const bool ok = buildPakIndexLocked(pakPath, fresh);
+        auto inserted = g_pak_indexes.emplace(pakPath, std::move(fresh));
+        it = inserted.first;
+        if (!ok) {
+            mutexUnlock(&g_pak_index_lock);
+            return false;
+        }
+    }
+
+    const bool found = it->second.valid &&
+                       it->second.entries.find(normalizedWanted) !=
+                           it->second.entries.end();
+    if (found)
+        meta = it->second.entries.find(normalizedWanted)->second;
+
+    mutexUnlock(&g_pak_index_lock);
+    return found;
 }
 
 static bool pakExtractEntry(const std::string& pakPath, const std::string& wanted,
                             const std::string& outPath) {
     const std::string normalizedWanted = pakNormalizeName(wanted.c_str());
-    FILE* pak = fopen(pakPath.c_str(), "rb");
-    if (!pak) {
+    PakEntryMeta meta;
+    if (!pakFindEntryCached(pakPath, wanted, meta))
         return false;
-    }
 
-    uint32_t localOffset = 0, compressedSize = 0, uncompressedSize = 0;
-    uint32_t expectedCrc = 0;
-    uint16_t method = 0;
-    if (!pakFindEntry(pak, wanted, localOffset, compressedSize,
-                      uncompressedSize, method, expectedCrc)) {
-        fclose(pak);
+    FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak)
         return false;
-    }
+
+    const uint32_t localOffset = meta.localOffset;
+    const uint32_t compressedSize = meta.compressedSize;
+    const uint32_t uncompressedSize = meta.uncompressedSize;
+    const uint16_t method = meta.method;
+    const uint32_t expectedCrc = meta.expectedCrc;
 
     if (!compressedSize || !uncompressedSize ||
         compressedSize > 128 * 1024 * 1024u ||
