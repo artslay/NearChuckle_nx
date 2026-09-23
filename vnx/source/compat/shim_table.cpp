@@ -98,6 +98,7 @@ static constexpr bool kVerboseAllocatorLogs = false;
 static constexpr bool kVerboseSuccessfulPathLogs = false;
 
 static std::string asciiLower(std::string value);
+static int stub_clock_gettime(int clock_id, struct timespec* ts);
 
 // Case-insensitive filesystem resolver used by file wrappers below.
 static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
