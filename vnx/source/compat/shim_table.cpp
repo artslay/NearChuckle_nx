@@ -3748,7 +3748,7 @@ static long stub_syscall(long n, ...) {
         case 113: {  // clock_gettime
             int              cid = va_arg(va, int);
             struct timespec* ts  = va_arg(va, struct timespec*);
-            r = ts ? clock_gettime(cid, ts) : -1;
+            r = stub_clock_gettime(cid, ts);
             break;
         }
         case 169: {  // gettimeofday
@@ -5873,6 +5873,40 @@ static int  stub_statfs(const char*, void* buf)  { if (buf) memset(buf, 0, 64); 
 static int  stub_fscanf(FILE*, const char*, ...) { return -1; /* EOF */ }
 static int  stub_tcflush(int, int)               { return 0; }
 
+// Android/Bionic libc++ calls clock_gettime(CLOCK_REALTIME) from
+// std::chrono::system_clock::now(). The devkitA64/newlib implementation can
+// return an error for that guest call; libc++ then throws std::system_error and
+// Far Cry aborts while writing the savegame header. Provide the POSIX clock ABI
+// from Switch services instead. CLOCK_REALTIME is 0, CLOCK_MONOTONIC is 1.
+static int stub_clock_gettime(int clock_id, struct timespec* ts) {
+    if (!ts) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (clock_id == 0) { // CLOCK_REALTIME
+        const time_t sec = ::time(nullptr);
+        if (sec == (time_t)-1) {
+            errno = EIO;
+            return -1;
+        }
+        ts->tv_sec = sec;
+        ts->tv_nsec = 0;
+        return 0;
+    }
+
+    // Monotonic/boottime/performance clocks: use the Switch system tick.
+    const uint64_t freq = armGetSystemTickFreq();
+    if (freq == 0) {
+        errno = EIO;
+        return -1;
+    }
+    const uint64_t tick = armGetSystemTick();
+    ts->tv_sec = (time_t)(tick / freq);
+    ts->tv_nsec = (long)(((tick % freq) * 1000000000ULL) / freq);
+    return 0;
+}
+
 // ── process / scheduling / signals (single-process, no ptrace) ──
 static int    stub_getpriority(int, int)         { return 0; }
 static int    stub_setpriority(int, int, int)    { return 0; }
@@ -6808,7 +6842,7 @@ static const ShimEntry g_shims[] = {
     {"fcntl",   (void*)stub_fcntl_sock},
 
     // ── time ─────────────────────────────────────────────────────────────────
-    {"clock_gettime", (void*)clock_gettime},
+    {"clock_gettime", (void*)stub_clock_gettime},
     {"nanosleep",     (void*)nanosleep},
     {"gettimeofday",  (void*)gettimeofday},
     {"gmtime",        (void*)gmtime},
