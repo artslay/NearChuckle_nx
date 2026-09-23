@@ -1498,6 +1498,60 @@ static bool patchFarCryProfilePathTrapBranches(LoadedSo* so, uint8_t* stage_base
     return (patched_to_trap + patched_fallthrough) != 0;
 }
 
+// A/B: GetSaveGameList() is called by the Far Cry menu transition before
+// loading the first level. The Switch build currently reaches the Android
+// GetPlayerProfilePath() trap from this Lua callback. Return an empty result
+// instead of entering the profile/save enumeration path so the level transition
+// can continue. This does not touch the actual save-game path once a level is
+// running; it only removes the failing menu-time enumeration call.
+static bool patchFarCryGetSaveGameList(LoadedSo* so, uint8_t* stage_base,
+                                       uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* path = so->path.c_str();
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (std::strcmp(base, "libCryGame.so") != 0)
+        return false;
+
+    constexpr const char* kSym =
+        "_ZN17CScriptObjectGame15GetSaveGameListEP16IFunctionHandler";
+
+    void* fn = so->findSym(kSym);
+    if (!fn) {
+        compatLogFmt("FARCRY SAVE LIST A/B: symbol not found: %s", kSym);
+        return false;
+    }
+
+    const uintptr_t imageBase = reinterpret_cast<uintptr_t>(so->base);
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(fn);
+    if (addr < imageBase || addr - imageBase >= alloc_size) {
+        compatLogFmt(
+            "FARCRY SAVE LIST A/B: symbol outside image fn=%p base=%p size=0x%llx",
+            fn, reinterpret_cast<void*>(imageBase),
+            (unsigned long long)alloc_size);
+        return false;
+    }
+
+    const uint64_t off = static_cast<uint64_t>(addr - imageBase);
+    uint32_t* insn = reinterpret_cast<uint32_t*>(
+        stage_base + min_vaddr + off);
+
+    const uint32_t old0 = insn[0];
+    const uint32_t old1 = insn[1];
+
+    // return 0;
+    insn[0] = 0x2a1f03e0u; // mov w0, wzr
+    insn[1] = 0xd65f03c0u; // ret
+    armICacheInvalidate(insn, 8);
+
+    compatLogFmt(
+        "FARCRY SAVE LIST A/B: patched GetSaveGameList +0x%llx old=%08x %08x new=%08x %08x",
+        (unsigned long long)off, old0, old1, insn[0], insn[1]);
+    return true;
+}
+
 // Temporary A/B: bypass CXGame::LoadConfiguration(). The fault stack repeatedly
 // contained libCryGame.so +0xf9718, identified as LoadConfiguration +0x60.
 // Therefore the current function start is +0xf96b8 for this exact Android lib.
@@ -1790,6 +1844,9 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
         // Do not patch the CryInput/CryGame input callbacks. The Android
         // SDL input bridge in runtime.cpp now delivers real Switch HID events
         // to SDL's registered onNativeKeyDown/Up/onNativeMouse callbacks.
+        if (!patchFarCryGetSaveGameList(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY SAVE LIST A/B: patch not applied");
+
         patchFarCrySkipLoadConfiguration(so, stage_base, min_vaddr, alloc_size);
         return;
     }
