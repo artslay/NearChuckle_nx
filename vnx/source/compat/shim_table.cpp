@@ -3276,6 +3276,14 @@ static bool w_SDL_GL_SwapWindow(void* window) {
     const bool ok = (egl_ok == EGL_TRUE);
     const bool egl_fallback = true;
 
+    // Match the Android renderer's frame lifecycle: after presenting the
+    // completed frame, clear the newly available back buffer so stale pixels
+    // from the previous frame cannot survive when a later frame draws only a
+    // partial/2D region. This is especially important for the CryEngine menu,
+    // where mouse interaction can otherwise expose stretched frame remnants.
+    if (ok)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
     // Swap runs once per rendered frame. Keep the regular log quiet;
     // only emit a sparse heartbeat, plus every failure.
     if (swap_count <= 3 || !ok || (swap_count % 600u) == 0u) {
