@@ -1219,13 +1219,13 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
     }
 
     Ref* one = &ones[0];
-    size_t best_distance = SIZE_MAX;
+    size_t one_distance = SIZE_MAX;
     for (Ref& ref : ones) {
         const size_t a = ref.byte_off > selected_zero->byte_off
             ? ref.byte_off - selected_zero->byte_off
             : selected_zero->byte_off - ref.byte_off;
-        if (a < best_distance) {
-            best_distance = a;
+        if (a < one_distance) {
+            one_distance = a;
             one = &ref;
         }
     }
