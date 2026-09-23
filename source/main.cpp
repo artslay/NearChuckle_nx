@@ -430,6 +430,7 @@ static int run_farcry(LoadedSo* game_so) {
     char arg9[64];
     char arg10[64];
     char arg11[64];
+    char arg12[64];
 
     std::snprintf(arg1, sizeof(arg1), "\"r_Driver OpenGL\"");
     std::snprintf(arg2, sizeof(arg2), "\"r_Width %d\"", config.screen_width);
@@ -445,11 +446,14 @@ static int run_farcry(LoadedSo* game_so) {
     std::snprintf(arg9, sizeof(arg9), "\"r_UseHWShaders 1\"");
     std::snprintf(arg10, sizeof(arg10), "\"r_VSync 0\"");
     std::snprintf(arg11, sizeof(arg11), "\"r_DisplayInfo 1\"");
+    // CryEngine applies +CVar post-commands after renderer/system initialization.
+    // This is needed because r_DisplayInfo is recreated/reset during startup.
+    std::snprintf(arg12, sizeof(arg12), "\"+r_DisplayInfo 1\"");
     // ui_BackGroundVideo is created later by CUISystem::CreateCVars(), so a
     // startup command cannot override its default value of 1 reliably.
     // It is intentionally not included in the early command-line argument list.
 
-    char* argv[12];
+    char* argv[13];
     argv[0] = arg0;
     argv[1] = arg1;
     argv[2] = arg2;
@@ -462,8 +466,9 @@ static int run_farcry(LoadedSo* game_so) {
     argv[9] = arg9;
     argv[10] = arg10;
     argv[11] = arg11;
+    argv[12] = arg12;
 
-    const int argc = 12;
+    const int argc = 13;
 
     // Keep shader compilation enabled, matching the working Android build.
     // Missing/experimental Switch shader caches must not turn the menu into a
@@ -472,7 +477,7 @@ static int run_farcry(LoadedSo* game_so) {
     compatLog("Far Cry: Android-style graphics CVars queued (quoted command syntax)");
     compatLog("Far Cry: ui_BackGroundVideo left at Android default until UI CVar creation");
     compatLog("Far Cry: r_UseHWShaders 1 queued for shader script registration");
-    compatLog("Far Cry: r_DisplayInfo 1 queued for on-screen FPS/render statistics");
+    compatLog("Far Cry: r_DisplayInfo 1 queued (early + post-command) for on-screen FPS/render statistics");
     compatLog("Far Cry: command-line CVars use quoted name + value commands");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
