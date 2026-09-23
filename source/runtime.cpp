@@ -21,6 +21,11 @@ extern "C" void compatFrameDebugClose();
 
 static bool g_boot_console = false;
 static const devoptab_t* g_boot_stdout_dotab = nullptr;
+static unsigned g_boot_ui_pending_lines = 0;
+static unsigned g_log_pending_lines = 0;
+
+static constexpr unsigned kBootUiUpdateBatch = 32;
+static constexpr unsigned kLogFlushBatch = 128;
 
 static void bootUiHeader() {
     if (!g_boot_console) return;
@@ -30,15 +35,18 @@ static void bootUiHeader() {
     consoleUpdate(nullptr);
 }
 
-static void bootUiWrite(const char* msg) {
+static void bootUiWrite(const char* msg, bool force_update = false) {
     if (!g_boot_console || !msg || !*msg)
         return;
 
-    // Mirror every compatibility log line to the active Switch console.
-    // Do not filter or keep only a small ring buffer: the console should show
-    // the complete startup stream in order until the main-loop marker.
+    // Printing is cheap enough to keep every startup line visible, but
+    // consoleUpdate() is expensive on the Switch. Batch framebuffer updates
+    // so the startup console does not turn into thousands of full redraws.
     std::printf("%s\n", msg);
-    consoleUpdate(nullptr);
+    if (force_update || ++g_boot_ui_pending_lines >= kBootUiUpdateBatch) {
+        consoleUpdate(nullptr);
+        g_boot_ui_pending_lines = 0;
+    }
 }
 
 void compatUiInit() {
@@ -79,7 +87,7 @@ static void log_open() {
         g_log_initialized = true;
 }
 
-static void log_write(const char* text) {
+static void log_write(const char* text, bool force_flush = false) {
     if (!text || g_log_closed)
         return;
 
@@ -88,7 +96,14 @@ static void log_write(const char* text) {
         return;
 
     std::fprintf(g_log, "%s\n", text);
-    std::fflush(g_log);
+
+    // fflush() for every diagnostic line is extremely expensive when the
+    // log lives on the Switch filesystem. Keep the log buffered and flush
+    // periodically, while still forcing a flush for important boundaries.
+    if (force_flush || ++g_log_pending_lines >= kLogFlushBatch) {
+        std::fflush(g_log);
+        g_log_pending_lines = 0;
+    }
 }
 
 static bool is_main_loop_marker(const char* msg) {
@@ -175,10 +190,10 @@ void compatLog(const char* msg) {
     // CXGame::Run enters the main game loop. Shader diagnostics are still
     // filtered from the file log below when appropriate, but never from the
     // visible console stream.
-    bootUiWrite(msg);
+    bootUiWrite(msg, main_loop);
 
     if (!suppressCompatShaderDiag(msg))
-        log_write(msg);
+        log_write(msg, main_loop);
 
     // Keep the file log open after the main-loop marker so we can capture
     // the first real CXGame::Update()/RenderEnd() activity. Only the visible
@@ -209,12 +224,11 @@ void compatLogRaw(const char* msg) {
     const bool main_loop = is_main_loop_marker(msg);
 
     mutexLock(&g_log_lock);
-    bootUiWrite(msg);
-    log_write(msg);
+    bootUiWrite(msg, main_loop);
+    log_write(msg, main_loop);
 
     if (main_loop) {
         log_close_locked();
-
     }
 
     mutexUnlock(&g_log_lock);
@@ -229,6 +243,7 @@ void compatLogFlush() {
         log_open();
         if (g_log)
             std::fflush(g_log);
+            g_log_pending_lines = 0;
     }
     mutexUnlock(&g_log_lock);
 }
