@@ -107,7 +107,13 @@ static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
 static bool tryMaterializeUniquePakBasename(const char* targetPath);
 static bool tryMaterializePakPath(const char* targetPath, std::string& materialized);
-struct PakEntryMeta;
+struct PakEntryMeta {
+    uint32_t localOffset = 0;
+    uint32_t compressedSize = 0;
+    uint32_t uncompressedSize = 0;
+    uint16_t method = 0;
+    uint32_t expectedCrc = 0;
+};
 static bool pakFindVirtualEntry(const char* requested,
                                 std::string& pakPath,
                                 PakEntryMeta& meta);
@@ -1458,14 +1464,6 @@ static bool pakInflateRaw(const unsigned char* src, size_t srcSize,
     inflateEnd(&zs);
     return ok;
 }
-
-struct PakEntryMeta {
-    uint32_t localOffset = 0;
-    uint32_t compressedSize = 0;
-    uint32_t uncompressedSize = 0;
-    uint16_t method = 0;
-    uint32_t expectedCrc = 0;
-};
 
 struct PakIndex {
     bool valid = false;
