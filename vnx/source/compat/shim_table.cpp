@@ -3538,37 +3538,40 @@ static void compatPollSwitchInput() {
     if (!initSwitchHid())
         return;
 
-    static HidNpadFullKeyState state = {};
+    static HidNpadCommonState state = {};
     static HidNpadIdType controller_id = HidNpadIdType_No1;
     static bool controller_id_ready = false;
 
-    // The installed libnx uses the post-refactor HID API. There is no
-    // hidScanInput()/hidKeysHeld()/hidJoystickRead() legacy interface here.
-    // Prefer player 1 in docked mode; fall back to Handheld when appropriate.
+    // The installed libnx uses the post-refactor HID API. Read the current
+    // Npad state directly instead of the removed legacy polling helpers.
     if (!controller_id_ready) {
         controller_id_ready = true;
         hidInitializeNpad();
 
         const u32 no1_style = hidGetNpadStyleSet(HidNpadIdType_No1);
-        if (no1_style == 0)
-            controller_id = HidNpadIdType_Handheld;
+        const u32 handheld_style =
+            hidGetNpadStyleSet(HidNpadIdType_Handheld);
+
+        controller_id = no1_style != 0
+            ? HidNpadIdType_No1
+            : (handheld_style != 0
+                ? HidNpadIdType_Handheld
+                : HidNpadIdType_No1);
     }
 
-    if (hidGetNpadStatesFullKey(controller_id, &state, 1) == 0) {
-        if (controller_id == HidNpadIdType_No1) {
-            const u32 handheld_style =
-                hidGetNpadStyleSet(HidNpadIdType_Handheld);
-            if (handheld_style != 0) {
-                controller_id = HidNpadIdType_Handheld;
-                if (hidGetNpadStatesHandheld(
-                        controller_id,
-                        reinterpret_cast<HidNpadHandheldState*>(&state), 1) == 0) {
-                    return;
-                }
-            }
-        }
-        return;
+    size_t state_count = 0;
+    if (controller_id == HidNpadIdType_Handheld) {
+        state_count = hidGetNpadStatesHandheld(
+            controller_id,
+            reinterpret_cast<HidNpadHandheldState*>(&state), 1);
+    } else {
+        state_count = hidGetNpadStatesFullKey(
+            controller_id,
+            reinterpret_cast<HidNpadFullKeyState*>(&state), 1);
     }
+
+    if (state_count == 0)
+        return;
 
     const u64 held = state.buttons;
     const HidAnalogStickState& left = state.analog_stick_l;
