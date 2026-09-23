@@ -1631,9 +1631,34 @@ struct PakIndex {
     std::unordered_map<std::string, PakEntryMeta> entries;
 };
 
+static std::atomic<unsigned> g_pakMemoryTraceEvents{0};
+
+static bool pakMemoryTracePath(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string lower(path);
+    for (char& c : lower)
+        c = (char)std::tolower((unsigned char)c);
+
+    return lower.find(".caf") != std::string::npos ||
+           lower.find(".cgf") != std::string::npos;
+}
+
+static bool pakMemoryTraceBudget(const char* path) {
+    if (!pakMemoryTracePath(path))
+        return false;
+
+    const unsigned n = g_pakMemoryTraceEvents.fetch_add(1);
+    return n < 160;
+}
+
 struct VirtualPakFile {
     std::vector<unsigned char> data;
     size_t pos = 0;
+    std::string name;
+    unsigned traceReads = 0;
+    bool trace = false;
 };
 
 static Mutex g_vpak_lock;
@@ -1654,11 +1679,16 @@ static VirtualPakFile* vpakLookupLocked(FILE* f) {
     return reinterpret_cast<VirtualPakFile*>(f);
 }
 
-static FILE* vpakOpen(std::vector<unsigned char>&& data) {
+static FILE* vpakOpen(std::vector<unsigned char>&& data,
+                           const char* requested,
+                           bool trace) {
     VirtualPakFile* v = new VirtualPakFile();
     if (!v)
         return nullptr;
     v->data = std::move(data);
+    if (requested)
+        v->name = requested;
+    v->trace = trace;
     FILE* handle = reinterpret_cast<FILE*>(v);
     mutexLock(&g_vpak_lock);
     g_vpak_handles.insert(handle);
@@ -1684,6 +1714,13 @@ static size_t vpakRead(FILE* f, void* dst, size_t size, size_t count) {
     const size_t whole = bytes - (bytes % size);
 
     if (whole) {
+        if (v->trace && v->traceReads < 8) {
+            compatLogFmt("PAK MEM TRACE READ: %s src=%p dst=%p pos=%zu bytes=%zu size=%zu",
+                         v->name.c_str(),
+                         (void*)(v->data.data() + v->pos),
+                         dst, v->pos, whole, v->data.size());
+            ++v->traceReads;
+        }
         memcpy(dst, v->data.data() + v->pos, whole);
         v->pos += whole;
     }
@@ -1772,6 +1809,9 @@ static int vpakClose(FILE* f) {
 struct VirtualPakFd {
     std::vector<unsigned char> data;
     off_t pos = 0;
+    std::string name;
+    unsigned traceReads = 0;
+    bool trace = false;
 };
 
 static constexpr int VPAK_FD_BASE = 0x6000;
@@ -1814,6 +1854,8 @@ static int vpakFdOpen(const char* requested, int flags) {
     if (!v)
         return -1;
     v->data = std::move(data);
+    v->name = requested;
+    v->trace = pakMemoryTraceBudget(requested);
 
     mutexLock(&g_vpak_fd_lock);
     int chosen = -1;
@@ -1868,8 +1910,16 @@ static ssize_t vpakFdRead(int fd, void* dst, size_t count) {
 
     const size_t available = v->data.size() - (size_t)v->pos;
     const size_t bytes = count < available ? count : available;
-    if (bytes)
+    if (bytes) {
+        if (v->trace && v->traceReads < 8) {
+            compatLogFmt("PAK MEM TRACE FDREAD: %s fd=%d src=%p dst=%p pos=%lld bytes=%zu size=%zu",
+                         v->name.c_str(), fd,
+                         (void*)(v->data.data() + v->pos),
+                         dst, (long long)v->pos, bytes, v->data.size());
+            ++v->traceReads;
+        }
         memcpy(dst, v->data.data() + v->pos, bytes);
+    }
     v->pos += (off_t)bytes;
     mutexUnlock(&g_vpak_fd_lock);
     return (ssize_t)bytes;
@@ -1932,8 +1982,16 @@ static ssize_t vpakFdPread(int fd, void* dst, size_t count, off_t offset) {
 
     const size_t available = v->data.size() - (size_t)offset;
     const size_t bytes = count < available ? count : available;
-    if (bytes)
+    if (bytes) {
+        if (v->trace && v->traceReads < 8) {
+            compatLogFmt("PAK MEM TRACE FDPREAD: %s fd=%d src=%p dst=%p pos=%lld bytes=%zu size=%zu",
+                         v->name.c_str(), fd,
+                         (void*)(v->data.data() + offset),
+                         dst, (long long)offset, bytes, v->data.size());
+            ++v->traceReads;
+        }
         memcpy(dst, v->data.data() + offset, bytes);
+    }
     mutexUnlock(&g_vpak_fd_lock);
     return (ssize_t)bytes;
 }
@@ -2502,16 +2560,50 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (!pakFindVirtualEntry(requested, pakPath, meta))
         return nullptr;
 
+    const bool trace = pakMemoryTraceBudget(requested);
+
+    std::string wantedTrace = pakAssetRelativeName(requested);
+    if (trace) {
+        compatLogFmt("PAK MEM TRACE FIND: requested=%s wanted=%s pak=%s c=%u u=%u method=%u local=%u",
+                     requested,
+                     wantedTrace.c_str(),
+                     pakPath.c_str(),
+                     meta.compressedSize,
+                     meta.uncompressedSize,
+                     (unsigned)meta.method,
+                     meta.localOffset);
+    }
+
     std::vector<unsigned char> data;
     if (!pakReadEntryToMemory(pakPath, meta, data)) {
-        compatLogFmt("PAK VIRTUAL READ FAILED: %s <- %s",
-                     pakAssetRelativeName(requested).c_str(),
-                     pakPath.c_str());
+        if (trace) {
+            compatLogFmt("PAK MEM TRACE READ_FAILED: %s <- %s",
+                         wantedTrace.c_str(), pakPath.c_str());
+        } else {
+            compatLogFmt("PAK VIRTUAL READ FAILED: %s <- %s",
+                         wantedTrace.c_str(),
+                         pakPath.c_str());
+        }
         return nullptr;
     }
 
-    FILE* handle = vpakOpen(std::move(data));
-    if (handle) {    }
+    if (trace) {
+        compatLogFmt("PAK MEM TRACE DECOMP: %s plain=%p plain_size=%zu pak=%s",
+                     wantedTrace.c_str(),
+                     (void*)data.data(),
+                     data.size(),
+                     pakPath.c_str());
+    }
+
+    FILE* handle = vpakOpen(std::move(data), requested, trace);
+    if (trace && handle) {
+        VirtualPakFile* v = reinterpret_cast<VirtualPakFile*>(handle);
+        compatLogFmt("PAK MEM TRACE VFILE: %s handle=%p src=%p size=%zu",
+                     wantedTrace.c_str(),
+                     (void*)handle,
+                     (void*)v->data.data(),
+                     v->data.size());
+    }
     return handle;
 }
 
