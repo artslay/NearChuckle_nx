@@ -3538,13 +3538,41 @@ static void compatPollSwitchInput() {
     if (!initSwitchHid())
         return;
 
-    hidScanInput();
+    static HidNpadFullKeyState state = {};
+    static HidNpadIdType controller_id = HidNpadIdType_No1;
+    static bool controller_id_ready = false;
 
-    const u64 held = hidKeysHeld(CONTROLLER_P1_AUTO);
-    const HidAnalogStickState left =
-        hidJoystickRead(CONTROLLER_P1_AUTO, JOYSTICK_LEFT);
-    const HidAnalogStickState right =
-        hidJoystickRead(CONTROLLER_P1_AUTO, JOYSTICK_RIGHT);
+    // The installed libnx uses the post-refactor HID API. There is no
+    // hidScanInput()/hidKeysHeld()/hidJoystickRead() legacy interface here.
+    // Prefer player 1 in docked mode; fall back to Handheld when appropriate.
+    if (!controller_id_ready) {
+        controller_id_ready = true;
+        hidInitializeNpad();
+
+        const u32 no1_style = hidGetNpadStyleSet(HidNpadIdType_No1);
+        if (no1_style == 0)
+            controller_id = HidNpadIdType_Handheld;
+    }
+
+    if (hidGetNpadStatesFullKey(controller_id, &state, 1) == 0) {
+        if (controller_id == HidNpadIdType_No1) {
+            const u32 handheld_style =
+                hidGetNpadStyleSet(HidNpadIdType_Handheld);
+            if (handheld_style != 0) {
+                controller_id = HidNpadIdType_Handheld;
+                if (hidGetNpadStatesHandheld(
+                        controller_id,
+                        reinterpret_cast<HidNpadHandheldState*>(&state), 1) == 0) {
+                    return;
+                }
+            }
+        }
+        return;
+    }
+
+    const u64 held = state.buttons;
+    const HidAnalogStickState& left = state.analog_stick_l;
+    const HidAnalogStickState& right = state.analog_stick_r;
 
     constexpr float kStickMax = 32767.0f;
     constexpr float kDeadzone = 0.22f;
