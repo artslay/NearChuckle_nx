@@ -765,6 +765,7 @@ static bool isFsTraceSym(const char* n) {
     return strcmp(n, "fopen") == 0 || strcmp(n, "fopen64") == 0 ||
            strcmp(n, "open") == 0 || strcmp(n, "opendir") == 0 ||
            strcmp(n, "readdir") == 0 || strcmp(n, "closedir") == 0 ||
+           strcmp(n, "strcasecmp") == 0 || strcmp(n, "__strcasecmp") == 0 ||
            strcmp(n, "_findfirst64") == 0 || strcmp(n, "_findnext64") == 0 ||
            strcmp(n, "_findclose") == 0 || strcmp(n, "stat") == 0 ||
            strcmp(n, "stat64") == 0 || strcmp(n, "access") == 0 ||
