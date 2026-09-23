@@ -3831,26 +3831,78 @@ static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void
 
 static void w_glClear(GLbitfield mask) {
     static unsigned int clear_trace_count = 0;
-    if (clear_trace_count < 8) {
-        ++clear_trace_count;
-        frameDebugLogFmt("GL CLEAR[%u]: mask=0x%x", clear_trace_count, (unsigned)mask);
-    }
+    if (clear_trace_count >= 8)
+        return glClear(mask);
+
+    const unsigned int trace = ++clear_trace_count;
+    frameDebugLogFmt("GL CLEAR ENTER[%u]: mask=0x%x",
+                     trace, (unsigned)mask);
 
     const Presentation& p = orientGet();
-    if (!p.pillarboxed) { glClear(mask); return; }
+    frameDebugLogFmt(
+        "GL CLEAR ORIENT[%u]: pillarboxed=%d content=%d,%d %dx%d",
+        trace, p.pillarboxed ? 1 : 0,
+        p.content_x, p.content_y, p.content_w, p.content_h);
+
+    if (!p.pillarboxed) {
+        frameDebugLogFmt("GL CLEAR CALL[%u]: glClear mask=0x%x",
+                         trace, (unsigned)mask);
+
+        // Split the first clear into color/depth operations so the trace can
+        // identify whether Zink/NVK stalls on one particular buffer. The
+        // normal combined path remains for any other clear bits.
+        const GLbitfield split_mask =
+            mask & (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        const GLbitfield other_mask =
+            mask & ~(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        if (split_mask & GL_COLOR_BUFFER_BIT) {
+            frameDebugLogFmt("GL CLEAR COLOR BEFORE[%u]", trace);
+            glClear(GL_COLOR_BUFFER_BIT);
+            frameDebugLogFmt("GL CLEAR COLOR AFTER[%u] glerr=0x%x",
+                             trace, (unsigned)glGetError());
+        }
+
+        if (split_mask & GL_DEPTH_BUFFER_BIT) {
+            frameDebugLogFmt("GL CLEAR DEPTH BEFORE[%u]", trace);
+            glClear(GL_DEPTH_BUFFER_BIT);
+            frameDebugLogFmt("GL CLEAR DEPTH AFTER[%u] glerr=0x%x",
+                             trace, (unsigned)glGetError());
+        }
+
+        if (other_mask) {
+            frameDebugLogFmt("GL CLEAR OTHER BEFORE[%u]: mask=0x%x",
+                             trace, (unsigned)other_mask);
+            glClear(other_mask);
+            frameDebugLogFmt("GL CLEAR OTHER AFTER[%u] glerr=0x%x",
+                             trace, (unsigned)glGetError());
+        }
+
+        frameDebugLogFmt("GL CLEAR EXIT[%u]", trace);
+        return;
+    }
 
     // Confine the clear, then put the scissor box back exactly as the game left
     // it — it may be mid-frame and relying on it.
     GLboolean had = glIsEnabled(GL_SCISSOR_TEST);
-    GLint     box[4];
+    GLint box[4];
     glGetIntegerv(GL_SCISSOR_BOX, box);
+    frameDebugLogFmt(
+        "GL CLEAR SCISSOR[%u]: had=%d box=%d,%d %dx%d",
+        trace, had ? 1 : 0, box[0], box[1], box[2], box[3]);
 
     glEnable(GL_SCISSOR_TEST);
     glScissor(p.content_x, p.content_y, p.content_w, p.content_h);
+    frameDebugLogFmt("GL CLEAR PILLAR BEFORE[%u]: mask=0x%x",
+                     trace, (unsigned)mask);
     glClear(mask);
+    frameDebugLogFmt("GL CLEAR PILLAR AFTER[%u] glerr=0x%x",
+                     trace, (unsigned)glGetError());
 
     glScissor(box[0], box[1], box[2], box[3]);
     if (!had) glDisable(GL_SCISSOR_TEST);
+
+    frameDebugLogFmt("GL CLEAR EXIT[%u]", trace);
 }
 
 
