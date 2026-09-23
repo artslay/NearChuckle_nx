@@ -180,16 +180,16 @@ void compatLog(const char* msg) {
     if (!suppressCompatShaderDiag(msg))
         log_write(msg);
 
-    if (main_loop) {
-        log_close_locked();
-
-    }
+    // Keep the file log open after the main-loop marker so we can capture
+    // the first real CXGame::Update()/RenderEnd() activity. Only the visible
+    // startup console is handed back to the game at the marker.
 
     mutexUnlock(&g_log_lock);
 
     // Return ownership of the framebuffer to the real SDL/EGL game window
     // immediately after the marker has been displayed. From this point onward
-    // the diagnostic log is closed and the game owns the screen.
+    // only the startup console is closed; nearchuckle_debug.log remains active
+    // until Far Cry returns so the first game-frame path is captured.
     if (main_loop)
         compatUiShutdown();
 }
