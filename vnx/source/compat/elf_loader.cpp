@@ -1014,7 +1014,7 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
     // the nearby string argument loaded for that call. Redirect only that
     // default-value argument to the existing "1" literal from the same
     // function (r_Fullscreen uses it in the release build).
-    constexpr const char kFunction[] = "_ZN7CSystem17CreateRendererVarsEv";
+    constexpr const char kFunction[] = "_ZN7CSystem18CreateRendererVarsEv";
     constexpr const char kName[] = "r_DisplayInfo";
     constexpr const char kZero[] = "0";
     constexpr const char kOne[] = "1";
