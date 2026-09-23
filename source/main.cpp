@@ -117,7 +117,7 @@ static std::vector<SoFile> find_guest_libraries() {
 }
 
 static void log_engine_data_dirs() {
-    const struct Check {
+    struct Check {
         const char* label;
         const char* relative;
     };
