@@ -4762,9 +4762,19 @@ static bool pakExtractPrefix(const std::string& pakPath,
         if (normalized.empty() || normalized.back() == '/')
             continue;
 
-        // Only materialize the file when enumeration actually needs it.
+        // Directory-backed CryEngine shader loading is case-sensitive on the
+        // Switch filesystem. The PAK lookup itself is case-insensitive, but the
+        // physical compatibility tree must retain the canonical Android
+        // directory spelling so checks such as ::stat("Shaders/Scripts") and
+        // the renderer's own readdir() see the same tree.
+        std::string outPath = normalized;
+        const std::string shaderRoot = "shaders/";
+        if (outPath.rfind(shaderRoot, 0) == 0)
+            outPath = "Shaders/" + outPath.substr(shaderRoot.size());
+
+        // Script materials intentionally keep their lower-case Android path.
         // Normal asset reads remain VirtualPakFile-backed.
-        if (pakExtractEntry(pakPath, normalized, normalized))
+        if (pakExtractEntry(pakPath, normalized, outPath))
             extractedAny = true;
     }
 
