@@ -816,23 +816,52 @@ static void logTermCaller(const char* what, void* ret_addr) {
 }
 
 // Walk the AArch64 frame-pointer chain ([x29] = caller fp, [x29+8] = lr) and
-// symbolize every return address. NDK arm64 builds keep frame pointers, so
-// this names the whole game call path that led to abort/exit. Each line is
-// flushed as it's written — if the walk hits a bogus fp and faults, everything
-// up to that frame is already on disk (and we were dying anyway).
+// symbolize every return address. Never dereference a frame pointer until the
+// Switch service confirms the frame record is readable; the exit path may have
+// an unwinder frame that already points outside the guest stack.
 static void logBacktrace(void* fp) {
     struct Frame { Frame* fp; void* lr; };
     Frame* f = (Frame*)fp;
+
+    auto readable = [](const void* p, size_t size) -> bool {
+        if (!p || size == 0)
+            return false;
+
+        const uintptr_t addr = reinterpret_cast<uintptr_t>(p);
+        MemoryInfo mi = {};
+        u32 pi = 0;
+        if (R_FAILED(svcQueryMemory(&mi, &pi, addr)))
+            return false;
+        if (!(mi.perm & Perm_R))
+            return false;
+
+        if (addr < mi.addr || size > mi.size || addr > mi.addr + mi.size - size)
+            return false;
+        return true;
+    };
+
     for (int i = 0; i < 24 && f; i++) {
-        if (((uintptr_t)f & 0xF) != 0) { compatLogFmt("  bt[%d]: fp misaligned — stop", i); break; }
-        void* lr = f->lr;
-        if (!lr) break;
+        if (((uintptr_t)f & 0xF) != 0) {
+            compatLogFmt("  bt[%d]: fp misaligned — stop (%p)", i, (void*)f);
+            break;
+        }
+        if (!readable(f, sizeof(Frame))) {
+            compatLogFmt("  bt[%d]: fp unreadable — stop (%p)", i, (void*)f);
+            break;
+        }
+
+        const void* lr = f->lr;
+        if (!lr)
+            break;
+
         char where[256];
         elfDescribePc((uint64_t)lr, where, sizeof(where));
         compatLogFmt("  bt[%d]: %s", i, where);
         compatLogFlush();
+
         Frame* next = f->fp;
-        if (next <= f) break;   // frames must strictly ascend the stack
+        if (!next || next <= f)
+            break;
         f = next;
     }
     compatLogFlush();
