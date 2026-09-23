@@ -114,6 +114,14 @@ static bool pakFindVirtualEntry(const char* requested,
                                 std::string& pakPath,
                                 PakEntryMeta& meta);
 static std::string pakNormalizeName(const char* name);
+static std::string pakAssetRelativeName(const char* requested);
+static int vpakFdOpen(const char* requested, int flags);
+static bool vpakFdOwns(int fd);
+static ssize_t vpakFdRead(int fd, void* dst, size_t count);
+static off_t vpakFdSeek(int fd, off_t off, int whence);
+static ssize_t vpakFdPread(int fd, void* dst, size_t count, off_t offset);
+static int vpakFdClose(int fd);
+static int vpakFdFstat(int fd, struct stat* st);
 static bool isShaderCacheLookupPath(const char* path);
 static bool isShaderPathForDiag(const char* path);
 static void compatLogPakOpenState(FILE* f, const char* path);
@@ -166,6 +174,9 @@ static std::string normalizeSwitchFsPath(const char* input) {
 // The APK cache only needs positional reads, so emulate it with lseek/read
 // while preserving the caller's file position.
 extern "C" ssize_t pread(int fd, void* buf, size_t count, off_t offset) {
+    if (vpakFdOwns(fd))
+        return vpakFdPread(fd, buf, count, offset);
+
     off_t saved = lseek(fd, 0, SEEK_CUR);
     if (saved == (off_t)-1) return -1;
     if (lseek(fd, offset, SEEK_SET) == (off_t)-1) return -1;
@@ -558,6 +569,18 @@ static int stub_stat(const char* p, struct stat* ignored) {
                          (unsigned)meta.uncompressedSize);
             return 0;
         }
+
+        if (pakVirtualDirectoryExists(ioPath)) {
+            nativeSt = {};
+            nativeSt.st_mode = S_IFDIR | 0555;
+            nativeSt.st_nlink = 2;
+            nativeSt.st_uid = 0;
+            nativeSt.st_gid = 0;
+            nativeSt.st_blksize = 4096;
+            fillAndroidArm64Stat(nativeSt, ignored);
+            return 0;
+        }
+
         return rc;
     }
 
@@ -1232,11 +1255,28 @@ static int devUrandomOpen(const char* p) {
 }
 static ssize_t sh_read(int fd, void* b, size_t n) {
     if (fd == URANDOM_FD) { if (b && n) randomGet(b, n); return (ssize_t)n; }
+    if (vpakFdOwns(fd))
+        return vpakFdRead(fd, b, n);
     return read(fd, b, n);
 }
+
+static off_t sh_lseek(int fd, off_t off, int whence) {
+    if (vpakFdOwns(fd))
+        return vpakFdSeek(fd, off, whence);
+    return lseek(fd, off, whence);
+}
+
 static int sh_close(int fd) {
     if (fd == URANDOM_FD) return 0;
+    if (vpakFdOwns(fd))
+        return vpakFdClose(fd);
     return close(fd);
+}
+
+static int sh_fstat(int fd, struct stat* st) {
+    if (vpakFdOwns(fd))
+        return vpakFdFstat(fd, st);
+    return fstat(fd, st);
 }
 
 // write() routed through the log for stdout/stderr — libc++abi terminate
@@ -1572,6 +1612,219 @@ static int vpakClose(FILE* f) {
     VirtualPakFile* v = reinterpret_cast<VirtualPakFile*>(f);
     mutexUnlock(&g_vpak_lock);
     delete v;
+    return 0;
+}
+
+// POSIX file-descriptor equivalent of the Android/CryPak pseudo-file.
+// Some guest code (notably CControllerManager::LoadAnimation) bypasses
+// stdio and uses open/read/lseek directly. Keep those handles entirely in
+// memory too; never create a loose copy of the PAK entry.
+struct VirtualPakFd {
+    std::vector<unsigned char> data;
+    off_t pos = 0;
+};
+
+static constexpr int VPAK_FD_BASE = 0x6000;
+static constexpr int VPAK_FD_LIMIT = 0x6fff;
+static Mutex g_vpak_fd_lock;
+static std::unordered_map<int, VirtualPakFd*> g_vpak_fds;
+static int g_next_vpak_fd = VPAK_FD_BASE;
+
+static bool vpakFdOwns(int fd) {
+    mutexLock(&g_vpak_fd_lock);
+    const bool found = g_vpak_fds.find(fd) != g_vpak_fds.end();
+    mutexUnlock(&g_vpak_fd_lock);
+    return found;
+}
+
+static int vpakFdOpen(const char* requested, int flags) {
+    if (!requested || !*requested)
+        return -1;
+
+    // Virtual PAK entries are read-only. Writes/creates must continue to use
+    // the real filesystem rather than silently redirecting to an archive.
+    const int writeFlags = O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND;
+    if (flags & writeFlags)
+        return -1;
+
+    std::string pakPath;
+    PakEntryMeta meta;
+    if (!pakFindVirtualEntry(requested, pakPath, meta))
+        return -1;
+
+    std::vector<unsigned char> data;
+    if (!pakReadEntryToMemory(pakPath, meta, data)) {
+        compatLogFmt("PAK VIRTUAL FD READ FAILED: %s <- %s",
+                     pakAssetRelativeName(requested).c_str(),
+                     pakPath.c_str());
+        return -1;
+    }
+
+    VirtualPakFd* v = new VirtualPakFd();
+    if (!v)
+        return -1;
+    v->data = std::move(data);
+
+    mutexLock(&g_vpak_fd_lock);
+    int chosen = -1;
+    for (int i = 0; i <= (VPAK_FD_LIMIT - VPAK_FD_BASE); ++i) {
+        const int candidate =
+            VPAK_FD_BASE + ((g_next_vpak_fd - VPAK_FD_BASE + i) %
+                            (VPAK_FD_LIMIT - VPAK_FD_BASE + 1));
+        if (g_vpak_fds.find(candidate) == g_vpak_fds.end()) {
+            chosen = candidate;
+            g_next_vpak_fd = candidate + 1;
+            if (g_next_vpak_fd > VPAK_FD_LIMIT)
+                g_next_vpak_fd = VPAK_FD_BASE;
+            break;
+        }
+    }
+
+    if (chosen >= 0)
+        g_vpak_fds.emplace(chosen, v);
+    mutexUnlock(&g_vpak_fd_lock);
+
+    if (chosen < 0) {
+        delete v;
+        errno = EMFILE;
+        return -1;
+    }
+
+    compatLogFmt("PAK VIRTUAL FD OPEN: %s <- %s fd=%d size=%zu",
+                 pakAssetRelativeName(requested).c_str(),
+                 pakPath.c_str(), chosen, v->data.size());
+    return chosen;
+}
+
+static ssize_t vpakFdRead(int fd, void* dst, size_t count) {
+    if (!dst && count) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    mutexLock(&g_vpak_fd_lock);
+    auto it = g_vpak_fds.find(fd);
+    if (it == g_vpak_fds.end()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EBADF;
+        return -1;
+    }
+
+    VirtualPakFd* v = it->second;
+    if (v->pos >= (off_t)v->data.size()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        return 0;
+    }
+
+    const size_t available = v->data.size() - (size_t)v->pos;
+    const size_t bytes = count < available ? count : available;
+    if (bytes)
+        memcpy(dst, v->data.data() + v->pos, bytes);
+    v->pos += (off_t)bytes;
+    mutexUnlock(&g_vpak_fd_lock);
+    return (ssize_t)bytes;
+}
+
+static off_t vpakFdSeek(int fd, off_t off, int whence) {
+    mutexLock(&g_vpak_fd_lock);
+    auto it = g_vpak_fds.find(fd);
+    if (it == g_vpak_fds.end()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EBADF;
+        return (off_t)-1;
+    }
+
+    VirtualPakFd* v = it->second;
+    off_t base = 0;
+    if (whence == SEEK_SET)
+        base = 0;
+    else if (whence == SEEK_CUR)
+        base = v->pos;
+    else if (whence == SEEK_END)
+        base = (off_t)v->data.size();
+    else {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EINVAL;
+        return (off_t)-1;
+    }
+
+    const off_t next = base + off;
+    if (next < 0 || next > (off_t)v->data.size()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EINVAL;
+        return (off_t)-1;
+    }
+
+    v->pos = next;
+    mutexUnlock(&g_vpak_fd_lock);
+    return next;
+}
+
+static ssize_t vpakFdPread(int fd, void* dst, size_t count, off_t offset) {
+    if (!dst && count) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    mutexLock(&g_vpak_fd_lock);
+    auto it = g_vpak_fds.find(fd);
+    if (it == g_vpak_fds.end()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EBADF;
+        return -1;
+    }
+
+    VirtualPakFd* v = it->second;
+    if (offset < 0 || offset >= (off_t)v->data.size()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        return 0;
+    }
+
+    const size_t available = v->data.size() - (size_t)offset;
+    const size_t bytes = count < available ? count : available;
+    if (bytes)
+        memcpy(dst, v->data.data() + offset, bytes);
+    mutexUnlock(&g_vpak_fd_lock);
+    return (ssize_t)bytes;
+}
+
+static int vpakFdClose(int fd) {
+    mutexLock(&g_vpak_fd_lock);
+    auto it = g_vpak_fds.find(fd);
+    if (it == g_vpak_fds.end()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EBADF;
+        return -1;
+    }
+
+    VirtualPakFd* v = it->second;
+    g_vpak_fds.erase(it);
+    mutexUnlock(&g_vpak_fd_lock);
+    delete v;
+    return 0;
+}
+
+static int vpakFdFstat(int fd, struct stat* st) {
+    if (!st) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    mutexLock(&g_vpak_fd_lock);
+    auto it = g_vpak_fds.find(fd);
+    if (it == g_vpak_fds.end()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EBADF;
+        return -1;
+    }
+
+    std::memset(st, 0, sizeof(*st));
+    st->st_mode = S_IFREG | 0444;
+    st->st_nlink = 1;
+    st->st_size = (off_t)it->second->data.size();
+    st->st_blksize = 4096;
+    st->st_blocks = (blkcnt_t)((it->second->data.size() + 511u) / 512u);
+    mutexUnlock(&g_vpak_fd_lock);
     return 0;
 }
 
@@ -2418,6 +2671,15 @@ static int stub_open(const char* path, int flags, ...) {
                 if (videoIo) g_near_video_open_failed = 0;
                 return rfd;
             }
+        }
+    }
+
+    if (fd < 0 && ioPath) {
+        const int pakFd = vpakFdOpen(ioPath, flags);
+        if (pakFd >= 0) {
+            if (videoIo)
+                g_near_video_open_failed = 0;
+            return pakFd;
         }
     }
 
@@ -4166,12 +4428,190 @@ static bool isShaderPathForDiag(const char* path) {
            p == "/shaders";
 }
 
+struct VirtualPakDir {
+    std::string directory;
+    std::vector<std::string> names;
+    size_t pos = 0;
+    struct dirent current = {};
+};
+
+static Mutex g_vpak_dir_lock;
+static std::unordered_set<DIR*> g_vpak_dirs;
+
+static bool vpakDirOwns(DIR* dir) {
+    if (!dir)
+        return false;
+    mutexLock(&g_vpak_dir_lock);
+    const bool found = g_vpak_dirs.find(dir) != g_vpak_dirs.end();
+    mutexUnlock(&g_vpak_dir_lock);
+    return found;
+}
+
+static bool collectPakDirectoryEntries(const char* directory,
+                                       std::vector<std::string>& outNames) {
+    outNames.clear();
+    if (!directory)
+        return false;
+
+    std::string wanted = pakAssetRelativeName(directory);
+    while (!wanted.empty() && wanted.back() == '/')
+        wanted.pop_back();
+
+    const std::string prefix =
+        wanted.empty() ? std::string() : wanted + "/";
+
+    std::unordered_map<std::string, bool> seen;
+
+    const char* roots[] = {
+        ".",
+        "FCData",
+        "fcdata",
+        "FCData/Localized",
+        "fcdata/Localized",
+        "FCData/localized",
+        "fcdata/localized",
+        nullptr
+    };
+
+    for (size_t r = 0; roots[r]; ++r) {
+        DIR* dir = ::opendir(roots[r]);
+        if (!dir)
+            continue;
+
+        while (dirent* ent = ::readdir(dir)) {
+            const char* name = ent->d_name;
+            const size_t len = std::strlen(name);
+            if (len < 4)
+                continue;
+
+            const char c0 = (char)std::tolower((unsigned char)name[len - 4]);
+            const char c1 = (char)std::tolower((unsigned char)name[len - 3]);
+            const char c2 = (char)std::tolower((unsigned char)name[len - 2]);
+            const char c3 = (char)std::tolower((unsigned char)name[len - 1]);
+            if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
+                continue;
+
+            std::string pakPath = roots[r];
+            if (pakPath != ".")
+                pakPath += "/";
+            pakPath += name;
+
+            mutexLock(&g_pak_index_lock);
+            auto it = g_pak_indexes.find(pakPath);
+            if (it == g_pak_indexes.end()) {
+                PakIndex fresh;
+                const bool ok = buildPakIndexLocked(pakPath, fresh);
+                auto inserted = g_pak_indexes.emplace(pakPath, std::move(fresh));
+                it = inserted.first;
+                if (!ok) {
+                    mutexUnlock(&g_pak_index_lock);
+                    continue;
+                }
+            }
+
+            for (const auto& item : it->second.entries) {
+                const std::string& entry = item.first;
+                if (!prefix.empty()) {
+                    if (entry.rfind(prefix, 0) != 0)
+                        continue;
+                }
+
+                std::string rest = prefix.empty()
+                    ? entry
+                    : entry.substr(prefix.size());
+                if (rest.empty())
+                    continue;
+
+                const size_t slash = rest.find('/');
+                const std::string child =
+                    slash == std::string::npos ? rest : rest.substr(0, slash);
+                if (!child.empty())
+                    seen.emplace(child, slash != std::string::npos);
+            }
+
+            mutexUnlock(&g_pak_index_lock);
+        }
+
+        ::closedir(dir);
+    }
+
+    outNames.reserve(seen.size());
+    for (const auto& item : seen)
+        outNames.push_back(item.first);
+    std::sort(outNames.begin(), outNames.end());
+    return !outNames.empty();
+}
+
+static bool pakVirtualDirectoryExists(const char* directory) {
+    std::vector<std::string> names;
+    return collectPakDirectoryEntries(directory, names);
+}
+
+static DIR* vpakDirOpen(const char* directory) {
+    std::vector<std::string> names;
+    if (!collectPakDirectoryEntries(directory, names))
+        return nullptr;
+
+    VirtualPakDir* state = new VirtualPakDir();
+    if (!state)
+        return nullptr;
+    state->directory = directory ? directory : "";
+    state->names = std::move(names);
+
+    DIR* handle = reinterpret_cast<DIR*>(state);
+    mutexLock(&g_vpak_dir_lock);
+    g_vpak_dirs.insert(handle);
+    mutexUnlock(&g_vpak_dir_lock);
+    return handle;
+}
+
+static struct dirent* vpakDirRead(DIR* dir) {
+    mutexLock(&g_vpak_dir_lock);
+    if (g_vpak_dirs.find(dir) == g_vpak_dirs.end()) {
+        mutexUnlock(&g_vpak_dir_lock);
+        return nullptr;
+    }
+
+    VirtualPakDir* state = reinterpret_cast<VirtualPakDir*>(dir);
+    if (state->pos >= state->names.size()) {
+        mutexUnlock(&g_vpak_dir_lock);
+        return nullptr;
+    }
+
+    std::memset(&state->current, 0, sizeof(state->current));
+    const std::string& name = state->names[state->pos++];
+    const size_t maxName = sizeof(state->current.d_name) - 1;
+    const size_t copy = name.size() < maxName ? name.size() : maxName;
+    std::memcpy(state->current.d_name, name.c_str(), copy);
+    state->current.d_name[copy] = ' ';
+    mutexUnlock(&g_vpak_dir_lock);
+    return &state->current;
+}
+
+static int vpakDirClose(DIR* dir) {
+    mutexLock(&g_vpak_dir_lock);
+    auto it = g_vpak_dirs.find(dir);
+    if (it == g_vpak_dirs.end()) {
+        mutexUnlock(&g_vpak_dir_lock);
+        errno = EBADF;
+        return -1;
+    }
+    g_vpak_dirs.erase(it);
+    VirtualPakDir* state = reinterpret_cast<VirtualPakDir*>(dir);
+    mutexUnlock(&g_vpak_dir_lock);
+    delete state;
+    return 0;
+}
+
 static std::unordered_map<DIR*, std::string> g_readdirPaths;
 static std::unordered_map<DIR*, unsigned> g_readdirCounts;
 
 static struct dirent* stub_readdir(DIR* dir) {
     if (!dir)
         return nullptr;
+
+    if (vpakDirOwns(dir))
+        return vpakDirRead(dir);
 
     struct dirent* ent = ::readdir(dir);
     if (!ent)
@@ -4192,6 +4632,9 @@ static struct dirent* stub_readdir(DIR* dir) {
 static int stub_closedir(DIR* dir) {
     if (!dir)
         return -1;
+    if (vpakDirOwns(dir))
+        return vpakDirClose(dir);
+
     g_readdirPaths.erase(dir);
     g_readdirCounts.erase(dir);
     return ::closedir(dir);
@@ -4204,6 +4647,9 @@ static int stub_closedir(DIR* dir) {
 static struct dirent* stub_readdir64(DIR* dir) {
     if (!dir)
         return nullptr;
+
+    if (vpakDirOwns(dir))
+        return vpakDirRead(dir);
 
     struct dirent* ent = ::readdir(dir);
     if (!ent)
@@ -4259,6 +4705,17 @@ static DIR* stub_opendir(const char* path) {
                 compatLogFmt("opendir CASEFIX: %s -> %s",
                              ioPath ? ioPath : "?", resolved.c_str());
             return d;
+        }
+    }
+
+    // A shader/resource directory can exist only inside registered PAK
+    // content. Expose it as an in-memory DIR* just like Android CryPak's
+    // ZipDir enumeration; do not create a directory on the filesystem.
+    if (ioPath) {
+        if (DIR* virtualDir = vpakDirOpen(ioPath)) {
+            if (!isShaderPathForDiag(ioPath))
+                compatLogFmt("opendir PAK VIRTUAL: %s", ioPath);
+            return virtualDir;
         }
     }
 
@@ -4340,8 +4797,26 @@ static bool fillFindData64(NearFindData64* out,
     }
 
     struct stat st = {};
-    if (stat(full.c_str(), &st) != 0)
-        return false;
+    if (::stat(full.c_str(), &st) != 0) {
+        std::string pakPath;
+        PakEntryMeta meta;
+        if (pakFindVirtualEntry(full.c_str(), pakPath, meta)) {
+            st = {};
+            st.st_mode = S_IFREG | 0444;
+            st.st_nlink = 1;
+            st.st_size = (off_t)meta.uncompressedSize;
+            st.st_blksize = 4096;
+            st.st_blocks =
+                (blkcnt_t)(((uint64_t)meta.uncompressedSize + 511u) / 512u);
+        } else if (pakVirtualDirectoryExists(full.c_str())) {
+            st = {};
+            st.st_mode = S_IFDIR | 0555;
+            st.st_nlink = 2;
+            st.st_blksize = 4096;
+        } else {
+            return false;
+        }
+    }
 
     memset(out, 0, sizeof(*out));
     if (S_ISDIR(st.st_mode))
@@ -4364,7 +4839,7 @@ static bool findNextMatch(NearFind64State* state, NearFindData64* out) {
     if (!state || !state->dir || !out)
         return false;
 
-    while (struct dirent* ent = readdir(state->dir)) {
+    while (struct dirent* ent = stub_readdir(state->dir)) {
         if (!findPatternMatches(state->pattern, ent->d_name))
             continue;
         if (!fillFindData64(out, state->directory, ent->d_name))
@@ -4413,7 +4888,7 @@ static intptr_t stub_findfirst64(const char* pattern, NearFindData64* out) {
                  pattern, state->directory.c_str(), state->pattern.c_str());
 
     if (!findNextMatch(state, out)) {
-        closedir(state->dir);
+        stub_closedir(state->dir);
 
         delete state;
         errno = ENOENT;
@@ -4447,7 +4922,7 @@ static int stub_findclose64(intptr_t handle) {
         return -1;
 
     if (state->dir)
-        closedir(state->dir);
+        stub_closedir(state->dir);
     delete state;
     return 0;
 }
@@ -4873,6 +5348,18 @@ static int stub_access(const char* path, int mode) {
     std::string resolved;
     if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
         return ::access(resolved.c_str(), mode);
+
+    if (mode == F_OK || !(mode & W_OK)) {
+        std::string pakPath;
+        PakEntryMeta meta;
+        if (pakFindVirtualEntry(ioPath, pakPath, meta))
+            return 0;
+
+        // Directories that exist only inside PAK archives are also visible to
+        // the Android-style virtual filesystem.
+        if (pakVirtualDirectoryExists(ioPath))
+            return 0;
+    }
 
     errno = ENOENT;
     return -1;
@@ -5798,10 +6285,10 @@ static const ShimEntry g_shims[] = {
     {"close",       (void*)sh_close},
     {"read",        (void*)sh_read},
     {"write",       (void*)sh_write},
-    {"lseek",       (void*)lseek},
+    {"lseek",       (void*)sh_lseek},
     {"stat",        (void*)stub_stat},
     {"stat64",       (void*)stub_stat},
-    {"fstat",       (void*)fstat},
+    {"fstat",       (void*)sh_fstat},
     {"fstat64",      (void*)stub_fstat64},
     {"mkdir",       (void*)mkdir},
     {"opendir",     (void*)stub_opendir},
