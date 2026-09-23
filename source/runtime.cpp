@@ -262,9 +262,10 @@ void compatLogFlush() {
     mutexLock(&g_log_lock);
     if (!g_log_closed) {
         log_open();
-        if (g_log)
+        if (g_log) {
             std::fflush(g_log);
             g_log_pending_lines = 0;
+        }
     }
     mutexUnlock(&g_log_lock);
 }
