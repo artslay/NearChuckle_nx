@@ -3465,8 +3465,9 @@ static GuestKeyFn g_guest_key_down = nullptr;
 static GuestKeyFn g_guest_key_up = nullptr;
 static GuestMouseFn g_guest_mouse = nullptr;
 static bool g_guest_input_callbacks_initialized = false;
-static bool g_guest_input_callbacks_failed = false;
-static int g_hid_init_state = 0;
+static PadState g_switch_pad = {};
+static bool g_switch_pad_initialized = false;
+static bool g_input_connection_logged = false;
 
 static bool g_w_down = false;
 static bool g_a_down = false;
@@ -3476,42 +3477,46 @@ static bool g_zl_down = false;
 static bool g_zr_down = false;
 
 static void initGuestInputCallbacks() {
-    if (g_guest_input_callbacks_initialized || g_guest_input_callbacks_failed)
+    if (g_guest_input_callbacks_initialized)
         return;
 
+    // The SDL Android methods are registered by SDL's JNI_OnLoad. Do not latch
+    // a permanent failure here: the first EGL frame can race SDL's registration.
     g_guest_key_down =
-        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNativeExact("onNativeKeyDown", "(I)V", 0));
+        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNativeExact(
+            "onNativeKeyDown", "(I)V", 0));
     g_guest_key_up =
-        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNativeExact("onNativeKeyUp", "(I)V", 0));
+        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNativeExact(
+            "onNativeKeyUp", "(I)V", 0));
     g_guest_mouse =
-        reinterpret_cast<GuestMouseFn>(jniFindRegisteredNativeExact("onNativeMouse", "(IIFFZ)V", 0));
+        reinterpret_cast<GuestMouseFn>(jniFindRegisteredNativeExact(
+            "onNativeMouse", "(IIFFZ)V", 0));
 
-    if (!g_guest_key_down || !g_guest_key_up || !g_guest_mouse) {
-        compatLogFmt("INPUT: SDL callbacks missing keydown=%p keyup=%p mouse=%p",
+    if (g_guest_key_down && g_guest_key_up && g_guest_mouse) {
+        g_guest_input_callbacks_initialized = true;
+        compatLogFmt("INPUT: SDL callbacks ready keydown=%p keyup=%p mouse=%p",
                      reinterpret_cast<void*>(g_guest_key_down),
                      reinterpret_cast<void*>(g_guest_key_up),
                      reinterpret_cast<void*>(g_guest_mouse));
-        g_guest_input_callbacks_failed = true;
-        return;
+    } else {
+        static unsigned miss_log_counter = 0;
+        if ((miss_log_counter++ % 120u) == 0u) {
+            compatLogFmt("INPUT: SDL callbacks not ready keydown=%p keyup=%p mouse=%p",
+                         reinterpret_cast<void*>(g_guest_key_down),
+                         reinterpret_cast<void*>(g_guest_key_up),
+                         reinterpret_cast<void*>(g_guest_mouse));
+        }
     }
-
-    g_guest_input_callbacks_initialized = true;
 }
 
-static bool initSwitchHid() {
-    static PadState pad = {};
-    static bool configured = false;
+static void initSwitchPad() {
+    if (g_switch_pad_initialized)
+        return;
 
-    if (!configured) {
-        configured = true;
-        padConfigureInput(1, HidNpadStyleSet_NpadStandard);
-        padInitializeDefault(&pad);
-        compatLog("INPUT: Switch PadState initialized");
-    }
-
-    // padUpdate() is handled below in compatPollSwitchInput() so the
-    // current PadState can be queried without using the removed legacy HID API.
-    return true;
+    padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+    padInitializeDefault(&g_switch_pad);
+    g_switch_pad_initialized = true;
+    compatLog("INPUT: Switch PadState initialized");
 }
 
 static void updateMappedKey(bool desired, bool& current, int androidKeycode) {
@@ -3538,37 +3543,23 @@ static void updateMappedMouseButton(bool desired, bool& current, int button) {
 
 static void compatPollSwitchInput() {
     initGuestInputCallbacks();
+    initSwitchPad();
     if (!g_guest_input_callbacks_initialized)
         return;
 
-    if (!initSwitchHid())
-        return;
+    initSwitchPad();
+    padUpdate(&g_switch_pad);
 
-    static PadState pad = {};
-    static bool pad_ready = false;
+    const u64 held = padGetButtons(&g_switch_pad);
+    const HidAnalogStickState left = padGetStickPos(&g_switch_pad, 0);
+    const HidAnalogStickState right = padGetStickPos(&g_switch_pad, 1);
 
-    if (!pad_ready) {
-        pad_ready = true;
-        padConfigureInput(1, HidNpadStyleSet_NpadStandard);
-        padInitializeDefault(&pad);
-        compatLog("INPUT: Pad configured");
-    }
-
-    padUpdate(&pad);
-
-    const u64 held = padGetButtons(&pad);
-    const HidAnalogStickState left = padGetStickPos(&pad, 0);
-    const HidAnalogStickState right = padGetStickPos(&pad, 1);
-
-    static bool input_state_logged = false;
-    const bool connected = padIsConnected(&pad);
-    if (!input_state_logged) {
-        if (connected) {
-            input_state_logged = true;
-            compatLogFmt("INPUT: controller connected style=0x%x buttons=0x%llx",
-                         padGetStyleSet(&pad),
-                         static_cast<unsigned long long>(held));
-        }
+    const bool connected = padIsConnected(&g_switch_pad);
+    if (connected && !g_input_connection_logged) {
+        g_input_connection_logged = true;
+        compatLogFmt("INPUT: controller connected style=0x%x buttons=0x%llx",
+                     padGetStyleSet(&g_switch_pad),
+                     static_cast<unsigned long long>(held));
     }
 
     constexpr float kStickMax = 32767.0f;
