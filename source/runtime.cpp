@@ -250,6 +250,11 @@ static PadState g_switch_pad = {};
 static u64 g_switch_input_previous = 0;
 static float g_switch_touch_x = 0.0f;
 static float g_switch_touch_y = 0.0f;
+// CSDLMouse starts its virtual screen at 400x300 and moves it by mouseDelta*4.
+// Keep the same logical pointer position so a touchscreen coordinate can be
+// translated into the relative-motion path used by the Android mouse backend.
+static float g_switch_touch_virtual_x = 400.0f;
+static float g_switch_touch_virtual_y = 300.0f;
 static void* g_sdl_key_down = nullptr;
 static void* g_sdl_key_up = nullptr;
 static void* g_sdl_mouse = nullptr;
@@ -289,17 +294,17 @@ static void switchEmitRelativeMouse(void* fn_ptr, float dx, float dy) {
        0, 2, dx, dy, JNI_TRUE); // MotionEvent.ACTION_MOVE
 }
 
-static void switchEmitAbsoluteMouse(void* fn_ptr, int button, int action,
-                                     float x, float y) {
-    if (!fn_ptr)
+static void switchEmitTouchMouseMove(void* fn_ptr, float dx, float dy) {
+    if (!fn_ptr || (dx == 0.0f && dy == 0.0f))
         return;
 
     using MouseFn = void (*)(void*, void*, int, int, float, float, jboolean);
     const MouseFn fn = reinterpret_cast<MouseFn>(fn_ptr);
     fn(compatGet()->env_outer,
        reinterpret_cast<void*>(0x1001),
-       button, action, x, y, JNI_FALSE);
+       0, 2, dx, dy, JNI_TRUE); // ACTION_MOVE + relative=true
 }
+
 
 static void switchInputResolveCallbacks() {
     if (g_sdl_key_down && g_sdl_key_up && g_sdl_mouse)
@@ -318,10 +323,10 @@ static void switchInputResolveCallbacks() {
 
 static void pollSwitchInputInternal() {
     switchInputResolveCallbacks();
-    if (!g_sdl_key_down || !g_sdl_key_up)
+    if (!g_sdl_key_down && !g_sdl_key_up && !g_sdl_mouse)
         return;
 
-    if (!g_switch_pad_initialized) {
+    if (!g_switch_pad_initialized && (g_sdl_key_down || g_sdl_key_up)) {
         padConfigureInput(1, HidNpadStyleSet_NpadStandard);
         padInitializeDefault(&g_switch_pad);
         g_switch_pad_initialized = true;
@@ -337,14 +342,16 @@ static void pollSwitchInputInternal() {
     padUpdate(&g_switch_pad);
     const u64 held = padGetButtons(&g_switch_pad);
 
-    for (const SwitchKeyBinding& b : kSwitchKeyBindings) {
-        const bool was_down = (g_switch_input_previous & b.mask) != 0;
-        const bool is_down = (held & b.mask) != 0;
-        if (was_down == is_down)
-            continue;
+    if (g_sdl_key_down && g_sdl_key_up) {
+        for (const SwitchKeyBinding& b : kSwitchKeyBindings) {
+            const bool was_down = (g_switch_input_previous & b.mask) != 0;
+            const bool is_down = (held & b.mask) != 0;
+            if (was_down == is_down)
+                continue;
 
-        switchEmitKey(is_down ? g_sdl_key_down : g_sdl_key_up,
-                      b.androidKeycode, b.name, is_down);
+            switchEmitKey(is_down ? g_sdl_key_down : g_sdl_key_up,
+                          b.androidKeycode, b.name, is_down);
+        }
     }
 
     // ZR/ZL are the two mouse buttons in the PC control scheme. SDL's Android
@@ -378,44 +385,59 @@ static void pollSwitchInputInternal() {
         }
     }
 
-    // Touchscreen -> absolute mouse pointer + left click.
-    // A tap is translated to an absolute mouse move first, then Android SDL's
-    // mouse-button down/up pair at the same coordinates. This lets the existing
-    // CryInput CSDLMouse see the normal SDL mouse events without adding a second
-    // input path. Continuous finger motion only moves the pointer; the click is
-    // released when the finger leaves the screen.
+    // Touchscreen -> logical pointer position + left click.
+    //
+    // Far Cry's Android CSDLMouse enables SDL relative mouse mode and consumes
+    // event.motion.xrel/yrel. Sending an absolute mouse event here therefore
+    // does not reliably move the game's virtual mouse. Translate Switch's
+    // 1280x720 touch coordinates into CSDLMouse's 800x600 virtual screen and
+    // feed only relative mouse motion plus the normal left-button pair.
     if (g_sdl_mouse && g_switch_touch_initialized) {
         HidTouchScreenState touch = {};
         const size_t touch_samples = hidGetTouchScreenStates(&touch, 1);
         const bool touching = touch_samples > 0 && touch.count > 0;
 
         if (touching) {
-            // Use the first finger. The requested control is a simple single-tap
-            // mouse pointer, so ignore extra fingers rather than generating
-            // ambiguous mouse coordinates.
             const float x = (float)touch.touches[0].x;
             const float y = (float)touch.touches[0].y;
+
+            // Switch touch coordinates are screen pixels. CSDLMouse keeps an
+            // 800x600 virtual pointer, starting at 400x300.
+            float target_x = x * (800.0f / 1280.0f);
+            float target_y = y * (600.0f / 720.0f);
+            target_x = std::max(0.0f, std::min(799.0f, target_x));
+            target_y = std::max(0.0f, std::min(599.0f, target_y));
 
             if (!g_switch_touch_down) {
                 g_switch_touch_down = true;
                 g_switch_touch_x = x;
                 g_switch_touch_y = y;
 
-                // Move the absolute pointer to the tap location before pressing.
-                switchEmitAbsoluteMouse(g_sdl_mouse, 0, 2, x, y);
-                switchEmitAbsoluteMouse(g_sdl_mouse, 1, 0, x, y);
-                compatLogFmt("SWITCH TOUCH: tap down x=%.0f y=%.0f", x, y);
+                const float dx = (target_x - g_switch_touch_virtual_x) / 4.0f;
+                const float dy = (target_y - g_switch_touch_virtual_y) / 4.0f;
+                switchEmitTouchMouseMove(g_sdl_mouse, dx, dy);
+                g_switch_touch_virtual_x = target_x;
+                g_switch_touch_virtual_y = target_y;
+
+                switchEmitMouse(g_sdl_mouse, 1, 0); // left button down
+                compatLogFmt("SWITCH TOUCH: tap down x=%.0f y=%.0f -> virtual x=%.0f y=%.0f",
+                             x, y, target_x, target_y);
             } else {
+                const float dx = (target_x - g_switch_touch_virtual_x) / 4.0f;
+                const float dy = (target_y - g_switch_touch_virtual_y) / 4.0f;
+                if (dx != 0.0f || dy != 0.0f)
+                    switchEmitTouchMouseMove(g_sdl_mouse, dx, dy);
+                g_switch_touch_virtual_x = target_x;
+                g_switch_touch_virtual_y = target_y;
                 g_switch_touch_x = x;
                 g_switch_touch_y = y;
-                switchEmitAbsoluteMouse(g_sdl_mouse, 1, 2, x, y);
             }
         } else if (g_switch_touch_down) {
             g_switch_touch_down = false;
-            switchEmitAbsoluteMouse(g_sdl_mouse, 0, 1,
-                                     g_switch_touch_x, g_switch_touch_y);
-            compatLogFmt("SWITCH TOUCH: tap up x=%.0f y=%.0f",
-                         g_switch_touch_x, g_switch_touch_y);
+            switchEmitMouse(g_sdl_mouse, 0, 1); // left button up
+            compatLogFmt("SWITCH TOUCH: tap up x=%.0f y=%.0f -> virtual x=%.0f y=%.0f",
+                         g_switch_touch_x, g_switch_touch_y,
+                         g_switch_touch_virtual_x, g_switch_touch_virtual_y);
         }
     }
 
