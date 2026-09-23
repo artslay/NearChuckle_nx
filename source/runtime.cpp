@@ -10,6 +10,12 @@
 #include <string>
 #include <sys/iosupport.h>
 
+// SDL3's Android glue registers these callbacks with JNI_OnLoad. We invoke the
+// registered native functions directly from the Switch main/render thread so
+// the guest receives the same key/mouse events it would receive from SDL's
+// Android Java frontend.
+extern void* jniFindRegisteredNative(const char* name, int occurrence);
+
 static CompatLayer g_compat = {};
 static Mutex g_log_lock;
 static FILE* g_log = nullptr;
@@ -200,6 +206,142 @@ static void log_close_locked() {
 CompatLayer* compatGet() {
     return &g_compat;
 }
+
+namespace {
+
+struct SwitchKeyBinding {
+    u64 mask;
+    int androidKeycode;
+    const char* name;
+};
+
+static constexpr SwitchKeyBinding kSwitchKeyBindings[] = {
+    // Menu / common actions.
+    {HidNpadButton_A,          66,  "A -> ENTER"},
+    {HidNpadButton_B,          111, "B -> ESCAPE"},
+    {HidNpadButton_X,          46,  "X -> R"},
+    {HidNpadButton_Y,          33,  "Y -> E"},
+    {HidNpadButton_L,          59,  "L -> LSHIFT"},
+    {HidNpadButton_R,          113, "R -> LCTRL"},
+    {HidNpadButton_Plus,       13,  "PLUS -> TAB"},
+    {HidNpadButton_Minus,      67,  "MINUS -> F1"},
+
+    // Digital pad stays available as Android DPAD keys for menu navigation.
+    {HidNpadButton_DpadUp,      19, "DPAD UP"},
+    {HidNpadButton_DpadDown,    20, "DPAD DOWN"},
+    {HidNpadButton_DpadLeft,    21, "DPAD LEFT"},
+    {HidNpadButton_DpadRight,   22, "DPAD RIGHT"},
+
+    // Left stick -> classic Far Cry WASD movement. Each direction is sampled
+    // as a digital key so it also works with the original Android input path.
+    {HidNpadButton_StickLUp,    51, "STICK L UP -> W"},
+    {HidNpadButton_StickLDown,  47, "STICK L DOWN -> S"},
+    {HidNpadButton_StickLLeft,  29, "STICK L LEFT -> A"},
+    {HidNpadButton_StickLRight, 32, "STICK L RIGHT -> D"},
+};
+
+static bool g_switch_input_started = false;
+static u64 g_switch_input_previous = 0;
+static void* g_sdl_key_down = nullptr;
+static void* g_sdl_key_up = nullptr;
+static void* g_sdl_mouse = nullptr;
+
+static void switchEmitKey(void* fn_ptr, int keycode, const char* name, bool down) {
+    if (!fn_ptr)
+        return;
+
+    using KeyFn = void (*)(void*, void*, int);
+    const KeyFn fn = reinterpret_cast<KeyFn>(fn_ptr);
+    fn(compatGet()->env_outer,
+       reinterpret_cast<void*>(0x1001),
+       keycode);
+
+    compatLogFmt("SWITCH INPUT: %s %s", down ? "DOWN" : "UP", name);
+}
+
+static void switchEmitMouse(void* fn_ptr, int button, int action) {
+    if (!fn_ptr)
+        return;
+
+    using MouseFn = void (*)(void*, void*, int, int, float, float, jboolean);
+    const MouseFn fn = reinterpret_cast<MouseFn>(fn_ptr);
+    fn(compatGet()->env_outer,
+       reinterpret_cast<void*>(0x1001),
+       button, action, 0.0f, 0.0f, JNI_TRUE);
+}
+
+static void switchEmitRelativeMouse(void* fn_ptr, float dx, float dy) {
+    if (!fn_ptr || (dx == 0.0f && dy == 0.0f))
+        return;
+
+    using MouseFn = void (*)(void*, void*, int, int, float, float, jboolean);
+    const MouseFn fn = reinterpret_cast<MouseFn>(fn_ptr);
+    fn(compatGet()->env_outer,
+       reinterpret_cast<void*>(0x1001),
+       0, 2, dx, dy, JNI_TRUE); // MotionEvent.ACTION_MOVE
+}
+
+static void switchInputResolveCallbacks() {
+    if (g_sdl_key_down && g_sdl_key_up && g_sdl_mouse)
+        return;
+
+    g_sdl_key_down = jniFindRegisteredNative("onNativeKeyDown", 0);
+    g_sdl_key_up = jniFindRegisteredNative("onNativeKeyUp", 0);
+    g_sdl_mouse = jniFindRegisteredNative("onNativeMouse", 0);
+
+    if (!g_switch_input_started) {
+        g_switch_input_started = true;
+        compatLogFmt("SWITCH INPUT: SDL callbacks keyDown=%p keyUp=%p mouse=%p",
+                     g_sdl_key_down, g_sdl_key_up, g_sdl_mouse);
+    }
+}
+
+void compatPollSwitchInput() {
+    switchInputResolveCallbacks();
+    if (!g_sdl_key_down || !g_sdl_key_up)
+        return;
+
+    hidScanInput();
+    const u64 held = hidKeysHeld(CONTROLLER_P1_AUTO);
+
+    for (const SwitchKeyBinding& b : kSwitchKeyBindings) {
+        const bool was_down = (g_switch_input_previous & b.mask) != 0;
+        const bool is_down = (held & b.mask) != 0;
+        if (was_down == is_down)
+            continue;
+
+        switchEmitKey(is_down ? g_sdl_key_down : g_sdl_key_up,
+                      b.androidKeycode, b.name, is_down);
+    }
+
+    // ZR/ZL are the two mouse buttons in the PC control scheme. SDL's Android
+    // glue passes MotionEvent BUTTON_PRIMARY/SECONDARY (1/2) plus ACTION_DOWN/UP.
+    if (g_sdl_mouse) {
+        const bool old_zr = (g_switch_input_previous & HidNpadButton_ZR) != 0;
+        const bool new_zr = (held & HidNpadButton_ZR) != 0;
+        if (old_zr != new_zr)
+            switchEmitMouse(g_sdl_mouse, 1, new_zr ? 0 : 1);
+
+        const bool old_zl = (g_switch_input_previous & HidNpadButton_ZL) != 0;
+        const bool new_zl = (held & HidNpadButton_ZL) != 0;
+        if (old_zl != new_zl)
+            switchEmitMouse(g_sdl_mouse, 2, new_zl ? 0 : 1);
+
+        const bool rs_left  = (held & HidNpadButton_StickRLeft)  != 0;
+        const bool rs_right = (held & HidNpadButton_StickRRight) != 0;
+        const bool rs_up    = (held & HidNpadButton_StickRUp)    != 0;
+        const bool rs_down  = (held & HidNpadButton_StickRDown)  != 0;
+        if (rs_left || rs_right || rs_up || rs_down) {
+            const float dx = rs_right ? 10.0f : (rs_left ? -10.0f : 0.0f);
+            const float dy = rs_down ? 10.0f : (rs_up ? -10.0f : 0.0f);
+            switchEmitRelativeMouse(g_sdl_mouse, dx, dy);
+        }
+    }
+
+    g_switch_input_previous = held;
+}
+
+} // namespace
 
 void compatLog(const char* msg) {
     const bool main_loop = is_main_loop_marker(msg);
