@@ -139,6 +139,7 @@ volatile uint32_t g_near_video_panel_finished_offset = 0xffffffffu;
 
 extern "C" void* g_near_original_refstream_activate = nullptr;
 extern "C" void* g_near_refstream_on_io_complete = nullptr;
+extern "C" void* g_near_original_refstream_call_read = nullptr;
 
 extern "C" bool compatGuestActivateReadStream(void* self) {
     if (!self)
@@ -232,10 +233,14 @@ extern "C" uint32_t compatGuestCallReadFileEx(void* proxy) {
     PakEntryMeta meta;
 
     if (!name || !*name || !pakFindVirtualEntry(name, pakPath, meta)) {
-        // Non-PAK streams should still use the original CallReadFileEx path.
-        // Returning an error here is only valid for a PAK stream, so delegate
-        // to the original function when available.
-        return 0xFFFFFFFFu;
+        // Non-PAK streams keep the original Android/Linux implementation.
+        using CallReadFn = uint32_t (*)(void*);
+        CallReadFn original =
+            reinterpret_cast<CallReadFn>(g_near_original_refstream_call_read);
+        if (original)
+            return original(proxy);
+        complete(proxy, 0xF0000008u, 0);
+        return 0;
     }
 
     std::vector<unsigned char> data;
