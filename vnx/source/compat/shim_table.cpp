@@ -369,7 +369,7 @@ static char* stub_realpath(const char* p, char* out) {
         std::string virtualPakPath;
         PakEntryMeta virtualMeta;
         if (pakFindVirtualEntry(p, virtualPakPath, virtualMeta)) {
-            std::string virtualPath = pakPreserveCasePath(p);
+            std::string virtualPath = p;
             if (virtualPath.empty() || virtualPath[0] != '/') {
                 char cwd[PATH_MAX];
                 if (::getcwd(cwd, sizeof(cwd))) {
@@ -1761,49 +1761,6 @@ static bool pakReadEntryToMemory(const std::string& pakPath,
 // game tree (~12k entries) on every launch just to report that these files were
 // not loose. CryPak can load shader content from PAKs, so a full-tree crawl is
 // unnecessary for runtime and is kept out of startup.
-static void prepareShaderSourceFiles(const char* /*dataRoot*/) {
-    // These legacy *.ext/CommonSubroutines probes used to call
-    // the removed PAK extraction helper for every missing file. That function
-    // scans every PAK's central directory, so 24 missing files meant hundreds
-    // of full archive scans during startup. CryPak already has a lazy PAK lookup
-    // path for these assets; only inspect loose files here.
-    static const char* const wanted[] = {
-        "Shaders/statenocull.ext",
-        "Shaders/hdrprocess.ext",
-        "Shaders/sunflares.ext",
-        "Shaders/lightstyles.ext",
-        "Shaders/glare.ext",
-        "Shaders/cgvprogramms.ext",
-        "Shaders/cgpshaders.ext",
-        "Shaders/templfog.ext",
-        "Shaders/templvfog.ext",
-        "Shaders/templfog_fp.ext",
-        "Shaders/templfogcaustics.ext",
-        "Shaders/templvfogcaustics.ext",
-        "Shaders/templfogcaustics_fp.ext",
-        "Shaders/white.ext",
-        "Shaders/whiteshadow.ext",
-        "Shaders/templdecal.ext",
-        "Shaders/templheatvis_sources.ext",
-        "Shaders/templinvlight.ext",
-        "Shaders/templdof.ext",
-        "Shaders/Scripts/CommonSubroutines.csl",
-        "Shaders/Scripts/CommonSubroutines.csi",
-        "Shaders/HWScripts/CommonSubroutines.csl",
-        "Shaders/HWScripts/CommonSubroutines.csi",
-        nullptr
-    };
-
-    for (size_t i = 0; wanted[i]; ++i) {
-        std::string resolved;
-        if (!resolvePathCaseInsensitive(wanted[i], resolved))
-            continue;
-
-        struct stat st = {};
-        (void)stat(resolved.c_str(), &st);
-    }
-}
-
 static std::string pakAssetRelativeName(const char* requested) {
     if (!requested || !*requested)
         return std::string();
@@ -4112,111 +4069,6 @@ static void countLuaScriptsRecursive(const std::string& directory,
     closedir(d);
 }
 
-static const char* kScriptPrepMarker = ".nearchuckle_scripts_ready_v1";
-static const char* kMaterialPrepMarker = ".nearchuckle_materials_ready_v1";
-static const char* kShaderPrepMarker = ".nearchuckle_shaders_ready_v8";
-
-static bool prepMarkerExists(const char* marker) {
-    if (!marker || !*marker)
-        return false;
-    struct stat st = {};
-    return ::stat(marker, &st) == 0 && S_ISREG(st.st_mode);
-}
-
-static void writePrepMarker(const char* marker) {
-    if (!marker || !*marker)
-        return;
-
-    FILE* f = fopen(marker, "wb");
-    if (!f)
-        return;
-    static const char text[] =
-        "NearChuckle_nx persistent PAK materialization cache ready\n";
-    (void)fwrite(text, 1, sizeof(text) - 1, f);
-    fclose(f);
-}
-
-[[maybe_unused]] static bool scriptPrepCacheReady() {
-    if (prepMarkerExists(kScriptPrepMarker))
-        return true;
-
-    // Existing installs may already contain the complete materialized script
-    // tree from an older build, but not the new marker yet. Detect that state
-    // from several core files so we can immediately skip the expensive PAK scan.
-    const char* required[] = {
-        "scripts/materials/mat_default.lua",
-        "scripts/ClassRegistry.lua",
-        "scripts/main.lua",
-        "scripts/common.lua",
-        nullptr
-    };
-
-    for (size_t i = 0; required[i]; ++i) {
-        struct stat st = {};
-        if (::stat(required[i], &st) != 0 || !S_ISREG(st.st_mode))
-            return false;
-    }
-
-    writePrepMarker(kScriptPrepMarker);
-    return true;
-}
-
-static bool shaderPrepCacheReady() {
-    // Only a matching persistent marker makes the shader preparation cache
-    // valid. Merely finding old materialized files is not enough: generated
-    // compatibility files may have changed between builds.
-    if (!prepMarkerExists(kShaderPrepMarker))
-        return false;
-
-    const char* required[] = {
-        "Shaders/HWScripts/Declarations/CGVProgramms.csl",
-        "Shaders/HWScripts/Declarations/CGVPMacro.csi",
-        "Shaders/HWScripts/Declarations/CGPShaders.csl",
-        "Shaders/HWScripts/CGVProgramms.csl",
-        "Shaders/HWScripts/CGVPMacro.csi",
-        "Shaders/HWScripts/CGPShaders.csl",
-        "Shaders/Scripts/CommonSubroutines.csl",
-        nullptr
-    };
-
-    for (size_t i = 0; required[i]; ++i) {
-        struct stat st = {};
-        if (::stat(required[i], &st) != 0 || !S_ISREG(st.st_mode))
-            return false;
-    }
-
-    // The standalone CommonSubroutines file alone is not enough: CryEngine
-    // expects the physical Shaders/Scripts tree to contain the other shader
-    // scripts as well. Count the loose CSL files as a cheap cache validation;
-    // this does not touch any PAKs on normal cached launches.
-    int scriptCslCount = 0;
-    int scriptCsiCount = 0;
-    countShaderScriptsRecursive("Shaders/Scripts", scriptCslCount, scriptCsiCount);
-
-    struct stat scriptsDir = {};
-    const bool scriptsDirPresent =
-        (::stat("Shaders/Scripts", &scriptsDir) == 0) &&
-        S_ISDIR(scriptsDir.st_mode);
-
-    struct stat dep1 = {};
-    struct stat dep2 = {};
-    const bool dependenciesPresent =
-        (::stat("Shaders/Scripts/CGVProgramms.csl", &dep1) == 0 &&
-         S_ISREG(dep1.st_mode)) &&
-        (::stat("Shaders/Scripts/CGPShaders.csl", &dep2) == 0 &&
-         S_ISREG(dep2.st_mode));
-
-    return scriptsDirPresent && dependenciesPresent && scriptCslCount >= 4;
-}
-
-static bool materialPrepCacheReady() {
-    if (!prepMarkerExists(kMaterialPrepMarker))
-        return false;
-
-    struct stat st = {};
-    return ::stat("scripts/materials/mat_default.lua", &st) == 0 &&
-           S_ISREG(st.st_mode);
-}
 
 void compatPrepareScriptDirectories(const char* dataRoot) {
     (void)dataRoot;
@@ -4296,27 +4148,6 @@ static void compatLogPakOpenState(FILE* f, const char* path) {
 void compatPrepareShaderDirectories(const char* dataRoot) {
     (void)dataRoot;
     compatLog("shader preload: disabled; CryPak reads shaders from PAKs");
-}
-
-
-static bool isShaderEnumerationDirectory(const char* path) {
-    if (!path || !*path)
-        return false;
-
-    std::string p = path;
-    for (char& c : p) {
-        if ((unsigned char)c == 92)
-            c = '/';
-        else
-            c = (char)std::tolower((unsigned char)c);
-    }
-
-    while (p.size() > 1 && p.back() == '/')
-        p.pop_back();
-
-    return p == "shaders/scripts" ||
-           p == "shaders/hwscripts" ||
-           p == "shaders/hwscripts/declarations";
 }
 
 
