@@ -1004,184 +1004,231 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
     if (std::strcmp(base, "libCrySystem.so") != 0)
         return false;
 
-    // Far Cry 1 release builds create r_DisplayInfo with default "0".
-    // The command-line value can be overwritten when CreateRendererVars()
-    // creates the renderer CVars, so patch the actual CreateVariable argument.
-    constexpr const char kFunction[] = "_ZN7CSystem18CreateRendererVarsEv";
+    // The release CryEngine creates:
+    //   CreateVariable("r_DisplayInfo", "0", VF_DUMPTODISK, ...);
+    //
+    // Do not depend on the two strings being adjacent in .rodata, nor on
+    // CreateRendererVars() being present in the dynamic symbol table. Instead
+    // locate the ARM64 code xref that loads the r_DisplayInfo name into x0 and
+    // then the nearby load of the default string into x1 (the second argument
+    // of CreateVariable). Redirect that x1 load to the existing "1" literal.
     constexpr const char kName[] = "r_DisplayInfo";
     constexpr const char kZero[] = "0";
     constexpr const char kOne[] = "1";
 
-    void* fn_ptr = so->findSym(kFunction);
-    uint64_t fn_vaddr = 0;
-    bool function_scoped = false;
-
     const uintptr_t image_base = reinterpret_cast<uintptr_t>(so->base);
-    if (fn_ptr) {
-        const uintptr_t fn_addr = reinterpret_cast<uintptr_t>(fn_ptr);
-        if (fn_addr < image_base) {
-            compatLog("FARCRY DISPLAYINFO PATCH: invalid CreateRendererVars address");
-            return false;
-        }
-        fn_vaddr = static_cast<uint64_t>(fn_addr - image_base);
-        if (fn_vaddr < min_vaddr || fn_vaddr >= min_vaddr + alloc_size) {
-            compatLogFmt(
-                "FARCRY DISPLAYINFO PATCH: CreateRendererVars vaddr=0x%llx outside image",
-                (unsigned long long)fn_vaddr);
-            return false;
-        }
-        function_scoped = true;
-    } else {
-        compatLogFmt(
-            "FARCRY DISPLAYINFO PATCH: symbol %s not exported; falling back to whole-image xref scan",
-            kFunction);
-    }
-
-    const uint64_t exec_base = image_base;
-    const uint64_t mapped_start = exec_base + min_vaddr;
+    const uint64_t mapped_start = image_base + min_vaddr;
     const uint64_t mapped_end = mapped_start + alloc_size;
-
-    uint8_t* scan_code = function_scoped
-        ? stage_base + (fn_vaddr - min_vaddr)
-        : stage_base;
-    const uint64_t scan_vaddr = function_scoped ? fn_vaddr : min_vaddr;
-
-    size_t max_bytes = function_scoped
-        ? (size_t)((min_vaddr + alloc_size) - fn_vaddr)
-        : alloc_size;
-    if (max_bytes > 0x1800 && function_scoped)
-        max_bytes = 0x1800;
+    uint8_t* image = stage_base + min_vaddr;
 
     auto is_adrp = [](uint32_t w) {
         return (w & 0x9f000000u) == 0x90000000u;
     };
 
-    auto is_add_imm64 = [](uint32_t w) {
-        return (w & 0xffc00000u) == 0x91000000u ||
-               (w & 0xffc00000u) == 0x91400000u;
+    auto is_add_imm = [](uint32_t w) {
+        return (w & 0xffc00000u) == 0x91000000u;
+    };
+
+    auto is_ldr_unsigned_64 = [](uint32_t w) {
+        return (w & 0xffc00000u) == 0xf9400000u;
     };
 
     auto adrp_target = [](uint64_t pc, uint32_t insn) -> uint64_t {
         int64_t imm21 = ((int64_t)((insn >> 5) & 0x7ffffu) |
-                         ((int64_t)((insn >> 18) & 0x3u) << 19));
+                         ((int64_t)((insn >> 29) & 0x3u) << 19));
         if (imm21 & (1LL << 20))
             imm21 |= ~((1LL << 21) - 1);
         return (pc & ~0xfffULL) + (imm21 << 12);
     };
 
-    auto add_target = [](uint64_t page, uint32_t add) -> uint64_t {
-        const uint64_t imm12 = (add >> 10) & 0xfff;
-        const bool shift12 = (add & 0x00400000u) != 0;
-        return page + (imm12 << (shift12 ? 12 : 0));
+    auto add_target = [](uint64_t page, uint32_t insn) -> uint64_t {
+        const uint64_t imm12 = (insn >> 10) & 0xfff;
+        return page + imm12;
     };
 
-    struct StringRef {
-        uint64_t runtime_addr = 0;
-        uint32_t* adrp = nullptr;
-        uint32_t* add = nullptr;
+    auto ldr_target = [](uint64_t page, uint32_t insn) -> uint64_t {
+        const uint64_t imm12 = (insn >> 10) & 0xfff;
+        return page + (imm12 << 3);
+    };
+
+    struct Ref {
+        uint64_t target = 0;
+        uint32_t* first = nullptr;
+        uint32_t* second = nullptr;
         unsigned reg = 0;
+        bool add_pair = false;
         size_t byte_off = 0;
-        uint64_t vaddr = 0;
     };
 
-    auto collect_refs = [&](const char* wanted, std::vector<StringRef>& out) {
-        const size_t wanted_len = std::strlen(wanted);
+    auto make_ref = [&](uint8_t* code, uint64_t code_vaddr,
+                        size_t off, const char* wanted,
+                        Ref& out) -> bool {
+        if (off + 8 > alloc_size)
+            return false;
 
-        for (size_t off = 0; off + 8 <= max_bytes; off += 4) {
-            uint32_t* w = reinterpret_cast<uint32_t*>(scan_code + off);
-            if (!is_adrp(w[0]) || !is_add_imm64(w[1]))
-                continue;
+        uint32_t* w = reinterpret_cast<uint32_t*>(code + off);
+        if (!is_adrp(w[0]))
+            return false;
 
-            const unsigned rd0 = w[0] & 31u;
+        const unsigned rd = w[0] & 31u;
+        const uint64_t pc = image_base + code_vaddr + off;
+        const uint64_t page = adrp_target(pc, w[0]);
+
+        if (is_add_imm(w[1])) {
             const unsigned rd1 = w[1] & 31u;
             const unsigned rn1 = (w[1] >> 5) & 31u;
-            if (rd0 != rd1 || rd0 != rn1)
-                continue;
+            if (rd1 != rd || rn1 != rd)
+                return false;
 
-            const uint64_t instruction_vaddr = scan_vaddr + off;
-            const uint64_t instruction_runtime =
-                exec_base + instruction_vaddr;
-
-            const uint64_t page = adrp_target(instruction_runtime, w[0]);
             const uint64_t target = add_target(page, w[1]);
+            if (target < mapped_start || target + std::strlen(wanted) + 1 > mapped_end)
+                return false;
 
-            if (target < mapped_start || target >= mapped_end)
-                continue;
+            const uint64_t tv = target - image_base;
+            if (tv < min_vaddr || tv - min_vaddr >= alloc_size)
+                return false;
 
-            const uint64_t target_vaddr = target - exec_base;
-            if (target_vaddr < min_vaddr ||
-                target_vaddr + wanted_len + 1 > min_vaddr + alloc_size)
-                continue;
+            const char* s = reinterpret_cast<const char*>(
+                stage_base + (tv - min_vaddr));
+            if (std::strcmp(s, wanted) != 0)
+                return false;
 
-            const char* s =
-                reinterpret_cast<const char*>(stage_base + (target_vaddr - min_vaddr));
-            if (std::memcmp(s, wanted, wanted_len) != 0 ||
-                s[wanted_len] != '\0')
-                continue;
-
-            StringRef ref;
-            ref.runtime_addr = target;
-            ref.adrp = &w[0];
-            ref.add = &w[1];
-            ref.reg = rd0;
-            ref.byte_off = off;
-            ref.vaddr = target_vaddr;
-            out.push_back(ref);
+            out.target = target;
+            out.first = &w[0];
+            out.second = &w[1];
+            out.reg = rd;
+            out.add_pair = true;
+            out.byte_off = code_vaddr + off;
+            return true;
         }
+
+        if (is_ldr_unsigned_64(w[1])) {
+            const unsigned rt = w[1] & 31u;
+            const unsigned rn = (w[1] >> 5) & 31u;
+            if (rn != rd)
+                return false;
+
+            const uint64_t target = ldr_target(page, w[1]);
+            if (target < mapped_start || target + std::strlen(wanted) + 1 > mapped_end)
+                return false;
+
+            const uint64_t tv = target - image_base;
+            if (tv < min_vaddr || tv - min_vaddr >= alloc_size)
+                return false;
+
+            const char* s = reinterpret_cast<const char*>(
+                stage_base + (tv - min_vaddr));
+            if (std::strcmp(s, wanted) != 0)
+                return false;
+
+            out.target = target;
+            out.first = &w[0];
+            out.second = &w[1];
+            out.reg = rt;
+            out.add_pair = false;
+            out.byte_off = code_vaddr + off;
+            return true;
+        }
+
+        return false;
     };
 
-    std::vector<StringRef> names, zeros, ones;
-    collect_refs(kName, names);
-    collect_refs(kZero, zeros);
-    collect_refs(kOne, ones);
+    // Search only executable pages for code xrefs.
+    std::vector<Ref> names;
+    for (size_t off = 0; off + 8 <= alloc_size; off += 4) {
+        uint32_t w = *reinterpret_cast<uint32_t*>(stage_base + min_vaddr + off);
+        if (!is_adrp(w))
+            continue;
 
-    if (names.size() != 1) {
+        Ref ref;
+        if (make_ref(image, min_vaddr, off, kName, ref))
+            names.push_back(ref);
+    }
+
+    if (names.empty()) {
+        compatLog("FARCRY DISPLAYINFO PATCH: no ARM64 xref to r_DisplayInfo found");
+        return false;
+    }
+
+    // The shipped lib should have one code reference for this renderer CVar.
+    // If there are multiple, select only a reference followed by an x1="0"
+    // load before the next branch-with-link.
+    Ref* selected_name = nullptr;
+    Ref* selected_zero = nullptr;
+    size_t candidate_count = 0;
+
+    for (Ref& name_ref : names) {
+        uint8_t* code = reinterpret_cast<uint8_t*>(
+            reinterpret_cast<uintptr_t>(name_ref.first) - image_base);
+
+        // name_ref.byte_off is the virtual address of the ADRP instruction.
+        const size_t start_off = static_cast<size_t>(
+            name_ref.byte_off >= min_vaddr ? name_ref.byte_off - min_vaddr : 0);
+
+        for (size_t rel = 8; rel <= 0x100 && start_off + rel + 8 <= alloc_size; rel += 4) {
+            const size_t off = start_off + rel;
+            const uint32_t insn = *reinterpret_cast<uint32_t*>(
+                stage_base + min_vaddr + off);
+
+            // BL: stop at the CreateVariable call. The x1 load must precede it.
+            if ((insn & 0xfc000000u) == 0x94000000u)
+                break;
+
+            Ref zero_ref;
+            if (!make_ref(image, min_vaddr, off, kZero, zero_ref))
+                continue;
+
+            if (zero_ref.reg != 1)
+                continue;
+
+            ++candidate_count;
+            if (!selected_zero || zero_ref.byte_off < selected_zero->byte_off) {
+                selected_name = &name_ref;
+                // Store a copy because this object is temporary in the loop.
+                static Ref holder;
+                holder = zero_ref;
+                selected_zero = &holder;
+            }
+        }
+    }
+
+    if (candidate_count != 1 || !selected_name || !selected_zero) {
         compatLogFmt(
-            "FARCRY DISPLAYINFO PATCH: r_DisplayInfo refs=%llu zeros=%llu ones=%llu",
+            "FARCRY DISPLAYINFO PATCH: candidate xrefs names=%llu zero_x1=%llu",
             (unsigned long long)names.size(),
-            (unsigned long long)zeros.size(),
-            (unsigned long long)ones.size());
+            (unsigned long long)candidate_count);
         return false;
     }
 
-    const StringRef& name_ref = names[0];
+    // Find the nearest existing "1" literal code reference to reuse.
+    std::vector<Ref> ones;
+    for (size_t off = 0; off + 8 <= alloc_size; off += 4) {
+        Ref ref;
+        if (make_ref(image, min_vaddr, off, kOne, ref))
+            ones.push_back(ref);
+    }
 
-    StringRef* best_zero = nullptr;
+    if (ones.empty()) {
+        compatLog("FARCRY DISPLAYINFO PATCH: no ARM64 xref to string '1' found");
+        return false;
+    }
+
+    Ref* one = &ones[0];
     size_t best_distance = SIZE_MAX;
-    for (StringRef& z : zeros) {
-        if (z.byte_off <= name_ref.byte_off)
-            continue;
-
-        const size_t distance = z.byte_off - name_ref.byte_off;
-        if (function_scoped && distance > 0x100)
-            continue;
-
-        if (distance < best_distance) {
-            best_distance = distance;
-            best_zero = &z;
+    for (Ref& ref : ones) {
+        const size_t a = ref.byte_off > selected_zero->byte_off
+            ? ref.byte_off - selected_zero->byte_off
+            : selected_zero->byte_off - ref.byte_off;
+        if (a < best_distance) {
+            best_distance = a;
+            one = &ref;
         }
     }
 
-    if (!best_zero) {
-        compatLog("FARCRY DISPLAYINFO PATCH: couldn't locate default '0' after r_DisplayInfo");
-        return false;
-    }
-
-    StringRef* best_one = nullptr;
-    size_t best_one_distance = SIZE_MAX;
-    for (StringRef& o : ones) {
-        const size_t distance = (o.byte_off > name_ref.byte_off)
-            ? (o.byte_off - name_ref.byte_off)
-            : (name_ref.byte_off - o.byte_off);
-
-        if (distance < best_one_distance) {
-            best_one_distance = distance;
-            best_one = &o;
-        }
-    }
-
-    if (!best_one) {
-        compatLog("FARCRY DISPLAYINFO PATCH: no '1' string reference found");
+    // The default argument is expected to be an ADRP+ADD pair. This can be
+    // safely redirected without changing the number of instructions.
+    if (!selected_zero->add_pair || !one->add_pair) {
+        compatLog("FARCRY DISPLAYINFO PATCH: default/'1' reference is not ADRP+ADD");
         return false;
     }
 
@@ -1189,10 +1236,8 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
         const int64_t page_delta =
             (static_cast<int64_t>(target & ~0xfffULL) -
              static_cast<int64_t>(pc & ~0xfffULL)) >> 12;
-
         if (page_delta < -(1LL << 20) || page_delta >= (1LL << 20))
             return 0;
-
         const uint32_t imm = static_cast<uint32_t>(page_delta) & 0x1fffffu;
         return 0x90000000u |
                ((imm & 0x3u) << 29) |
@@ -1200,43 +1245,36 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
                (rd & 31u);
     };
 
-    auto encode_add_imm64 = [](uint64_t pc_target, unsigned rd) -> uint32_t {
-        const uint64_t imm12 = pc_target & 0xfffULL;
+    auto encode_add = [](uint64_t target, unsigned rd) -> uint32_t {
+        const uint64_t imm12 = target & 0xfffULL;
         return 0x91000000u |
                (static_cast<uint32_t>(imm12) << 10) |
-               (rd << 5) |
-               rd;
+               (rd << 5) | rd;
     };
 
-    const uint64_t patch_vaddr = scan_vaddr + best_zero->byte_off;
-    uint32_t* dst_adrp = best_zero->adrp;
-    uint32_t* dst_add  = best_zero->add;
-
-    const uint32_t old_adrp = *dst_adrp;
-    const uint32_t old_add = *dst_add;
-
-    const uint64_t patch_runtime =
-        exec_base + patch_vaddr;
-
+    const uint64_t patch_pc =
+        image_base + selected_zero->byte_off;
     const uint32_t new_adrp =
-        encode_adrp(patch_runtime, best_one->runtime_addr, best_zero->reg);
+        encode_adrp(patch_pc, one->target, selected_zero->reg);
     const uint32_t new_add =
-        encode_add_imm64(best_one->runtime_addr, best_zero->reg);
+        encode_add(one->target, selected_zero->reg);
 
     if (!new_adrp || !new_add) {
-        compatLog("FARCRY DISPLAYINFO PATCH: failed to encode r_DisplayInfo default target");
+        compatLog("FARCRY DISPLAYINFO PATCH: failed to encode default string relocation");
         return false;
     }
 
-    *dst_adrp = new_adrp;
-    *dst_add = new_add;
-    armICacheInvalidate(dst_adrp, 8);
+    const uint32_t old0 = *selected_zero->first;
+    const uint32_t old1 = *selected_zero->second;
+    *selected_zero->first = new_adrp;
+    *selected_zero->second = new_add;
+    armICacheInvalidate(selected_zero->first, 8);
 
     compatLogFmt(
-        "FARCRY DISPLAYINFO PATCH: default 0 -> 1 via CreateRendererVars "
+        "FARCRY DISPLAYINFO PATCH: CreateVariable(r_DisplayInfo,0) -> 1 "
         "at vaddr=0x%llx old=%08x %08x new=%08x %08x",
-        (unsigned long long)patch_vaddr,
-        old_adrp, old_add, new_adrp, new_add);
+        (unsigned long long)selected_zero->byte_off,
+        old0, old1, new_adrp, new_add);
     return true;
 }
 
