@@ -2065,6 +2065,83 @@ static std::string pakAssetRelativeName(const char* requested) {
     return wanted;
 }
 
+// Level-local PAKs are mounted by CryPak at the level directory itself.
+// Keep this lookup isolated from the global FCData search: changing the global
+// root order/entry name would affect scripts and other shared assets.
+static bool pakFindLevelLocalEntry(const std::string& wanted,
+                                   std::string& pakPathOut,
+                                   PakEntryMeta& metaOut) {
+    pakPathOut.clear();
+    metaOut = {};
+
+    const std::string wantedNorm = pakNormalizeName(wanted.c_str());
+    const size_t slash = wantedNorm.find_last_of('/');
+    if (slash == std::string::npos)
+        return false;
+
+    const std::string requestedDir = wantedNorm.substr(0, slash);
+    if (requestedDir.empty() ||
+        requestedDir.rfind("levels/", 0) != 0) {
+        return false;
+    }
+
+    // Resolve "levels/training" to the actual on-disk spelling without
+    // modifying the pathname exposed to CryPak.
+    std::string resolvedDir;
+    if (!resolvePathCaseInsensitive(requestedDir.c_str(), resolvedDir))
+        return false;
+
+    DIR* dir = opendir(resolvedDir.c_str());
+    if (!dir)
+        return false;
+
+    const std::string resolvedNorm = pakNormalizeName(resolvedDir.c_str());
+    const std::string prefix = resolvedNorm + "/";
+    std::string lookup = wantedNorm;
+    if (wantedNorm.rfind(prefix, 0) == 0)
+        lookup = wantedNorm.substr(prefix.size());
+
+    while (dirent* ent = readdir(dir)) {
+        const char* name = ent->d_name;
+        if (!name)
+            continue;
+
+        const size_t len = std::strlen(name);
+        if (len < 4)
+            continue;
+
+        const char c0 = (char)std::tolower((unsigned char)name[len - 4]);
+        const char c1 = (char)std::tolower((unsigned char)name[len - 3]);
+        const char c2 = (char)std::tolower((unsigned char)name[len - 2]);
+        const char c3 = (char)std::tolower((unsigned char)name[len - 1]);
+        if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
+            continue;
+
+        std::string pakPath = resolvedDir;
+        if (!pakPath.empty() && pakPath.back() != '/')
+            pakPath += '/';
+        pakPath += name;
+
+        PakEntryMeta meta;
+        if (!pakFindEntryCached(pakPath, lookup, meta) &&
+            lookup != wantedNorm &&
+            !pakFindEntryCached(pakPath, wantedNorm, meta)) {
+            continue;
+        }
+
+        pakPathOut = pakPath;
+        metaOut = meta;
+        closedir(dir);
+
+        compatLogFmt("PAK LEVEL MATCH: %s <- %s entry=%s",
+                     wantedNorm.c_str(), pakPathOut.c_str(), lookup.c_str());
+        return true;
+    }
+
+    closedir(dir);
+    return false;
+}
+
 static bool pakFindVirtualEntry(const char* requested,
                                std::string& pakPathOut,
                                PakEntryMeta& metaOut) {
@@ -2078,48 +2155,24 @@ static bool pakFindVirtualEntry(const char* requested,
     if (wanted.empty())
         return false;
 
-    // First inspect the directory containing the requested asset. Level data
-    // is normally stored in a PAK next to the level itself, for example:
-    // Levels/Training/LevelData.xml -> Levels/Training/*.pak.
-    // The old resolver only checked the global FCData roots, so level-local
-    // archives were invisible to realpath()/fopen().
-    std::vector<std::string> roots;
-    auto addRoot = [&](const std::string& root) {
-        if (root.empty())
-            return;
-        for (const std::string& existing : roots) {
-            if (existing == root)
-                return;
-        }
-        roots.push_back(root);
+    // Only level-local assets get the extra lookup. All global assets retain
+    // the exact Android-style FCData/. search order used previously.
+    if (pakFindLevelLocalEntry(wanted, pakPathOut, metaOut))
+        return true;
+
+    const char* roots[] = {
+        ".",
+        "FCData",
+        "fcdata",
+        "FCData/Localized",
+        "fcdata/Localized",
+        "FCData/localized",
+        "fcdata/localized",
+        nullptr
     };
 
-    const size_t slash = wanted.find_last_of('/');
-    if (slash != std::string::npos) {
-        const std::string requestedDir = wanted.substr(0, slash);
-        if (!requestedDir.empty())
-            addRoot(requestedDir);
-
-        // Recover the real spelling of the level directory on the
-        // case-sensitive Switch filesystem, e.g. levels/training -> Levels/Training.
-        std::string resolvedDir;
-        if (!requestedDir.empty() &&
-            resolvePathCaseInsensitive(requestedDir.c_str(), resolvedDir)) {
-            addRoot(resolvedDir);
-        }
-    }
-
-    // Keep the existing Android-style global PAK roots.
-    addRoot(".");
-    addRoot("FCData");
-    addRoot("fcdata");
-    addRoot("FCData/Localized");
-    addRoot("fcdata/Localized");
-    addRoot("FCData/localized");
-    addRoot("fcdata/localized");
-
-    for (const std::string& root : roots) {
-        DIR* dir = opendir(root.c_str());
+    for (size_t r = 0; roots[r]; ++r) {
+        DIR* dir = opendir(roots[r]);
         if (!dir)
             continue;
 
@@ -2136,45 +2189,18 @@ static bool pakFindVirtualEntry(const char* requested,
             if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
                 continue;
 
-            std::string pakPath = root;
-            if (root != ".")
+            std::string pakPath = roots[r];
+            if (pakPath != ".")
                 pakPath += "/";
             pakPath += name;
 
             PakEntryMeta meta;
+            if (!pakFindEntryCached(pakPath, wanted, meta))
+                continue;
 
-            // PAKs located next to a level use the level directory as the
-            // archive mount point, but their internal entries are rooted at
-            // the archive itself. For example:
-            //   Levels/Training/LevelData.xml
-            //   Levels/Training/level.pak -> LevelData.xml
-            // Therefore try the path relative to the PAK directory first,
-            // while preserving the original full path for global FCData PAKs.
-            std::string lookup = wanted;
-            const std::string rootNorm = pakNormalizeName(root.c_str());
-            const std::string wantedNorm = pakNormalizeName(wanted.c_str());
-
-            if (rootNorm != "." && !rootNorm.empty()) {
-                const std::string prefix = rootNorm + "/";
-                if (wantedNorm.rfind(prefix, 0) == 0)
-                    lookup = wantedNorm.substr(prefix.size());
-            }
-
-            if (!pakFindEntryCached(pakPath, lookup, meta)) {
-                // Some archives keep the path with its directory prefix even
-                // when the archive itself is level-local. Retain the old exact
-                // lookup as a fallback.
-                if (lookup != wanted &&
-                    !pakFindEntryCached(pakPath, wanted, meta))
-                    continue;
-            }
-
-            pakPathOut = pakPath;
+            pakPathOut = std::move(pakPath);
             metaOut = meta;
             closedir(dir);
-
-            compatLogFmt("PAK VIRTUAL MATCH: %s <- %s entry=%s",
-                         wanted.c_str(), pakPathOut.c_str(), lookup.c_str());
             return true;
         }
 
