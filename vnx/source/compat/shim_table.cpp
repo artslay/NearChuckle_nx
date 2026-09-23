@@ -445,8 +445,6 @@ static char* stub_realpath(const char* p, char* out) {
                     virtualPath.swap(absolute);
                 }
             }
-            compatLogFmt("realpath PAK VIRTUAL: %s <- %s",
-                         p, virtualPakPath.c_str());
             return writeCanonical(virtualPath);
         }
     }
