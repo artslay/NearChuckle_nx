@@ -182,7 +182,7 @@ void compatLog(const char* msg) {
 
     if (main_loop) {
         log_close_locked();
-        compatFrameDebugClose();
+
     }
 
     mutexUnlock(&g_log_lock);
@@ -214,7 +214,7 @@ void compatLogRaw(const char* msg) {
 
     if (main_loop) {
         log_close_locked();
-        compatFrameDebugClose();
+
     }
 
     mutexUnlock(&g_log_lock);
