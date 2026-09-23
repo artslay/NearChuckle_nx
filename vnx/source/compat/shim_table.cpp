@@ -3922,10 +3922,14 @@ static void switchInputPump() {
     auto down_cb = reinterpret_cast<SwitchPadCallback>(down_sym);
     auto up_cb = reinterpret_cast<SwitchPadCallback>(up_sym);
     for (const SwitchButtonMap& b : kSwitchButtons) {
-        if (down & b.mask)
+        if (down & b.mask) {
             (void)down_cb(env, controller_class, kSwitchDeviceId, b.keycode, 0);
-        if (up & b.mask)
+            compatLogFmt("Switch input: DOWN key=%d", (int)b.keycode);
+        }
+        if (up & b.mask) {
             (void)up_cb(env, controller_class, kSwitchDeviceId, b.keycode, 0);
+            compatLogFmt("Switch input: UP key=%d", (int)b.keycode);
+        }
     }
     g_switch_last_buttons = buttons;
 
