@@ -4644,6 +4644,14 @@ static bool tryMaterializePakDirectory(const char* path) {
     if (wanted.empty())
         return false;
 
+    // Script assets must remain entirely PAK-backed. Never materialize the
+    // Scripts tree just because opendir()/directory enumeration requested it.
+    const std::string wantedLower = asciiLower(wanted);
+    if (wantedLower == "scripts" ||
+        wantedLower.rfind("scripts/", 0) == 0) {
+        return false;
+    }
+
     // CryPak::ScanZips() checks every opened archive whose bind root matches
     // the requested directory. Do the same here: shader scripts are not
     // guaranteed to live in Shaders.pak specifically; they may be packed into
