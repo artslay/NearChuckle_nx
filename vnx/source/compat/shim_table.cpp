@@ -4813,7 +4813,7 @@ static struct dirent* stub_readdir64(DIR* dir) {
         fixDirentType(it->second, ent);
 
         AndroidDirentCompat& compat = g_readdirCompat[dir];
-        std::memset(&compat, 0, sizeof(compat));
+        compat = AndroidDirentCompat{};
         compat.d_ino = (uint64_t)ent->d_ino;
         compat.d_off = 0;
         compat.d_type = (uint8_t)ent->d_type;
