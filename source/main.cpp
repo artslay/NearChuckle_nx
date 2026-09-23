@@ -179,6 +179,23 @@ static void setup_environment() {
 
     chdir(config.data_root);
 
+    // The Android/Linux build of CXGame::GetPlayerProfilePath() expects these
+    // two directories to exist and traps when either one is missing. Android
+    // normally creates the profile tree outside the native engine, so mirror
+    // that small piece of launcher setup here. Do not create or remove any
+    // system.cfg/game.cfg files.
+    {
+        const int profiles_rc = mkdir("Profiles", 0755);
+        const int player_rc = mkdir("Profiles/Player", 0755);
+        if ((profiles_rc == 0 || errno == EEXIST) &&
+            (player_rc == 0 || errno == EEXIST)) {
+            compatLog("profiles: ensured Profiles/Player");
+        } else {
+            compatLogFmt("profiles: failed to ensure Profiles/Player rc=%d errno=%d",
+                         player_rc, errno);
+        }
+    }
+
     // Keep the Android data layout as-is. Do not rename or relocate resource
     // directories; the guest CryPak must see the original FCData/Shaders tree.
     log_engine_data_dirs();
