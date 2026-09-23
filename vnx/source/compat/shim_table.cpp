@@ -3154,6 +3154,15 @@ static void frameDebugLogFmt(const char* fmt, ...) {
     fflush(g_frame_debug_log);
 }
 
+extern "C" void compatFrameDebugClose() {
+    if (!g_frame_debug_log)
+        return;
+
+    fflush(g_frame_debug_log);
+    fclose(g_frame_debug_log);
+    g_frame_debug_log = nullptr;
+}
+
 static EGLBoolean w_eglSwapBuffers(EGLDisplay d, EGLSurface s) {
     ++g_frame_debug_swaps;
 
