@@ -122,6 +122,10 @@ static off_t vpakFdSeek(int fd, off_t off, int whence);
 static ssize_t vpakFdPread(int fd, void* dst, size_t count, off_t offset);
 static int vpakFdClose(int fd);
 static int vpakFdFstat(int fd, struct stat* st);
+static bool pakReadEntryToMemory(const std::string& pakPath,
+                                 const PakEntryMeta& meta,
+                                 std::vector<unsigned char>& plain);
+static bool pakVirtualDirectoryExists(const char* directory);
 static bool isShaderCacheLookupPath(const char* path);
 static bool isShaderPathForDiag(const char* path);
 static void compatLogPakOpenState(FILE* f, const char* path);
@@ -595,7 +599,11 @@ static int stub_fstat64(int fd, void* out) {
     }
 
     struct stat st = {};
-    const int rc = ::fstat(fd, &st);
+    int rc = 0;
+    if (vpakFdOwns(fd))
+        rc = vpakFdFstat(fd, &st);
+    else
+        rc = ::fstat(fd, &st);
     if (rc != 0)
         return rc;
 
