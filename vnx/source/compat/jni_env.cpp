@@ -1145,6 +1145,22 @@ void* jniFindRegisteredNative(const char* name, int occurrence) {
     return nullptr;
 }
 
+void* jniFindRegisteredNativeExact(const char* name, const char* signature, int occurrence) {
+    if (!name || !signature || occurrence < 0)
+        return nullptr;
+
+    int seen = 0;
+    for (const auto& m : g_native_methods) {
+        if (m.name && m.signature &&
+            strcmp(m.name, name) == 0 &&
+            strcmp(m.signature, signature) == 0) {
+            if (seen++ == occurrence)
+                return (void*)m.fnPtr;
+        }
+    }
+    return nullptr;
+}
+
 // Enable the Android Java object model (Unity first-frame reflection). Off by
 // default so cocos2d-x games keep the original dummy JNI behavior untouched.
 void jniSetUnityMode(bool on) { g_unity_mode = on; }
