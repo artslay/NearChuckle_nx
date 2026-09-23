@@ -3801,8 +3801,8 @@ static s32 g_switch_last_lx = INT32_MIN;
 static s32 g_switch_last_ly = INT32_MIN;
 static s32 g_switch_last_rx = INT32_MIN;
 static s32 g_switch_last_ry = INT32_MIN;
-static int g_switch_last_zl = -1;
-static int g_switch_last_zr = -1;
+static s32 g_switch_last_zl = -1;
+static s32 g_switch_last_zr = -1;
 
 using SwitchPadCallback = jboolean (*)(JNIEnv*, jclass, jint, jint, jint);
 using SwitchJoyCallback = void (*)(JNIEnv*, jclass, jint, jint, jfloat);
@@ -3950,8 +3950,8 @@ static void switchInputPump() {
 
     const int zl = (buttons & HidNpadButton_ZL) ? 1 : 0;
     const int zr = (buttons & HidNpadButton_ZR) ? 1 : 0;
-    sendAxis(4, zl ? JOYSTICK_MAX : 0, reinterpret_cast<s32&>(g_switch_last_zl));
-    sendAxis(5, zr ? JOYSTICK_MAX : 0, reinterpret_cast<s32&>(g_switch_last_zr));
+    sendAxis(4, zl ? JOYSTICK_MAX : 0, g_switch_last_zl);
+    sendAxis(5, zr ? JOYSTICK_MAX : 0, g_switch_last_zr);
 }
 
 } // namespace
