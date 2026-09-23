@@ -2772,7 +2772,6 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
         if (trace) {
             compatLogFmt("PAK MEM TRACE MISS: requested=%s wanted=%s",
                          requested, wantedTrace.c_str());
-            pakTraceMissDetails(wantedTrace);
         }
         return nullptr;
     }
