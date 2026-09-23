@@ -2436,6 +2436,33 @@ static void pakTraceMissDetails(const std::string& wanted) {
     const std::string wantedBase =
         basenamePos == std::string::npos ? wanted : wanted.substr(basenamePos + 1);
 
+    // Cry3D constructs optional low-LOD names (foo_lod1.cgf, foo_lod2.cgf, ...)
+    // from the base object foo.cgf. A missing external LOD companion is normal,
+    // so keep a separate exact lookup for the corresponding base object.
+    std::string lodBaseWanted;
+    const std::string::size_type lodPos = wantedBase.rfind("_lod");
+    if (lodPos != std::string::npos &&
+        wantedBase.size() > lodPos + 8 &&
+        wantedBase.compare(wantedBase.size() - 4, 4, ".cgf") == 0) {
+        bool digitsOnly = true;
+        for (std::string::size_type i = lodPos + 4; i < wantedBase.size() - 4; ++i) {
+            if (wantedBase[i] < '0' || wantedBase[i] > '9') {
+                digitsOnly = false;
+                break;
+            }
+        }
+
+        if (digitsOnly) {
+            const std::string::size_type fullLodPos =
+                wanted.size() - (wantedBase.size() - lodPos);
+            lodBaseWanted = wanted.substr(0, fullLodPos) + ".cgf";
+        }
+    }
+
+    size_t lodBaseMatches = 0;
+    std::string firstLodBasePak;
+    std::string firstLodBaseEntry;
+
     auto tracePak = [&](const std::string& pakPath) {
         mutexLock(&g_pak_index_lock);
         auto it = g_pak_indexes.find(pakPath);
@@ -2468,6 +2495,18 @@ static void pakTraceMissDetails(const std::string& wanted) {
 
         const size_t entryCount = it->second.entries.size();
         const bool valid = it->second.valid;
+
+        if (!lodBaseWanted.empty()) {
+            auto baseIt = it->second.entries.find(lodBaseWanted);
+            if (baseIt != it->second.entries.end()) {
+                ++lodBaseMatches;
+                if (firstLodBasePak.empty()) {
+                    firstLodBasePak = pakPath;
+                    firstLodBaseEntry = lodBaseWanted;
+                }
+            }
+        }
+
         mutexUnlock(&g_pak_index_lock);
 
         if (baseMatches) {
@@ -2534,6 +2573,17 @@ static void pakTraceMissDetails(const std::string& wanted) {
         }
 
         closedir(dir);
+    }
+
+    if (!lodBaseWanted.empty()) {
+        if (lodBaseMatches) {
+            compatLogFmt("PAK MEM TRACE LODBASE: wanted=%s matches=%zu first_pak=%s first=%s",
+                         lodBaseWanted.c_str(), lodBaseMatches,
+                         firstLodBasePak.c_str(), firstLodBaseEntry.c_str());
+        } else {
+            compatLogFmt("PAK MEM TRACE LODBASE: wanted=%s matches=0",
+                         lodBaseWanted.c_str());
+        }
     }
 }
 
