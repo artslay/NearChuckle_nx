@@ -445,10 +445,10 @@ static int run_farcry(LoadedSo* game_so) {
     std::snprintf(arg8, sizeof(arg8), "\"GL_NV30_PS20 1\"");
     std::snprintf(arg9, sizeof(arg9), "\"r_UseHWShaders 1\"");
     std::snprintf(arg10, sizeof(arg10), "\"r_VSync 0\"");
-    std::snprintf(arg11, sizeof(arg11), "\"r_DisplayInfo 1\"");
+    std::snprintf(arg11, sizeof(arg11), "\"r_displayInfo 1\"");
     // CryEngine applies +CVar post-commands after renderer/system initialization.
-    // This is needed because r_DisplayInfo is recreated/reset during startup.
-    std::snprintf(arg12, sizeof(arg12), "\"+r_DisplayInfo 1\"");
+    // This is needed because r_displayInfo is recreated/reset during startup.
+    std::snprintf(arg12, sizeof(arg12), "\"+r_displayInfo 1\"");
     // ui_BackGroundVideo is created later by CUISystem::CreateCVars(), so a
     // startup command cannot override its default value of 1 reliably.
     // It is intentionally not included in the early command-line argument list.
@@ -477,7 +477,7 @@ static int run_farcry(LoadedSo* game_so) {
     compatLog("Far Cry: Android-style graphics CVars queued (quoted command syntax)");
     compatLog("Far Cry: ui_BackGroundVideo left at Android default until UI CVar creation");
     compatLog("Far Cry: r_UseHWShaders 1 queued for shader script registration");
-    compatLog("Far Cry: r_DisplayInfo 1 queued (early + post-command) for on-screen FPS/render statistics");
+    compatLog("Far Cry: r_displayInfo 1 queued (early + post-command) for on-screen FPS/render statistics");
     compatLog("Far Cry: command-line CVars use quoted name + value commands");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
