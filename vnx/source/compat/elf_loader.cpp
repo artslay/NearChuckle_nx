@@ -1861,7 +1861,10 @@ static bool patchFarCryGetFileSize(LoadedSo* so, uint8_t* stage_base,
                 "FARCRY GETFILESIZE VTBL: vtable=%p slot=%p old=%p new=%p",
                 vtable, (void*)slot, (void*)old,
                 reinterpret_cast<void*>(helper));
-            return true;
+            // Do not stop here. The observed BRK is inside the concrete
+            // implementation, which means this call path bypasses this vtable
+            // slot (or uses a different vtable/thunk). Patch the implementation
+            // entry as well so both virtual and direct calls are covered.
         }
 
         compatLogFmt(
