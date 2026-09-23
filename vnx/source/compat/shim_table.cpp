@@ -135,9 +135,11 @@ volatile int g_near_video_open_failed = 0;
 volatile uint32_t g_near_video_panel_finished_offset = 0xffffffffu;
 }
 
-extern "C" void* g_near_original_refstream_activate = nullptr;
-extern "C" void* g_near_refstream_on_io_complete = nullptr;
-extern "C" void* g_near_original_refstream_call_read = nullptr;
+extern "C" {
+void* g_near_original_refstream_activate = nullptr;
+void* g_near_refstream_on_io_complete = nullptr;
+void* g_near_original_refstream_call_read = nullptr;
+}
 
 extern "C" bool compatGuestActivateReadStream(void* self) {
     if (!self)
@@ -465,14 +467,16 @@ static char* stub_realpath(const char* p, char* out) {
                 free(out);
             return nullptr;
         }
-        memcpy(out, canonical.c_str(), canonical.size() + 1);        return out;
+        memcpy(out, canonical.c_str(), canonical.size() + 1);
+        return out;
     };
 
     if (strcmp(p, ".") == 0 || strcmp(p, "./") == 0) {
         char cwd[PATH_MAX];
         if (!::getcwd(cwd, sizeof(cwd))) {
             if (!callerOwnsBuffer)
-                free(out);            return nullptr;
+                free(out);
+            return nullptr;
         }
         return writeCanonical(cwd);
     }
@@ -1361,14 +1365,8 @@ static void sh_free(void* p) {
     // from CrySystem/CMTSafeHeap can have allocator headers that differ from
     // the conservative newlib chunk heuristic above. For this A/B experiment,
     // only reject addresses that are not part of a Switch heap at all.
-    if (!memIsHeap(p)) {
-        static int warned = 0;
-        if (warned < 20) {
-            warned++;
-            char where[256];
-            elfDescribePc((uint64_t)__builtin_return_address(0), where, sizeof(where));        }
+    if (!memIsHeap(p))
         return;
-    }
 
     free(p);
     g_last_allocator_phase = 2;
@@ -1388,13 +1386,6 @@ static void* sh_realloc(void* p, size_t n) {
     // heap layout, which is particularly sensitive during CryEngine shader
     // preprocessing.
     if (memIsHeap(p)) {
-        const size_t oldUsable = malloc_usable_size(p);
-
-        if (kVerboseAllocatorLogs) {
-            char where[256];
-            elfDescribePc((uint64_t)__builtin_return_address(0),
-                          where, sizeof(where));        }
-
         void* r = realloc(p, n);
         g_last_allocator_phase = 2;
         g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
@@ -1404,9 +1395,7 @@ static void* sh_realloc(void* p, size_t n) {
     // Keep protection for pointers that are not part of the Switch heap at all.
     // There is no trustworthy old size/owner information for these pointers,
     // so do not pass them to newlib realloc.
-    char where[256];
-    elfDescribePc((uint64_t)__builtin_return_address(0),
-                  where, sizeof(where));    void* r = malloc(n);
+    void* r = malloc(n);
     g_last_allocator_phase = 2;
     g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
     return r;
@@ -2736,9 +2725,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         return f;
     }
 
-    if (compatIsPakPath(ioPath)) {
-        compatLogPakOpenState(f, ioPath);
-    }
 
     if (!shaderIo && !vpakOwns(f))
         logShaderScriptDiagnostics(f, ioPath);
@@ -2875,10 +2861,11 @@ static int stub_open(const char* path, int flags, ...) {
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
 
-    if (path && ioPathStorage != path)
-    int vfd = devUrandomOpen(ioPath);
-    if (vfd >= 0)
-        return vfd;
+    if (path && ioPathStorage != path) {
+        const int vfd = devUrandomOpen(ioPath);
+        if (vfd >= 0)
+            return vfd;
+    }
 
     va_list va;
     va_start(va, flags);
@@ -4489,13 +4476,6 @@ void compatProbePakArchives(const char* dataRoot) {
     (void)fcdata;
 }
 
-static bool compatIsPakPath(const char* path) {
-    if (!path)
-        return false;
-    const std::string p = asciiLower(path);
-    return p.size() >= 4 && p.compare(p.size() - 4, 4, ".pak") == 0;
-}
-
 
 void compatPrepareShaderDirectories(const char* dataRoot) {
     (void)dataRoot;
@@ -4781,7 +4761,7 @@ static struct dirent* stub_readdir(DIR* dir) {
         fixDirentType(it->second, ent);
 
         AndroidDirentCompat& compat = g_readdirCompat[dir];
-        std::memset(&compat, 0, sizeof(compat));
+        compat = AndroidDirentCompat{};
         compat.d_ino = (uint64_t)ent->d_ino;
         compat.d_off = 0;
         compat.d_type = (uint8_t)ent->d_type;
