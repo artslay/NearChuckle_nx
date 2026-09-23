@@ -267,32 +267,6 @@ static void normalize_engine_data_dirs() {
 }
 
 
-static void ensureFarCryGameConfig() {
-    struct stat st = {};
-    if (stat("game.cfg", &st) == 0 && S_ISREG(st.st_mode)) {
-        compatLog("game.cfg: existing configuration found");
-        return;
-    }
-
-    FILE* f = std::fopen("game.cfg", "w");
-    if (!f) {
-        compatLogFmt("game.cfg: bootstrap create FAILED errno=%d", errno);
-        return;
-    }
-
-    // Android's original first-run path enters two Input:BindCommandToKey
-    // calls when game.cfg is missing. On the Switch ABI that path is not safe
-    // yet, so provide an empty bootstrap file instead. CXGame::InitInputMap()
-    // has already installed the normal default ActionMaps before this file is
-    // loaded; an empty file therefore preserves the first-run defaults while
-    // avoiding the missing-file fallback callbacks.
-    std::fputs("-- NearChuckle_nx bootstrap game.cfg\n", f);
-    std::fputs("-- Default ActionMaps are initialized by CXGame::InitInputMap().\n", f);
-    std::fclose(f);
-
-    compatLog("game.cfg: bootstrap created (skip missing-file Input:* fallback)");
-}
-
 static void setup_environment() {
     setenv("FARCRY_DATA_DIR", config.data_root, 1);
     setenv("MODULE_PATH", config.lib_dir, 1);
@@ -333,9 +307,6 @@ static void setup_environment() {
     setenv("LIBGL_NODOWNSAMPLING", "1", 1);
 
     chdir(config.data_root);
-
-    // Switch-specific guard: avoid Android's missing-game.cfg Input:* fallback.
-    ensureFarCryGameConfig();
 
     // Normalize the existing data tree first, then materialize the shader
     // directories with their original CryEngine spelling (Shaders/...).
