@@ -2078,19 +2078,48 @@ static bool pakFindVirtualEntry(const char* requested,
     if (wanted.empty())
         return false;
 
-    const char* roots[] = {
-        ".",
-        "FCData",
-        "fcdata",
-        "FCData/Localized",
-        "fcdata/Localized",
-        "FCData/localized",
-        "fcdata/localized",
-        nullptr
+    // First inspect the directory containing the requested asset. Level data
+    // is normally stored in a PAK next to the level itself, for example:
+    // Levels/Training/LevelData.xml -> Levels/Training/*.pak.
+    // The old resolver only checked the global FCData roots, so level-local
+    // archives were invisible to realpath()/fopen().
+    std::vector<std::string> roots;
+    auto addRoot = [&](const std::string& root) {
+        if (root.empty())
+            return;
+        for (const std::string& existing : roots) {
+            if (existing == root)
+                return;
+        }
+        roots.push_back(root);
     };
 
-    for (size_t r = 0; roots[r]; ++r) {
-        DIR* dir = opendir(roots[r]);
+    const size_t slash = wanted.find_last_of('/');
+    if (slash != std::string::npos) {
+        const std::string requestedDir = wanted.substr(0, slash);
+        if (!requestedDir.empty())
+            addRoot(requestedDir);
+
+        // Recover the real spelling of the level directory on the
+        // case-sensitive Switch filesystem, e.g. levels/training -> Levels/Training.
+        std::string resolvedDir;
+        if (!requestedDir.empty() &&
+            resolvePathCaseInsensitive(requestedDir.c_str(), resolvedDir)) {
+            addRoot(resolvedDir);
+        }
+    }
+
+    // Keep the existing Android-style global PAK roots.
+    addRoot(".");
+    addRoot("FCData");
+    addRoot("fcdata");
+    addRoot("FCData/Localized");
+    addRoot("fcdata/Localized");
+    addRoot("FCData/localized");
+    addRoot("fcdata/localized");
+
+    for (const std::string& root : roots) {
+        DIR* dir = opendir(root.c_str());
         if (!dir)
             continue;
 
@@ -2107,8 +2136,8 @@ static bool pakFindVirtualEntry(const char* requested,
             if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
                 continue;
 
-            std::string pakPath = roots[r];
-            if (pakPath != ".")
+            std::string pakPath = root;
+            if (root != ".")
                 pakPath += "/";
             pakPath += name;
 
@@ -2116,9 +2145,12 @@ static bool pakFindVirtualEntry(const char* requested,
             if (!pakFindEntryCached(pakPath, wanted, meta))
                 continue;
 
-            pakPathOut = std::move(pakPath);
+            pakPathOut = pakPath;
             metaOut = meta;
             closedir(dir);
+
+            compatLogFmt("PAK VIRTUAL MATCH: %s <- %s",
+                         wanted.c_str(), pakPathOut.c_str());
             return true;
         }
 
