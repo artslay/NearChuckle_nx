@@ -1004,45 +1004,52 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
     if (std::strcmp(base, "libCrySystem.so") != 0)
         return false;
 
-    // CSystem::CreateRendererVars() in the Far Cry 1 release build creates
-    // r_DisplayInfo with the string default "0". The command-line CVar can
-    // therefore be overwritten when renderer variables are created.
-    //
-    // Patch the actual CreateVariable call instead of modifying a random
-    // "0" literal: locate the ADRP+ADD pair that forms the address of the
-    // r_DisplayInfo name inside CSystem::CreateRendererVars(), then locate
-    // the nearby string argument loaded for that call. Redirect only that
-    // default-value argument to the existing "1" literal from the same
-    // function (r_Fullscreen uses it in the release build).
+    // Far Cry 1 release builds create r_DisplayInfo with default "0".
+    // The command-line value can be overwritten when CreateRendererVars()
+    // creates the renderer CVars, so patch the actual CreateVariable argument.
     constexpr const char kFunction[] = "_ZN7CSystem18CreateRendererVarsEv";
     constexpr const char kName[] = "r_DisplayInfo";
     constexpr const char kZero[] = "0";
     constexpr const char kOne[] = "1";
-    constexpr size_t kNameLen = sizeof(kName) - 1;
 
     void* fn_ptr = so->findSym(kFunction);
-    if (!fn_ptr) {
-        compatLogFmt("FARCRY DISPLAYINFO PATCH: symbol not found: %s", kFunction);
-        return false;
-    }
+    uint64_t fn_vaddr = 0;
+    bool function_scoped = false;
 
     const uintptr_t image_base = reinterpret_cast<uintptr_t>(so->base);
-    const uintptr_t fn_addr = reinterpret_cast<uintptr_t>(fn_ptr);
-    if (fn_addr < image_base) {
-        compatLog("FARCRY DISPLAYINFO PATCH: function address before image base");
-        return false;
+    if (fn_ptr) {
+        const uintptr_t fn_addr = reinterpret_cast<uintptr_t>(fn_ptr);
+        if (fn_addr < image_base) {
+            compatLog("FARCRY DISPLAYINFO PATCH: invalid CreateRendererVars address");
+            return false;
+        }
+        fn_vaddr = static_cast<uint64_t>(fn_addr - image_base);
+        if (fn_vaddr < min_vaddr || fn_vaddr >= min_vaddr + alloc_size) {
+            compatLogFmt(
+                "FARCRY DISPLAYINFO PATCH: CreateRendererVars vaddr=0x%llx outside image",
+                (unsigned long long)fn_vaddr);
+            return false;
+        }
+        function_scoped = true;
+    } else {
+        compatLogFmt(
+            "FARCRY DISPLAYINFO PATCH: symbol %s not exported; falling back to whole-image xref scan",
+            kFunction);
     }
 
-    const uint64_t fn_off = static_cast<uint64_t>(fn_addr - image_base);
-    if (fn_off >= alloc_size) {
-        compatLog("FARCRY DISPLAYINFO PATCH: function outside image");
-        return false;
-    }
+    const uint64_t exec_base = image_base;
+    const uint64_t mapped_start = exec_base + min_vaddr;
+    const uint64_t mapped_end = mapped_start + alloc_size;
 
-    uint8_t* image = stage_base + min_vaddr;
-    uint8_t* fn_code = image + fn_off;
-    size_t max_bytes = alloc_size - fn_off;
-    if (max_bytes > 0x1800)
+    uint8_t* scan_code = function_scoped
+        ? stage_base + (fn_vaddr - min_vaddr)
+        : stage_base;
+    const uint64_t scan_vaddr = function_scoped ? fn_vaddr : min_vaddr;
+
+    size_t max_bytes = function_scoped
+        ? (size_t)((min_vaddr + alloc_size) - fn_vaddr)
+        : alloc_size;
+    if (max_bytes > 0x1800 && function_scoped)
         max_bytes = 0x1800;
 
     auto is_adrp = [](uint32_t w) {
@@ -1063,23 +1070,25 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
     };
 
     auto add_target = [](uint64_t page, uint32_t add) -> uint64_t {
-        uint64_t imm12 = (add >> 10) & 0xfff;
+        const uint64_t imm12 = (add >> 10) & 0xfff;
         const bool shift12 = (add & 0x00400000u) != 0;
         return page + (imm12 << (shift12 ? 12 : 0));
     };
 
     struct StringRef {
-        uint64_t addr = 0;
+        uint64_t runtime_addr = 0;
         uint32_t* adrp = nullptr;
         uint32_t* add = nullptr;
         unsigned reg = 0;
         size_t byte_off = 0;
+        uint64_t vaddr = 0;
     };
 
     auto collect_refs = [&](const char* wanted, std::vector<StringRef>& out) {
         const size_t wanted_len = std::strlen(wanted);
+
         for (size_t off = 0; off + 8 <= max_bytes; off += 4) {
-            uint32_t* w = reinterpret_cast<uint32_t*>(fn_code + off);
+            uint32_t* w = reinterpret_cast<uint32_t*>(scan_code + off);
             if (!is_adrp(w[0]) || !is_add_imm64(w[1]))
                 continue;
 
@@ -1089,24 +1098,34 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
             if (rd0 != rd1 || rd0 != rn1)
                 continue;
 
-            const uint64_t page = adrp_target(
-                reinterpret_cast<uint64_t>(fn_code + off), w[0]);
+            const uint64_t instruction_vaddr = scan_vaddr + off;
+            const uint64_t instruction_runtime =
+                exec_base + instruction_vaddr;
+
+            const uint64_t page = adrp_target(instruction_runtime, w[0]);
             const uint64_t target = add_target(page, w[1]);
 
-            if (target < reinterpret_cast<uint64_t>(image) ||
-                target + wanted_len + 1 > reinterpret_cast<uint64_t>(image + alloc_size))
+            if (target < mapped_start || target >= mapped_end)
                 continue;
 
-            const char* s = reinterpret_cast<const char*>(target);
-            if (std::memcmp(s, wanted, wanted_len) != 0 || s[wanted_len] != ' ')
+            const uint64_t target_vaddr = target - exec_base;
+            if (target_vaddr < min_vaddr ||
+                target_vaddr + wanted_len + 1 > min_vaddr + alloc_size)
+                continue;
+
+            const char* s =
+                reinterpret_cast<const char*>(stage_base + (target_vaddr - min_vaddr));
+            if (std::memcmp(s, wanted, wanted_len) != 0 ||
+                s[wanted_len] != '\0')
                 continue;
 
             StringRef ref;
-            ref.addr = target;
+            ref.runtime_addr = target;
             ref.adrp = &w[0];
             ref.add = &w[1];
             ref.reg = rd0;
             ref.byte_off = off;
+            ref.vaddr = target_vaddr;
             out.push_back(ref);
         }
     };
@@ -1116,30 +1135,27 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
     collect_refs(kZero, zeros);
     collect_refs(kOne, ones);
 
-    if (names.empty()) {
-        compatLog("FARCRY DISPLAYINFO PATCH: CreateRendererVars has no r_DisplayInfo reference");
-        return false;
-    }
-
-    // Usually there is exactly one name reference in this function.
-    if (names.size() > 1) {
-        compatLogFmt("FARCRY DISPLAYINFO PATCH: ambiguous r_DisplayInfo refs=%llu",
-                     (unsigned long long)names.size());
+    if (names.size() != 1) {
+        compatLogFmt(
+            "FARCRY DISPLAYINFO PATCH: r_DisplayInfo refs=%llu zeros=%llu ones=%llu",
+            (unsigned long long)names.size(),
+            (unsigned long long)zeros.size(),
+            (unsigned long long)ones.size());
         return false;
     }
 
     const StringRef& name_ref = names[0];
+
     StringRef* best_zero = nullptr;
     size_t best_distance = SIZE_MAX;
-
-    // Find the closest "0" literal loaded after the name and before the next
-    // call boundary. This corresponds to CreateVariable(name, default, ...).
     for (StringRef& z : zeros) {
         if (z.byte_off <= name_ref.byte_off)
             continue;
+
         const size_t distance = z.byte_off - name_ref.byte_off;
-        if (distance > 0x100)
+        if (function_scoped && distance > 0x100)
             continue;
+
         if (distance < best_distance) {
             best_distance = distance;
             best_zero = &z;
@@ -1147,28 +1163,25 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
     }
 
     if (!best_zero) {
-        compatLogFmt("FARCRY DISPLAYINFO PATCH: no nearby default '0' after r_DisplayInfo (zeros=%llu ones=%llu)",
-                     (unsigned long long)zeros.size(),
-                     (unsigned long long)ones.size());
+        compatLog("FARCRY DISPLAYINFO PATCH: couldn't locate default '0' after r_DisplayInfo");
         return false;
     }
 
-    // Use the closest "1" literal in the same function. In the release build
-    // this is normally the r_Fullscreen default.
     StringRef* best_one = nullptr;
-    size_t one_distance = SIZE_MAX;
+    size_t best_one_distance = SIZE_MAX;
     for (StringRef& o : ones) {
         const size_t distance = (o.byte_off > name_ref.byte_off)
             ? (o.byte_off - name_ref.byte_off)
             : (name_ref.byte_off - o.byte_off);
-        if (distance < one_distance) {
-            one_distance = distance;
+
+        if (distance < best_one_distance) {
+            best_one_distance = distance;
             best_one = &o;
         }
     }
 
     if (!best_one) {
-        compatLog("FARCRY DISPLAYINFO PATCH: no existing '1' literal reference in CreateRendererVars");
+        compatLog("FARCRY DISPLAYINFO PATCH: no '1' string reference found");
         return false;
     }
 
@@ -1176,8 +1189,10 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
         const int64_t page_delta =
             (static_cast<int64_t>(target & ~0xfffULL) -
              static_cast<int64_t>(pc & ~0xfffULL)) >> 12;
+
         if (page_delta < -(1LL << 20) || page_delta >= (1LL << 20))
             return 0;
+
         const uint32_t imm = static_cast<uint32_t>(page_delta) & 0x1fffffu;
         return 0x90000000u |
                ((imm & 0x3u) << 29) |
@@ -1185,29 +1200,31 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
                (rd & 31u);
     };
 
-    auto encode_add_imm64 = [](uint64_t target, uint32_t adrp_insn) -> uint32_t {
-        const unsigned rd = adrp_insn & 31u;
-        const unsigned rn = rd;
-        const uint64_t imm = target & 0xfffULL;
+    auto encode_add_imm64 = [](uint64_t pc_target, unsigned rd) -> uint32_t {
+        const uint64_t imm12 = pc_target & 0xfffULL;
         return 0x91000000u |
-               (static_cast<uint32_t>(imm) << 10) |
-               (rn << 5) |
+               (static_cast<uint32_t>(imm12) << 10) |
+               (rd << 5) |
                rd;
     };
 
+    const uint64_t patch_vaddr = scan_vaddr + best_zero->byte_off;
     uint32_t* dst_adrp = best_zero->adrp;
     uint32_t* dst_add  = best_zero->add;
+
     const uint32_t old_adrp = *dst_adrp;
-    const uint32_t old_add  = *dst_add;
+    const uint32_t old_add = *dst_add;
+
+    const uint64_t patch_runtime =
+        exec_base + patch_vaddr;
 
     const uint32_t new_adrp =
-        encode_adrp(reinterpret_cast<uint64_t>(dst_adrp),
-                    best_one->addr, best_zero->reg);
+        encode_adrp(patch_runtime, best_one->runtime_addr, best_zero->reg);
     const uint32_t new_add =
-        encode_add_imm64(best_one->addr, new_adrp);
+        encode_add_imm64(best_one->runtime_addr, best_zero->reg);
 
     if (!new_adrp || !new_add) {
-        compatLog("FARCRY DISPLAYINFO PATCH: could not encode ADRP/ADD target");
+        compatLog("FARCRY DISPLAYINFO PATCH: failed to encode r_DisplayInfo default target");
         return false;
     }
 
@@ -1216,10 +1233,9 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
     armICacheInvalidate(dst_adrp, 8);
 
     compatLogFmt(
-        "FARCRY DISPLAYINFO PATCH: CreateRendererVars r_DisplayInfo default 0 -> 1 "
-        "at +0x%llx/%llx old=%08x %08x new=%08x %08x",
-        (unsigned long long)fn_off,
-        (unsigned long long)best_zero->byte_off,
+        "FARCRY DISPLAYINFO PATCH: default 0 -> 1 via CreateRendererVars "
+        "at vaddr=0x%llx old=%08x %08x new=%08x %08x",
+        (unsigned long long)patch_vaddr,
         old_adrp, old_add, new_adrp, new_add);
     return true;
 }
