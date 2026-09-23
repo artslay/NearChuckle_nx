@@ -1791,8 +1791,9 @@ static bool pakExtractEntry(const std::string& pakPath, const std::string& wante
     // All normal runtime reads must go through tryOpenFromPaks()/VirtualPakFile.
     // Keep this legacy extraction helper present for call-site compatibility,
     // but make every extraction attempt fail without touching the filesystem.
-    compatLogFmt("PAK MATERIALIZE BLOCKED: %s <- %s -> %s",
-                 wanted.c_str(), pakPath.c_str(), outPath.c_str());
+    (void)pakPath;
+    (void)wanted;
+    (void)outPath;
     return false;
 
     const std::string normalizedWanted = pakNormalizeName(wanted.c_str());
@@ -4862,42 +4863,16 @@ static bool refreshCoreShaderDeclarationsFromPak() {
 }
 
 void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
-    // The first run materializes the full Scripts tree from FCData/*.pak.
-    // Once that tree is present, keep a persistent marker and do not reopen or
-    // rescan every PAK on subsequent launches. Missing individual files still
-    // use the normal lazy PAK fallback later in the file.
+    // PAK-backed scripts stay virtual. Do not materialize the Scripts tree
+    // onto the SD card. Individual Lua/material assets are served lazily by
+    // tryOpenFromPaks() through VirtualPakFile.
     mkdir("scripts", 0755);
     mkdir("scripts/materials", 0755);
 
-    if (scriptPrepCacheReady()) {
-        compatLog("scripts preload: cached=1 (skip FCData PAK scan)");
-        return;
-    }
+    compatLog("scripts preload: virtual PAK mode (no SD extraction)");
 
-    const bool ready = tryMaterializePakDirectory("scripts");
-
-    mkdir("scripts", 0755);
-    mkdir("scripts/materials", 0755);
-
-    int luaCount = 0;
-    countLuaScriptsRecursive("scripts", luaCount);
-
-    struct stat mat = {};
-    const bool matDefault =
-        (stat("scripts/materials/mat_default.lua", &mat) == 0) &&
-        S_ISREG(mat.st_mode);
-
-    compatLogFmt("scripts preload: ready=%d lua=%d mat_default=%s",
-                 ready ? 1 : 0, luaCount, matDefault ? "present" : "MISSING");
-
-    if (ready && matDefault) {
-        writePrepMarker(kScriptPrepMarker);
-        compatLog("scripts preload: persistent cache marker created");
-    }
-
-    // Do not dump hundreds of successful Lua paths on every startup. The
-    // individual files are already physically present and can be inspected
-    // from the Switch filesystem when needed; runtime failures remain logged.
+    // Do not create the old persistent "ready" marker here: that marker means
+    // a physical extracted tree exists, which is intentionally no longer true.
 }
 void compatProbePakArchives(const char* dataRoot) {
     const std::string root = dataRoot ? dataRoot : "";
