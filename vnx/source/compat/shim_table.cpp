@@ -6597,21 +6597,21 @@ static int stub_futimens(int, const void*)          { return 0; }   // timestamp
 static size_t shim_wcsnlen(const wchar_t* s, size_t maxlen) {
     if (!s) return 0;
     size_t n = 0;
-    while (n < maxlen && s[n] != L'\\0')
+    while (n < maxlen && s[n] != L'\0')
         ++n;
     return n;
 }
 
 static size_t shim_wcslcpy(wchar_t* dst, const wchar_t* src, size_t size) {
     if (!src) {
-        if (dst && size) dst[0] = L'\\0';
+        if (dst && size) dst[0] = L'\0';
         return 0;
     }
     const size_t src_len = wcslen(src);
     if (dst && size) {
         const size_t n = (src_len < size - 1) ? src_len : size - 1;
         if (n) wmemcpy(dst, src, n);
-        dst[n] = L'\\0';
+        dst[n] = L'\0';
     }
     return src_len;
 }
@@ -6628,7 +6628,7 @@ static size_t shim_wcslcat(wchar_t* dst, const wchar_t* src, size_t size) {
     const size_t avail = size - dst_len - 1;
     const size_t n = src_len < avail ? src_len : avail;
     if (n) wmemcpy(dst + dst_len, src, n);
-    dst[dst_len + n] = L'\\0';
+    dst[dst_len + n] = L'\0';
     return dst_len + src_len;
 }
 
@@ -6637,7 +6637,7 @@ static size_t shim_strlcat(char* dst, const char* src, size_t size) {
         return dst ? strlen(dst) : 0;
 
     size_t dst_len = 0;
-    while (dst_len < size && dst[dst_len] != '\\0')
+    while (dst_len < size && dst[dst_len] != '\0')
         ++dst_len;
     if (dst_len == size)
         return size + strlen(src);
@@ -6646,7 +6646,7 @@ static size_t shim_strlcat(char* dst, const char* src, size_t size) {
     const size_t avail = size - dst_len - 1;
     const size_t n = src_len < avail ? src_len : avail;
     if (n) memcpy(dst + dst_len, src, n);
-    dst[dst_len + n] = '\\0';
+    dst[dst_len + n] = '\0';
     return dst_len + src_len;
 }
 
