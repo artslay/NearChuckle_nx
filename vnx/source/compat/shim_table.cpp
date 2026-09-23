@@ -130,7 +130,6 @@ static bool pakReadEntryToMemory(const std::string& pakPath,
 static bool pakVirtualDirectoryExists(const char* directory);
 static bool isShaderCacheLookupPath(const char* path);
 static bool isShaderPathForDiag(const char* path);
-static void compatLogPakOpenState(FILE* f, const char* path);
  
 extern "C" {
 volatile int g_near_video_open_failed = 0;
@@ -468,13 +467,6 @@ static char* stub_realpath(const char* p, char* out) {
             if (!callerOwnsBuffer)
                 free(out);
             return nullptr;
-        }
-        if (p && strstr(p, "sidle_loop.caf")) {
-            char caller[256];
-            elfDescribePc((uint64_t)__builtin_return_address(0),
-                          caller, sizeof(caller));
-            compatLogFmt("realpath WRITE DIAG: out=%p len=%zu caller=%s",
-                         (void*)out, canonical.size() + 1, caller);
         }
         memcpy(out, canonical.c_str(), canonical.size() + 1);
         if (kVerboseSuccessfulPathLogs)
@@ -2456,7 +2448,6 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
     static unsigned g_cafDiag = 0;
 
     const char* requested = compatGetFileSizePath(a0, a1);
-    const bool fromA0 = requested && requested == reinterpret_cast<const char*>(a0);
     const bool diag = requested && *requested &&
                       std::strstr(requested, ".caf") != nullptr &&
                       g_cafDiag < 128;
@@ -4553,7 +4544,6 @@ static void countLuaScriptsRecursive(const std::string& directory,
 
 void compatPrepareScriptDirectories(const char* dataRoot) {
     (void)dataRoot;
-    compatLog("script preload: disabled; CryPak reads scripts from PAKs");
 }
 void compatProbePakArchives(const char* dataRoot) {
     const std::string root = dataRoot ? dataRoot : "";
@@ -4561,10 +4551,8 @@ void compatProbePakArchives(const char* dataRoot) {
     if (!fcdata.empty())
         fcdata += "/FCData";
 
-    compatLogFmt("PAK BIND MODEL: Android uses an empty bind root for FCData/*.pak; expected virtual root=%s",
-                 root.empty() ? "<cwd>" : root.c_str());
-    compatLogFmt("PAK BIND MODEL: physical FCData=%s",
-                 fcdata.empty() ? "FCData" : fcdata.c_str());
+    (void)root;
+    (void)fcdata;
 }
 
 static bool compatIsPakPath(const char* path) {
@@ -4574,61 +4562,9 @@ static bool compatIsPakPath(const char* path) {
     return p.size() >= 4 && p.compare(p.size() - 4, 4, ".pak") == 0;
 }
 
-static void compatLogPakOpenState(FILE* f, const char* path) {
-    if (!f || !compatIsPakPath(path))
-        return;
-
-    const long saved = ftell(f);
-    if (saved < 0 || fseek(f, 0, SEEK_END) != 0) {
-        compatLogFmt("PAK OPEN DIAG: %s size=UNKNOWN seek=FAIL",
-                     path ? path : "?");
-        if (saved >= 0)
-            fseek(f, saved, SEEK_SET);
-        return;
-    }
-
-    const long fileSize = ftell(f);
-    bool zipValid = false;
-    uint16_t entries = 0;
-    uint32_t cdSize = 0;
-    uint32_t cdOffset = 0;
-
-    if (fileSize >= 22) {
-        const size_t tailSize =
-            (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
-        std::vector<unsigned char> tail(tailSize);
-        if (fseek(f, fileSize - (long)tailSize, SEEK_SET) == 0 &&
-            pakReadExact(f, tail.data(), tail.size())) {
-            size_t eocd = tail.size();
-            while (eocd >= 22) {
-                --eocd;
-                if (eocd + 4 <= tail.size() &&
-                    pakRd32(tail.data() + eocd) == 0x06054b50u)
-                    break;
-            }
-            if (eocd + 22 <= tail.size()) {
-                entries = pakRd16(tail.data() + eocd + 10);
-                cdSize = pakRd32(tail.data() + eocd + 12);
-                cdOffset = pakRd32(tail.data() + eocd + 16);
-                zipValid = cdOffset <= (uint32_t)fileSize &&
-                           cdSize <= (uint32_t)fileSize &&
-                           (uint64_t)cdOffset + (uint64_t)cdSize <= (uint64_t)fileSize;
-            }
-        }
-    }
-
-    compatLogFmt("PAK OPEN DIAG: %s size=%ld zip=%d entries=%u cd_size=%u cd_offset=%u",
-                 path ? path : "?", fileSize, zipValid ? 1 : 0,
-                 (unsigned)entries, (unsigned)cdSize, (unsigned)cdOffset);
-
-    if (saved >= 0)
-        fseek(f, saved, SEEK_SET);
-}
-
 
 void compatPrepareShaderDirectories(const char* dataRoot) {
     (void)dataRoot;
-    compatLog("shader preload: disabled; CryPak reads shaders from PAKs");
 }
 
 
