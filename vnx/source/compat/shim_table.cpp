@@ -3056,6 +3056,36 @@ static void* fake_dlsym(void* handle, const char* sym) {
         return p;
     }
 
+    // XRenderOGL's Android GL loader asks for many legacy entry points with
+    // one leading underscore (for example "_glVertex2f" and
+    // "_glActiveTextureARB"). Our shim table and Mesa expose the normal
+    // "gl..." spelling. Normalize that loader convention instead of returning
+    // NULL function pointers that later make the renderer silently skip or
+    // crash during its first frame.
+    if (sym[0] == '_' && sym[1] == 'g' && sym[2] == 'l' && sym[3] != '\0') {
+        const char* normalized = sym + 1;
+
+        p = shimResolve(normalized);
+        if (p) {
+            static unsigned int normalized_logs = 0;
+            if (normalized_logs++ < 32)
+                compatLogFmt("dlsym: %s -> normalized shim %s %p",
+                             sym, normalized, p);
+            return p;
+        }
+
+        __eglMustCastToProperFunctionPointerType egl_p =
+            eglGetProcAddress(normalized);
+        p = reinterpret_cast<void*>(egl_p);
+        if (p) {
+            static unsigned int egl_gl_logs = 0;
+            if (egl_gl_logs++ < 32)
+                compatLogFmt("dlsym: %s -> Mesa/EGL %s %p",
+                             sym, normalized, p);
+            return p;
+        }
+    }
+
     if (trace || sym[0] == '_')
         compatLogFmt("dlsym: unresolved %s", sym);
     return nullptr;
