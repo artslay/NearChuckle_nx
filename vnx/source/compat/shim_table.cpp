@@ -3538,12 +3538,6 @@ static void updateMappedKey(bool desired, bool& current, int androidKeycode) {
     }
 }
 
-static void updateMappedMouseButton(bool desired, bool& current, int button) {
-    (void)button;
-    (void)desired;
-    (void)current;
-}
-
 static void sendMappedMouseState(bool zl, bool zr, bool& old_zl, bool& old_zr) {
     if (!g_guest_mouse)
         return;
