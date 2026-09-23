@@ -2209,6 +2209,39 @@ static bool pakFindVirtualEntry(const char* requested,
     return false;
 }
 
+// Return the uncompressed size seen by the Android stream engine without
+// opening/extracting the PAK entry. CRefStreamEngine::GetFileSize() in the
+// Android source contains an unfinished __linux stub that returns 0 after
+// fopen(), which makes every PAK-backed .caf/.cgf look missing to the
+// animation/model loaders.
+extern "C" unsigned compatGuestGetFileSize(const char* requested, unsigned /*flags*/) {
+    if (!requested || !*requested)
+        return 0;
+
+    const std::string pathStorage = normalizeSwitchFsPath(requested);
+    const char* path = pathStorage.c_str();
+
+    struct stat st = {};
+    if (::stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size >= 0)
+        return (unsigned)std::min<off_t>(st.st_size, (off_t)UINT_MAX);
+
+    std::string resolved;
+    if (resolvePathCaseInsensitive(path, resolved) && resolved != path) {
+        st = {};
+        if (::stat(resolved.c_str(), &st) == 0 &&
+            S_ISREG(st.st_mode) && st.st_size >= 0)
+            return (unsigned)std::min<off_t>(st.st_size, (off_t)UINT_MAX);
+    }
+
+    std::string pakPath;
+    PakEntryMeta meta;
+    if (pakFindVirtualEntry(path, pakPath, meta))
+        return meta.uncompressedSize;
+
+    return 0;
+}
+
+
 static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (!requested || !mode || mode[0] != 'r')
         return nullptr;
