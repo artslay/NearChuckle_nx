@@ -10,6 +10,7 @@
 #include <string>
 #include <sys/iosupport.h>
 #include <switch/services/hid.h>
+#include <switch/runtime/pad.h>
 
 // SDL3's Android glue registers these callbacks with JNI_OnLoad. We invoke the
 // registered native functions directly from the Switch main/render thread so
@@ -242,6 +243,8 @@ static constexpr SwitchKeyBinding kSwitchKeyBindings[] = {
 };
 
 static bool g_switch_input_started = false;
+static bool g_switch_pad_initialized = false;
+static PadState g_switch_pad = {};
 static u64 g_switch_input_previous = 0;
 static void* g_sdl_key_down = nullptr;
 static void* g_sdl_key_up = nullptr;
@@ -302,14 +305,15 @@ static void pollSwitchInputInternal() {
     if (!g_sdl_key_down || !g_sdl_key_up)
         return;
 
-    hidScanInput();
-    // libnx versions used by this project expose the legacy HID polling API
-    // with HidNpadIdType values rather than CONTROLLER_P1_AUTO. Include both
-    // player-1 and handheld state so the bridge works in docked and handheld
-    // modes without depending on a deprecated macro.
-    const u64 held =
-        hidKeysHeld(HidNpadIdType_No1) |
-        hidKeysHeld(HidNpadIdType_Handheld);
+    if (!g_switch_pad_initialized) {
+        padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+        padInitializeDefault(&g_switch_pad);
+        g_switch_pad_initialized = true;
+        compatLog("SWITCH INPUT: libnx PadState initialized");
+    }
+
+    padUpdate(&g_switch_pad);
+    const u64 held = padGetButtons(&g_switch_pad);
 
     for (const SwitchKeyBinding& b : kSwitchKeyBindings) {
         const bool was_down = (g_switch_input_previous & b.mask) != 0;
