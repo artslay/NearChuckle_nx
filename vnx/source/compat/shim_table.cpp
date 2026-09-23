@@ -104,7 +104,7 @@ static bool resolvePathCaseInsensitive(const char* input, std::string& resolved)
 static bool compatIsPakPath(const char* path);
 
 static bool materializeCommonSubroutinesScript();
-static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
+[[maybe_unused]] static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
 static bool tryMaterializeUniquePakBasename(const char* targetPath);
 static bool tryMaterializePakPath(const char* targetPath, std::string& materialized);
@@ -123,8 +123,10 @@ static bool isShaderCacheLookupPath(const char* path);
 static bool isShaderPathForDiag(const char* path);
 static void compatLogPakOpenState(FILE* f, const char* path);
  
-extern "C" volatile int g_near_video_open_failed = 0;
-extern "C" volatile uint32_t g_near_video_panel_finished_offset = 0xffffffffu;
+extern "C" {
+volatile int g_near_video_open_failed = 0;
+volatile uint32_t g_near_video_panel_finished_offset = 0xffffffffu;
+}
 
 extern "C" int compatVideoPanelIsPlaying(void* self) {
     if (g_near_video_open_failed)
@@ -765,7 +767,7 @@ static bool freeWouldCorrupt(void* p) {
 // to MALLOC_ALIGNMENT (16) with a usable size that fits the heap, so anything
 // failing those cheap, zero-false-positive checks is provably not a real chunk —
 // leak it rather than corrupt the arena.
-static bool looksLikeNewlibChunk(void* p) {
+[[maybe_unused]] static bool looksLikeNewlibChunk(void* p) {
     if (((uintptr_t)p & 0xF) != 0) return false;          // newlib pointers are 16-aligned
     size_t us = malloc_usable_size(p);                     // reads header; in-heap so fault-safe
     if (us == 0 || us > (256u * 1024u * 1024u)) return false;
@@ -1301,7 +1303,7 @@ static std::string obbRemap(const char* path) {
     return obb::remapPath(path, g_obb_pkg, g_obb_dir);
 }
 
-static std::string cdataToFcdata(const char* path) {
+[[maybe_unused]] static std::string cdataToFcdata(const char* path) {
     if (!path || !*path)
         return "";
 
@@ -2419,7 +2421,7 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
 // ─── Startup shader overlay ───────────────────────────────────────────────────
 // Show shader file lookups directly on the active Switch GL surface during
 // engine startup. This is limited to the first 64 shader-related fopen calls.
-static unsigned g_shader_overlay_events = 0;
+[[maybe_unused]] static unsigned g_shader_overlay_events = 0;
 
 struct StartupGlyph { char c; uint8_t rows[7]; };
 
@@ -2476,7 +2478,7 @@ static const StartupGlyph* startupGlyph(char c) {
     return &g_startup_font[36];
 }
 
-static void startupDrawText(float x, float y, float scale, const char* text) {
+[[maybe_unused]] static void startupDrawText(float x, float y, float scale, const char* text) {
     if (!text) return;
     glBegin(GL_QUADS);
     float pen = x;
@@ -4796,7 +4798,7 @@ static void writePrepMarker(const char* marker) {
     fclose(f);
 }
 
-static bool scriptPrepCacheReady() {
+[[maybe_unused]] static bool scriptPrepCacheReady() {
     if (prepMarkerExists(kScriptPrepMarker))
         return true;
 
