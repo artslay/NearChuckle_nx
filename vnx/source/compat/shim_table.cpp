@@ -137,6 +137,131 @@ volatile int g_near_video_open_failed = 0;
 volatile uint32_t g_near_video_panel_finished_offset = 0xffffffffu;
 }
 
+extern "C" void* g_near_original_refstream_activate = nullptr;
+extern "C" void* g_near_refstream_on_io_complete = nullptr;
+
+extern "C" bool compatGuestActivateReadStream(void* self) {
+    if (!self)
+        return false;
+
+    // CRefReadStream layout on AArch64:
+    //   +0x00 vptr
+    //   +0x08 m_pEngine
+    //   +0x10 std::string m_strFileName
+    // The HANDLE follows the string. Both libc++ (24-byte string) and
+    // libstdc++ (32-byte string) are handled by detecting INVALID_HANDLE_VALUE.
+    const char* name = *reinterpret_cast<const char* const*>(
+        reinterpret_cast<uint8_t*>(self) + 0x10);
+    if (name && *name) {
+        std::string pakPath;
+        PakEntryMeta meta;
+        if (pakFindVirtualEntry(name, pakPath, meta)) {
+            const uintptr_t base = reinterpret_cast<uintptr_t>(self);
+            const uintptr_t badHandle = UINTPTR_MAX;
+            size_t handleOff = 0;
+
+            const uintptr_t h40 = *reinterpret_cast<const uintptr_t*>(base + 40);
+            const uintptr_t h48 = *reinterpret_cast<const uintptr_t*>(base + 48);
+
+            if (h40 == badHandle)
+                handleOff = 40;
+            else if (h48 == badHandle)
+                handleOff = 48;
+            else {
+                compatLogFmt("PAK STREAM ACTIVATE: invalid HANDLE slot for %s (h40=%p h48=%p)",
+                             name, (void*)h40, (void*)h48);
+            }
+
+            if (handleOff) {
+                // m_nFileSize is immediately after HANDLE, CCachedFileDataPtr,
+                // sector size: HANDLE+20 for the layouts above.
+                *reinterpret_cast<uint32_t*>(base + handleOff + 20) =
+                    meta.uncompressedSize;
+
+                compatLogFmt("PAK STREAM ACTIVATE: %s <- %s size=%u",
+                             name, pakPath.c_str(),
+                             (unsigned)meta.uncompressedSize);
+                return true;
+            }
+        }
+    }
+
+    using ActivateFn = bool (*)(void*);
+    ActivateFn original =
+        reinterpret_cast<ActivateFn>(g_near_original_refstream_activate);
+    if (original)
+        return original(self);
+
+    return false;
+}
+
+extern "C" uint32_t compatGuestCallReadFileEx(void* proxy) {
+    if (!proxy)
+        return 0xF0000008u;
+
+    const uintptr_t base = reinterpret_cast<uintptr_t>(proxy);
+
+    // CRefReadStreamProxy:
+    //   +0x18 m_pStream
+    //   +0x20 StreamReadParams
+    // StreamReadParams.pBuffer = +0x18 within the params,
+    // nOffset = +0x20, nSize = +0x24.
+    void* stream = *reinterpret_cast<void**>(base + 0x18);
+    void* buffer = *reinterpret_cast<void**>(base + 0x20 + 0x18);
+    const uint32_t paramsOffset =
+        *reinterpret_cast<const uint32_t*>(base + 0x20 + 0x20);
+    const uint32_t paramsSize =
+        *reinterpret_cast<const uint32_t*>(base + 0x20 + 0x24);
+    const uint32_t pieceOffset =
+        *reinterpret_cast<const uint32_t*>(base + 0x74);
+    const uint32_t pieceLength =
+        *reinterpret_cast<const uint32_t*>(base + 0x78);
+
+    auto complete = reinterpret_cast<void (*)(void*, uint32_t, uint32_t)>(
+        g_near_refstream_on_io_complete);
+
+    if (!stream || !buffer || !complete) {
+        if (complete)
+            complete(proxy, 0xF0000008u, 0);
+        return 0;
+    }
+
+    const char* name = *reinterpret_cast<const char* const*>(
+        reinterpret_cast<uint8_t*>(stream) + 0x10);
+    std::string pakPath;
+    PakEntryMeta meta;
+
+    if (!name || !*name || !pakFindVirtualEntry(name, pakPath, meta)) {
+        // Non-PAK streams should still use the original CallReadFileEx path.
+        // Returning an error here is only valid for a PAK stream, so delegate
+        // to the original function when available.
+        return 0xFFFFFFFFu;
+    }
+
+    std::vector<unsigned char> data;
+    if (!pakReadEntryToMemory(pakPath, meta, data)) {
+        complete(proxy, 0xF000000Cu, 0);
+        return 0;
+    }
+
+    const uint64_t srcOffset =
+        (uint64_t)paramsOffset + (uint64_t)pieceOffset;
+    if (srcOffset > data.size() ||
+        (uint64_t)pieceLength > data.size() - srcOffset ||
+        (uint64_t)paramsSize > data.size() ||
+        (uint64_t)paramsOffset > data.size()) {
+        complete(proxy, 0xF0000008u, 0);
+        return 0;
+    }
+
+    std::memcpy(reinterpret_cast<unsigned char*>(buffer) + pieceOffset,
+                data.data() + srcOffset,
+                pieceLength);
+
+    complete(proxy, 0, pieceLength);
+    return 0;
+}
+
 extern "C" int compatVideoPanelIsPlaying(void* self) {
     if (g_near_video_open_failed)
         return 0;
