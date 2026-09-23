@@ -230,8 +230,11 @@ extern "C" uint32_t compatGuestCallReadFileEx(void* proxy) {
     //   +0x70 m_numBytesRead
     //   +0x74 m_nPieceOffset
     //   +0x78 m_nPieceLength
+    // IMPORTANT: m_Params.pBuffer (+0x30) is only the caller-supplied buffer.
+    // StartRead() normally allocates the actual streaming buffer in m_pBuffer
+    // (+0x68), and CallReadFileEx() reads into that field.
     void* stream = *reinterpret_cast<void**>(base + 0x10);
-    void* buffer = *reinterpret_cast<void**>(base + 0x30);
+    void* buffer = *reinterpret_cast<void**>(base + 0x68);
     const uint32_t paramsOffset =
         *reinterpret_cast<const uint32_t*>(base + 0x38);
     const uint32_t paramsSize =
