@@ -552,7 +552,6 @@ static int run_farcry(LoadedSo* game_so) {
     char arg8[64];
     char arg9[64];
     char arg10[64];
-    char arg11[64];
 
     std::snprintf(arg1, sizeof(arg1), "\"r_Driver OpenGL\"");
     std::snprintf(arg2, sizeof(arg2), "\"r_Width %d\"", config.screen_width);
@@ -587,9 +586,8 @@ static int run_farcry(LoadedSo* game_so) {
     argv[8] = arg8;
     argv[9] = arg9;
     argv[10] = arg10;
-    argv[11] = arg11;
 
-    const int argc = 12;
+    const int argc = 11;
 
     // Keep shader compilation enabled, matching the working Android build.
     // Missing/experimental Switch shader caches must not turn the menu into a
@@ -599,7 +597,6 @@ static int run_farcry(LoadedSo* game_so) {
     compatLog("Far Cry: ui_BackGroundVideo left at Android default until UI CVar creation");
     compatLog("Far Cry: r_UseHWShaders 1 queued for shader script registration");
     compatLog("Far Cry: command-line CVars use quoted name + value commands");
-    compatLog("Far Cry: r_Render 1 forced to keep CXGame::Update render path enabled");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
     compatLog("Startup diagnostics complete; waiting for CXGame::Run main-loop marker");
