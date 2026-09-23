@@ -3228,17 +3228,25 @@ static bool w_SDL_GetWindowSizeInPixels(void* window, int* w, int* h) {
     Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GetWindowSizeInPixels"));
     const bool ok = fn ? fn(window, w, h) : false;
 
-    if (ok && w && h && *w > 0 && *h > 0)
-        return true;
-
+    // The guest Android SDL window can report its pre-surface/default size
+    // (commonly 1024x768) even though the Switch window was created for the
+    // configured display. Always expose the Switch presentation size so
+    // CryEngine's Android viewport code uses the actual render target.
     CompatLayer* cl = compatGet();
     if (cl && w && h && cl->window.width > 0 && cl->window.height > 0) {
+        const int old_w = *w;
+        const int old_h = *h;
         *w = cl->window.width;
         *h = cl->window.height;
-        compatLogFmt("SDL: SDL_GetWindowSizeInPixels fallback -> %dx%d",
-                     *w, *h);
+        static bool logged = false;
+        if (!logged || old_w != *w || old_h != *h) {
+            logged = true;
+            compatLogFmt("SDL: SDL_GetWindowSizeInPixels -> Switch size %dx%d (guest=%dx%d)",
+                         *w, *h, old_w, old_h);
+        }
         return true;
     }
+
     return ok;
 }
 
@@ -3312,6 +3320,22 @@ static void* w_SDL_CreateWindow(const char* title, int w, int h, uint32_t flags)
         compatLog("SDL: SDL_CreateWindow export not found");
         return nullptr;
     }
+
+    CompatLayer* cl = compatGet();
+    if (cl && cl->window.width > 0 && cl->window.height > 0) {
+        const int old_w = w;
+        const int old_h = h;
+        // Normalize common desktop defaults to the Switch surface dimensions.
+        // Do not replace a deliberately smaller/offscreen UI window.
+        if ((w <= 0 || (w == 800 && h == 600) || (w == 1024 && h == 768)) ||
+            ((w == cl->window.width) && (h == cl->window.height))) {
+            w = cl->window.width;
+            h = cl->window.height;
+            compatLogFmt("SDL: SDL_CreateWindow size normalized %dx%d -> %dx%d",
+                         old_w, old_h, w, h);
+        }
+    }
+
     void* win = fn(title, w, h, flags);
     compatLogFmt("SDL: SDL_CreateWindow(%s,%d,%d,0x%x) -> %p err=%s",
                  title ? title : "", w, h, flags, win, sdl3_error());
@@ -3688,11 +3712,41 @@ static int  stub_dl_iterate_phdr(void*, void*) { return 0; }
 // the clear to the content rect is what actually keeps the bars black.
 static void w_glViewport(GLint x, GLint y, GLsizei w, GLsizei h) {
     const Presentation& p = orientGet();
+
+    CompatLayer* cl = compatGet();
+    if (cl && cl->window.width > 0 && cl->window.height > 0 &&
+        x == 0 && y == 0 &&
+        ((w == 800 && h == 600) || (w == 1024 && h == 768))) {
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            compatLogFmt("GL: full viewport normalized %dx%d -> %dx%d",
+                         w, h, cl->window.width, cl->window.height);
+        }
+        w = cl->window.width;
+        h = cl->window.height;
+    }
+
     glViewport(x + p.content_x, y + p.content_y, w, h);
 }
 
 static void w_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
     const Presentation& p = orientGet();
+
+    CompatLayer* cl = compatGet();
+    if (cl && cl->window.width > 0 && cl->window.height > 0 &&
+        x == 0 && y == 0 &&
+        ((w == 800 && h == 600) || (w == 1024 && h == 768))) {
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            compatLogFmt("GL: full scissor normalized %dx%d -> %dx%d",
+                         w, h, cl->window.width, cl->window.height);
+        }
+        w = cl->window.width;
+        h = cl->window.height;
+    }
+
     glScissor(x + p.content_x, y + p.content_y, w, h);
 }
 
