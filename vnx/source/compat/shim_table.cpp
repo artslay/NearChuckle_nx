@@ -150,8 +150,8 @@ static bool pakFindVirtualEntry(const char* requested,
         return true;
     }
 
-    // Reuse a previously resolved global hit. Level PAK registration clears
-    // this cache so that newly mounted assets still have priority.
+    // Reuse a previously resolved global hit or a known global miss. Level
+    // PAK registration clears both caches.
     {
         mutexLock(&g_pak_index_lock);
         auto hit = g_pak_lookup_cache.find(wanted);
@@ -160,6 +160,11 @@ static bool pakFindVirtualEntry(const char* requested,
             metaOut = hit->second.meta;
             mutexUnlock(&g_pak_index_lock);
             return true;
+        }
+
+        if (g_pak_lookup_misses.find(wanted) != g_pak_lookup_misses.end()) {
+            mutexUnlock(&g_pak_index_lock);
+            return false;
         }
         mutexUnlock(&g_pak_index_lock);
     }
@@ -175,10 +180,14 @@ static bool pakFindVirtualEntry(const char* requested,
 
         mutexLock(&g_pak_index_lock);
         g_pak_lookup_cache[wanted] = PakLookupCacheEntry{pakPathOut, metaOut};
+        g_pak_lookup_misses.erase(wanted);
         mutexUnlock(&g_pak_index_lock);
         return true;
     }
 
+    mutexLock(&g_pak_index_lock);
+    g_pak_lookup_misses.emplace(wanted);
+    mutexUnlock(&g_pak_index_lock);
     return false;
 }
 
