@@ -993,6 +993,57 @@ static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
 // continue independently without silently swallowing Input:* callbacks.
 
 // A/B diagnostic: bypass CSystem::Update() entirely and return true.
+static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
+                                               uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* path = so->path.c_str();
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (std::strcmp(base, "libCrySystem.so") != 0)
+        return false;
+
+    // Far Cry/CryEngine 1 release builds create this CVar with a default
+    // string of "0". The command-line value can be lost when the renderer
+    // variables are created. Change only the exact adjacent
+    // "r_DisplayInfo" / "0" string pair to match the debug build's default 1.
+    static constexpr char kName[] = "r_DisplayInfo";
+    constexpr size_t kNameLen = sizeof(kName) - 1;
+
+    uint8_t* image = stage_base + min_vaddr;
+    size_t matches = 0;
+    uint8_t* default_value = nullptr;
+
+    for (size_t off = 0; off + kNameLen + 3 <= alloc_size; ++off) {
+        if (std::memcmp(image + off, kName, kNameLen) != 0)
+            continue;
+
+        if (image[off + kNameLen] != 0 ||
+            image[off + kNameLen + 1] != '0' ||
+            image[off + kNameLen + 2] != 0)
+            continue;
+
+        ++matches;
+        default_value = image + off + kNameLen + 1;
+    }
+
+    if (matches == 0) {
+        compatLog("FARCRY DISPLAYINFO PATCH: exact CVar/default string pair not found");
+        return false;
+    }
+
+    if (matches > 1) {
+        compatLogFmt("FARCRY DISPLAYINFO PATCH: ambiguous (%llu matches); no patch",
+                     (unsigned long long)matches);
+        return false;
+    }
+
+    *default_value = static_cast<uint8_t>('1');
+    compatLog("FARCRY DISPLAYINFO PATCH: default r_DisplayInfo 0 -> 1");
+    return true;
+}
+
 static bool patchFarCrySystemUpdate(LoadedSo* so, uint8_t* stage_base,
                                     uint64_t min_vaddr, size_t alloc_size) {
     if (!so || !stage_base || !alloc_size)
@@ -1304,6 +1355,8 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
     }
 
     if (std::strcmp(base, "libCrySystem.so") == 0) {
+        if (!patchFarCryDisplayInfoDefault(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY DISPLAYINFO PATCH: not applied");
         if (!patchFarCryScriptSinkOnSetGlobal(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY SCRIPTSINK A/B: patch not applied");
         if (!patchFarCrySystemUpdate(so, stage_base, min_vaddr, alloc_size))
