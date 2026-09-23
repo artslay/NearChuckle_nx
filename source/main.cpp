@@ -132,12 +132,7 @@ static void log_engine_data_dirs() {
         const std::string path = std::string(config.data_root) + "/" + c.relative;
         struct stat st = {};
         const bool present =
-            (stat(path.c_str(), &st) == 0) &&
-            ((std::strcmp(c.label, "FCData") == 0 ||
-              std::strcmp(c.label, "Shaders") == 0 ||
-              std::strcmp(c.label, "FCData/Localized") == 0)
-                ? S_ISDIR(st.st_mode)
-                : true);
+            (stat(path.c_str(), &st) == 0) && S_ISDIR(st.st_mode);
         compatLogFmt("data dir: %s=%s",
                      c.label, present ? "present" : "missing");
     }
