@@ -244,8 +244,12 @@ static constexpr SwitchKeyBinding kSwitchKeyBindings[] = {
 
 static bool g_switch_input_started = false;
 static bool g_switch_pad_initialized = false;
+static bool g_switch_touch_initialized = false;
+static bool g_switch_touch_down = false;
 static PadState g_switch_pad = {};
 static u64 g_switch_input_previous = 0;
+static float g_switch_touch_x = 0.0f;
+static float g_switch_touch_y = 0.0f;
 static void* g_sdl_key_down = nullptr;
 static void* g_sdl_key_up = nullptr;
 static void* g_sdl_mouse = nullptr;
@@ -285,6 +289,18 @@ static void switchEmitRelativeMouse(void* fn_ptr, float dx, float dy) {
        0, 2, dx, dy, JNI_TRUE); // MotionEvent.ACTION_MOVE
 }
 
+static void switchEmitAbsoluteMouse(void* fn_ptr, int button, int action,
+                                     float x, float y) {
+    if (!fn_ptr)
+        return;
+
+    using MouseFn = void (*)(void*, void*, int, int, float, float, jboolean);
+    const MouseFn fn = reinterpret_cast<MouseFn>(fn_ptr);
+    fn(compatGet()->env_outer,
+       reinterpret_cast<void*>(0x1001),
+       button, action, x, y, JNI_FALSE);
+}
+
 static void switchInputResolveCallbacks() {
     if (g_sdl_key_down && g_sdl_key_up && g_sdl_mouse)
         return;
@@ -310,6 +326,12 @@ static void pollSwitchInputInternal() {
         padInitializeDefault(&g_switch_pad);
         g_switch_pad_initialized = true;
         compatLog("SWITCH INPUT: libnx PadState initialized");
+    }
+
+    if (g_sdl_mouse && !g_switch_touch_initialized) {
+        hidInitializeTouchScreen();
+        g_switch_touch_initialized = true;
+        compatLog("SWITCH TOUCH: libnx TouchScreen initialized");
     }
 
     padUpdate(&g_switch_pad);
@@ -353,6 +375,47 @@ static void pollSwitchInputInternal() {
             const float dx = rs_right ? 10.0f : (rs_left ? -10.0f : 0.0f);
             const float dy = rs_down ? 10.0f : (rs_up ? -10.0f : 0.0f);
             switchEmitRelativeMouse(g_sdl_mouse, dx, dy);
+        }
+    }
+
+    // Touchscreen -> absolute mouse pointer + left click.
+    // A tap is translated to an absolute mouse move first, then Android SDL's
+    // mouse-button down/up pair at the same coordinates. This lets the existing
+    // CryInput CSDLMouse see the normal SDL mouse events without adding a second
+    // input path. Continuous finger motion only moves the pointer; the click is
+    // released when the finger leaves the screen.
+    if (g_sdl_mouse && g_switch_touch_initialized) {
+        HidTouchScreenState touch = {};
+        const size_t touch_samples = hidGetTouchScreenStates(&touch, 1);
+        const bool touching = touch_samples > 0 && touch.count > 0;
+
+        if (touching) {
+            // Use the first finger. The requested control is a simple single-tap
+            // mouse pointer, so ignore extra fingers rather than generating
+            // ambiguous mouse coordinates.
+            const float x = (float)touch.touches[0].x;
+            const float y = (float)touch.touches[0].y;
+
+            if (!g_switch_touch_down) {
+                g_switch_touch_down = true;
+                g_switch_touch_x = x;
+                g_switch_touch_y = y;
+
+                // Move the absolute pointer to the tap location before pressing.
+                switchEmitAbsoluteMouse(g_sdl_mouse, 0, 2, x, y);
+                switchEmitAbsoluteMouse(g_sdl_mouse, 1, 0, x, y);
+                compatLogFmt("SWITCH TOUCH: tap down x=%.0f y=%.0f", x, y);
+            } else {
+                g_switch_touch_x = x;
+                g_switch_touch_y = y;
+                switchEmitAbsoluteMouse(g_sdl_mouse, 1, 2, x, y);
+            }
+        } else if (g_switch_touch_down) {
+            g_switch_touch_down = false;
+            switchEmitAbsoluteMouse(g_sdl_mouse, 0, 1,
+                                     g_switch_touch_x, g_switch_touch_y);
+            compatLogFmt("SWITCH TOUCH: tap up x=%.0f y=%.0f",
+                         g_switch_touch_x, g_switch_touch_y);
         }
     }
 
