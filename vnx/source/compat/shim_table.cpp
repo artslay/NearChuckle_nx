@@ -2421,6 +2421,112 @@ static bool pakFindLevelLocalEntry(const std::string& wanted,
     return false;
 }
 
+static void pakTraceMissDetails(const std::string& wanted) {
+    const std::string basenamePos = wanted.find_last_of('/');
+    const std::string wantedBase =
+        basenamePos == std::string::npos ? wanted : wanted.substr(basenamePos + 1);
+
+    auto tracePak = [&](const std::string& pakPath) {
+        mutexLock(&g_pak_index_lock);
+        auto it = g_pak_indexes.find(pakPath);
+        if (it == g_pak_indexes.end()) {
+            PakIndex fresh;
+            const bool ok = buildPakIndexLocked(pakPath, fresh);
+            auto inserted = g_pak_indexes.emplace(pakPath, std::move(fresh));
+            it = inserted.first;
+            if (!ok) {
+                mutexUnlock(&g_pak_index_lock);
+                compatLogFmt("PAK MEM TRACE INDEX: pak=%s build=FAIL",
+                             pakPath.c_str());
+                return;
+            }
+        }
+
+        size_t baseMatches = 0;
+        std::string firstMatch;
+        for (const auto& item : it->second.entries) {
+            const std::string& entry = item.first;
+            const size_t slash = entry.find_last_of('/');
+            const std::string base =
+                slash == std::string::npos ? entry : entry.substr(slash + 1);
+            if (base == wantedBase) {
+                ++baseMatches;
+                if (firstMatch.empty())
+                    firstMatch = entry;
+            }
+        }
+
+        const size_t entryCount = it->second.entries.size();
+        const bool valid = it->second.valid;
+        mutexUnlock(&g_pak_index_lock);
+
+        if (baseMatches) {
+            compatLogFmt("PAK MEM TRACE INDEX: pak=%s valid=%d entries=%zu basename_matches=%zu first=%s",
+                         pakPath.c_str(), valid ? 1 : 0, entryCount,
+                         baseMatches, firstMatch.c_str());
+        } else {
+            compatLogFmt("PAK MEM TRACE INDEX: pak=%s valid=%d entries=%zu basename_matches=0",
+                         pakPath.c_str(), valid ? 1 : 0, entryCount);
+        }
+    };
+
+    std::vector<std::string> activeLevelPaks;
+    mutexLock(&g_pak_index_lock);
+    activeLevelPaks = g_active_level_paks;
+    mutexUnlock(&g_pak_index_lock);
+
+    for (const std::string& pakPath : activeLevelPaks)
+        tracePak(pakPath);
+
+    const char* roots[] = {
+        ".",
+        "FCData",
+        "fcdata",
+        "FCData/Localized",
+        "fcdata/Localized",
+        "FCData/localized",
+        "fcdata/localized",
+        nullptr
+    };
+
+    for (size_t r = 0; roots[r]; ++r) {
+        DIR* dir = opendir(roots[r]);
+        if (!dir)
+            continue;
+
+        while (dirent* ent = readdir(dir)) {
+            const char* name = ent->d_name;
+            const size_t len = std::strlen(name);
+            if (len < 4)
+                continue;
+
+            const char c0 = (char)std::tolower((unsigned char)name[len - 4]);
+            const char c1 = (char)std::tolower((unsigned char)name[len - 3]);
+            const char c2 = (char)std::tolower((unsigned char)name[len - 2]);
+            const char c3 = (char)std::tolower((unsigned char)name[len - 1]);
+            if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
+                continue;
+
+            std::string pakPath = roots[r];
+            if (pakPath != ".")
+                pakPath += "/";
+            pakPath += name;
+
+            bool alreadySeen = false;
+            for (const std::string& active : activeLevelPaks) {
+                if (active == pakPath) {
+                    alreadySeen = true;
+                    break;
+                }
+            }
+            if (!alreadySeen)
+                tracePak(pakPath);
+        }
+
+        closedir(dir);
+    }
+}
+
 static bool pakFindVirtualEntry(const char* requested,
                                std::string& pakPathOut,
                                PakEntryMeta& metaOut) {
@@ -2606,6 +2712,7 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
         if (trace) {
             compatLogFmt("PAK MEM TRACE MISS: requested=%s wanted=%s",
                          requested, wantedTrace.c_str());
+            pakTraceMissDetails(wantedTrace);
         }
         return nullptr;
     }
