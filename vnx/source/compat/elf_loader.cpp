@@ -1070,6 +1070,52 @@ static bool patchFarCryInputThunkCrashPath(LoadedSo* so, uint8_t* stage_base,
     return true;
 }
 
+// A/B diagnostic: bypass CSystem::Update() entirely and return true.
+static bool patchFarCrySystemUpdate(LoadedSo* so, uint8_t* stage_base,
+                                    uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* path = so->path.c_str();
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (std::strcmp(base, "libCrySystem.so") != 0)
+        return false;
+
+    constexpr const char* kSym = "_ZN7CSystem6UpdateEii";
+    void* fn = so->findSym(kSym);
+    if (!fn) {
+        compatLogFmt("FARCRY SYSTEM UPDATE A/B: symbol not found: %s", kSym);
+        return false;
+    }
+
+    const uintptr_t imageBase = reinterpret_cast<uintptr_t>(so->base);
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(fn);
+    if (addr < imageBase || addr - imageBase >= alloc_size) {
+        compatLogFmt(
+            "FARCRY SYSTEM UPDATE A/B: symbol outside image fn=%p base=%p size=0x%llx",
+            fn, reinterpret_cast<void*>(imageBase),
+            (unsigned long long)alloc_size);
+        return false;
+    }
+
+    const uint64_t off = static_cast<uint64_t>(addr - imageBase);
+    uint32_t* insn = reinterpret_cast<uint32_t*>(
+        stage_base + min_vaddr + off);
+    const uint32_t old0 = insn[0];
+    const uint32_t old1 = insn[1];
+
+    // mov w0, #1; ret — make ISystem::Update() return "continue".
+    insn[0] = 0x52800020u;
+    insn[1] = 0xd65f03c0u;
+    armICacheInvalidate(insn, 8);
+
+    compatLogFmt(
+        "FARCRY SYSTEM UPDATE A/B: patched CSystem::Update +0x%llx old=%08x %08x new=%08x %08x",
+        (unsigned long long)off, old0, old1, insn[0], insn[1]);
+    return true;
+}
+
 // Temporary A/B: bypass CXGame::LoadConfiguration(). The fault stack repeatedly
 // contained libCryGame.so +0xf9718, identified as LoadConfiguration +0x60.
 // Therefore the current function start is +0xf96b8 for this exact Android lib.
@@ -1338,6 +1384,8 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
     if (std::strcmp(base, "libCrySystem.so") == 0) {
         if (!patchFarCryScriptSinkOnSetGlobal(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY SCRIPTSINK A/B: patch not applied");
+        if (!patchFarCrySystemUpdate(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY SYSTEM UPDATE A/B: patch not applied");
 
         // Continue into the GetFileSize BRK diagnostic/experiment below.
         // This used to return here, leaving the CBNZ->BRK bypass unreachable.
