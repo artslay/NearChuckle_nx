@@ -110,6 +110,2586 @@ struct PakEntryMeta {
     uint32_t expectedCrc = 0;
 };
 static bool pakFindVirtualEntry(const char* requested,
+                                std::string& pakPath,
+                                PakEntryMeta& meta);
+static std::string pakNormalizeName(const char* name);
+static std::string pakAssetRelativeName(const char* requested);
+static int vpakFdOpen(const char* requested, int flags);
+static bool vpakFdOwns(int fd);
+static ssize_t vpakFdRead(int fd, void* dst, size_t count);
+static off_t vpakFdSeek(int fd, off_t off, int whence);
+static ssize_t vpakFdPread(int fd, void* dst, size_t count, off_t offset);
+static int vpakFdClose(int fd);
+static int vpakFdFstat(int fd, struct stat* st);
+static bool pakReadEntryToMemory(const std::string& pakPath,
+                                 const PakEntryMeta& meta,
+                                 std::vector<unsigned char>& plain);
+static bool pakVirtualDirectoryExists(const char* directory);
+static bool isShaderCacheLookupPath(const char* path);
+static bool isShaderPathForDiag(const char* path);
+ 
+extern "C" {
+volatile int g_near_video_open_failed = 0;
+volatile uint32_t g_near_video_panel_finished_offset = 0xffffffffu;
+}
+
+extern "C" {
+void* g_near_original_refstream_activate = nullptr;
+void* g_near_refstream_on_io_complete = nullptr;
+void* g_near_original_refstream_call_read = nullptr;
+}
+
+extern "C" bool compatGuestActivateReadStream(void* self) {
+    if (!self)
+        return false;
+
+    // CRefReadStream layout on AArch64:
+    //   +0x00 vptr
+    //   +0x08 m_pEngine
+    //   +0x10 std::string m_strFileName
+    // The HANDLE follows the string. Both libc++ (24-byte string) and
+    // libstdc++ (32-byte string) are handled by detecting INVALID_HANDLE_VALUE.
+    const char* name = *reinterpret_cast<const char* const*>(
+        reinterpret_cast<uint8_t*>(self) + 0x10);
+    if (name && *name) {
+        std::string pakPath;
+        PakEntryMeta meta;
+        if (pakFindVirtualEntry(name, pakPath, meta)) {
+            const uintptr_t base = reinterpret_cast<uintptr_t>(self);
+            size_t handleOff = 0;
+
+            // HANDLE is platform/configuration dependent here. On the
+            // Android/libc++ layout used by the original game it may occupy
+            // four bytes even though the surrounding object is AArch64, so
+            // reading it only as UINTPTR_MAX (0xffffffffffffffff) misses the
+            // actual INVALID_HANDLE_VALUE (0xffffffff).
+            //
+            // The known libc++ layouts are:
+            //   m_hFile       +0x28
+            //   m_nFileSize   +0x3c
+            // or, with the wider string layout:
+            //   m_hFile       +0x30
+            //   m_nFileSize   +0x44
+            const uint32_t h28_32 = *reinterpret_cast<const uint32_t*>(base + 0x28);
+            const uint32_t h30_32 = *reinterpret_cast<const uint32_t*>(base + 0x30);
+            const uint64_t h28_64 = *reinterpret_cast<const uint64_t*>(base + 0x28);
+            const uint64_t h30_64 = *reinterpret_cast<const uint64_t*>(base + 0x30);
+
+            if (h28_32 == 0xffffffffu || h28_64 == UINT64_MAX)
+                handleOff = 0x28;
+            else if (h30_32 == 0xffffffffu || h30_64 == UINT64_MAX)
+                handleOff = 0x30;
+            else {
+                compatLogFmt("PAK STREAM ACTIVATE: invalid HANDLE slot for %s (h28=%08x/%p h30=%08x/%p)",
+                             name, h28_32, (void*)h28_64, h30_32, (void*)h30_64);
+            }
+
+            if (handleOff) {
+                // m_nFileSize is immediately after HANDLE, CCachedFileDataPtr,
+                // sector size: HANDLE+20 for both supported layouts.
+                *reinterpret_cast<uint32_t*>(base + handleOff + 20) =
+                    meta.uncompressedSize;                return true;
+            }
+        }
+    }
+
+    using ActivateFn = bool (*)(void*);
+    ActivateFn original =
+        reinterpret_cast<ActivateFn>(g_near_original_refstream_activate);
+    if (original)
+        return original(self);
+
+    return false;
+}
+
+extern "C" uint32_t compatGuestCallReadFileEx(void* proxy) {
+    if (!proxy)
+        return 0xF0000008u;
+
+    const uintptr_t base = reinterpret_cast<uintptr_t>(proxy);
+
+    // CRefReadStreamProxy Android/libc++ object layout:
+    //   +0x08 m_numRetries
+    //   +0x10 m_pStream
+    //   +0x18 m_Params (sizeof(StreamReadParams) == 0x30)
+    //
+    // StreamReadParams:
+    //   +0x00 dwUserData
+    //   +0x08 nPriority
+    //   +0x0c nLoadTime
+    //   +0x10 nMaxLoadTime
+    //   +0x18 pBuffer
+    //   +0x20 nOffset
+    //   +0x24 nSize
+    //   +0x28 nFlags
+    //
+    // Proxy fields after m_Params:
+    //   +0x48 m_strClient
+    //   +0x60 m_pCallback
+    //   +0x68 m_pBuffer
+    //   +0x70 m_numBytesRead
+    //   +0x74 m_nPieceOffset
+    //   +0x78 m_nPieceLength
+    // IMPORTANT: m_Params.pBuffer (+0x30) is only the caller-supplied buffer.
+    // StartRead() normally allocates the actual streaming buffer in m_pBuffer
+    // (+0x68), and CallReadFileEx() reads into that field.
+    void* stream = *reinterpret_cast<void**>(base + 0x10);
+    void* buffer = *reinterpret_cast<void**>(base + 0x68);
+    const uint32_t paramsOffset =
+        *reinterpret_cast<const uint32_t*>(base + 0x38);
+    const uint32_t paramsSize =
+        *reinterpret_cast<const uint32_t*>(base + 0x3c);
+    const uint32_t pieceOffset =
+        *reinterpret_cast<const uint32_t*>(base + 0x74);
+    const uint32_t pieceLength =
+        *reinterpret_cast<const uint32_t*>(base + 0x78);
+
+    auto complete = reinterpret_cast<void (*)(void*, uint32_t, uint32_t)>(
+        g_near_refstream_on_io_complete);
+
+    if (!stream || !buffer || !complete) {
+        if (complete)
+            complete(proxy, 0xF0000008u, 0);
+        return 0;
+    }
+
+    const char* name = *reinterpret_cast<const char* const*>(
+        reinterpret_cast<uint8_t*>(stream) + 0x10);
+    std::string pakPath;
+    PakEntryMeta meta;
+
+    if (!name || !*name || !pakFindVirtualEntry(name, pakPath, meta)) {
+        // Non-PAK streams keep the original Android/Linux implementation.
+        using CallReadFn = uint32_t (*)(void*);
+        CallReadFn original =
+            reinterpret_cast<CallReadFn>(g_near_original_refstream_call_read);
+        if (original)
+            return original(proxy);
+        complete(proxy, 0xF0000008u, 0);
+        return 0;
+    }
+
+    std::vector<unsigned char> data;
+    if (!pakReadEntryToMemory(pakPath, meta, data)) {
+        complete(proxy, 0xF000000Cu, 0);
+        return 0;
+    }
+
+    const uint64_t srcOffset =
+        (uint64_t)paramsOffset + (uint64_t)pieceOffset;
+    if (srcOffset > data.size() ||
+        (uint64_t)pieceLength > data.size() - srcOffset ||
+        (uint64_t)paramsSize > data.size() ||
+        (uint64_t)paramsOffset > data.size()) {
+        complete(proxy, 0xF0000008u, 0);
+        return 0;
+    }
+
+    std::memcpy(reinterpret_cast<unsigned char*>(buffer) + pieceOffset,
+                data.data() + srcOffset,
+                pieceLength);
+
+    complete(proxy, 0, pieceLength);
+    return 0;
+}
+
+extern "C" int compatVideoPanelIsPlaying(void* self) {
+    if (g_near_video_open_failed)
+        return 0;
+
+    const uint32_t offset = g_near_video_panel_finished_offset;
+    if (!self || offset == 0xffffffffu || offset >= 0x10000u)
+        return 0;
+
+    const uint8_t finished = *(const volatile uint8_t*)
+        ((const uint8_t*)self + offset);
+    return finished ? 0 : 1;
+}
+
+// Normalize Switch virtual-device paths before they reach newlib's POSIX I/O.
+//
+// libnx normally accepts paths such as "sdmc:/switch/Foo". The guest Android
+// build can also hand CryPak an already-rooted path like:
+//   sdmc:/switch/Foo/sdmc:/switch/Foo/FCData/...
+// In the newlib file API, "sdmc:/..." is not an absolute POSIX path here, so
+// leaving it untouched makes the CWD get prepended and produces a duplicated
+// path. Collapse both forms to the real POSIX path rooted at "/".
+static std::string normalizeSwitchFsPath(const char* input) {
+    if (!input)
+        return std::string();
+
+    std::string path(input);
+    if (path.size() < 6 || path.compare(0, 6, "sdmc:/") != 0)
+        return path;
+
+    // If the path contains the virtual device prefix twice, the second prefix
+    // is the real root of the requested path. Keep only that second path.
+    const size_t second = path.find("sdmc:/", 6);
+    if (second != std::string::npos)
+        return path.substr(second + 5); // keep the leading '/'
+
+    // A normal sdmc:/ absolute path maps directly to the Switch POSIX root.
+    return path.substr(5); // "sdmc:" -> "/switch/..."
+}
+ 
+// pread is not exported by the devkitA64/newlib runtime used here.
+// The APK cache only needs positional reads, so emulate it with lseek/read
+// while preserving the caller's file position.
+extern "C" ssize_t pread(int fd, void* buf, size_t count, off_t offset) {
+    if (vpakFdOwns(fd))
+        return vpakFdPread(fd, buf, count, offset);
+
+    off_t saved = lseek(fd, 0, SEEK_CUR);
+    if (saved == (off_t)-1) return -1;
+    if (lseek(fd, offset, SEEK_SET) == (off_t)-1) return -1;
+    ssize_t rc = read(fd, buf, count);
+    int saved_errno = errno;
+    lseek(fd, saved, SEEK_SET);
+    errno = saved_errno;
+    return rc;
+}
+
+// Newlib stubs for POSIX functions that may be missing
+static size_t stub_strnlen(const char* s, size_t n) {
+    size_t i = 0;
+    while (i < n && s[i]) i++;
+    return i;
+}
+static char* stub_strtok_r(char* s, const char* d, char** save) {
+    (void)save;
+    return strtok(s, d);
+}
+static bool vpakOwns(FILE* f);
+static size_t vpakRead(FILE* f, void* dst, size_t size, size_t count);
+static int vpakSeek(FILE* f, int64_t off, int whence);
+static long long vpakTell64(FILE* f);
+static int vpakGetc(FILE* f);
+static int vpakEof(FILE* f);
+static int vpakClose(FILE* f);
+
+static long stub_ftello(FILE* f) {
+    if (vpakOwns(f))
+        return (long)vpakTell64(f);
+    return ftell(f);
+}
+static int  sh_fseek(FILE* f, long o, int w);
+static int  stub_fseeko(FILE* f, long o, int w) { return sh_fseek(f, o, w); }
+static int  stub_setenv(const char*, const char*, int) { return 0; }
+static int  stub_unsetenv(const char*)               { return 0; }
+static int  stub_posix_memalign(void** p, size_t a, size_t s) {
+    *p = memalign(a, s);
+    return *p ? 0 : 12; // ENOMEM
+}
+
+// ─── New stubs for batch 3 (all symbols unresolved in the latest run) ─────────
+
+// dladdr: crash reporters call this to resolve their own address → return failure
+// Dl_info layout: 4 pointers (fname, fbase, sname, saddr) — zero them all
+static int stub_dladdr(const void*, void* info) {
+    if (info) memset(info, 0, 4 * sizeof(void*));
+    return 0;
+}
+// sigaltstack: crash reporters use this to set up signal alt-stack → no-op
+static int stub_sigaltstack(const void*, void*) { return 0; }
+// signal: forward to newlib (returns SIG_DFL on failure)
+// strsignal: return a static string
+static char g_signame_buf[32];
+static char* stub_strsignal(int sig) {
+    snprintf(g_signame_buf, sizeof(g_signame_buf), "Signal %d", sig);
+    return g_signame_buf;
+}
+// sys_signame: Android/BSD symbol — pointer to array of signal name strings
+static const char* g_sys_signames[32] = {
+    "", "HUP","INT","QUIT","ILL","TRAP","ABRT","BUS",
+    "FPE","KILL","USR1","SEGV","USR2","PIPE","ALRM","TERM",
+    "STKFLT","CHLD","CONT","STOP","TSTP","TTIN","TTOU","URG",
+    "XCPU","XFSZ","VTALRM","PROF","WINCH","IO","PWR","SYS"
+};
+// environ: standard POSIX pointer to environment strings — expose newlib's
+extern char** environ;
+// gmtime_r / localtime_r — forward to newlib (may already exist, but explicit shim)
+static struct tm* stub_gmtime_r(const time_t* t, struct tm* tm_) {
+    struct tm* r = gmtime(t);
+    if (r && tm_) { *tm_ = *r; return tm_; }
+    return nullptr;
+}
+static struct tm* stub_localtime_r(const time_t* t, struct tm* tm_) {
+    struct tm* r = localtime(t);
+    if (r && tm_) { *tm_ = *r; return tm_; }
+    return nullptr;
+}
+// __memset_chk / __strchr_chk — Bionic security wrappers
+static void* stub_memset_chk(void* d, int c, size_t n, size_t /*dstlen*/) {
+    return memset(d, c, n);
+}
+static char* stub_strchr_chk(const char* s, int c, size_t /*slen*/) {
+    return (char*)strchr(s, c);
+}
+static int stub___FD_SET_chk(int fd, void* set, size_t /*setsize*/) {
+    if (set && fd >= 0 && fd < 1024) { ((uint32_t*)set)[fd/32] |= (1u << (fd%32)); }
+    return 0;
+}
+static int stub___FD_ISSET_chk(int fd, const void* set, size_t /*setsize*/) {
+    if (!set || fd < 0 || fd >= 1024) return 0;
+    return (((const uint32_t*)set)[fd/32] >> (fd%32)) & 1;
+}
+// Process stubs — Switch has no fork/exec/wait
+static int stub_fork()                              { return -1; }
+static int stub_execve(const char*, char* const*, char* const*) { errno = ENOSYS; return -1; }
+static int stub_waitpid(int, int*, int)             { errno = ECHILD; return -1; }
+// Filesystem stubs missing from existing table
+static int stub_symlink(const char*, const char*)   { errno = ENOSYS; return -1; }
+static int stub_utimes(const char*, const void*)    { return 0; }
+static char* stub_realpath(const char* p, char* out) {
+    if (!p || !*p)
+        return nullptr;
+
+    // CryPak's Linux implementation expects normal POSIX absolute paths.
+    // The Switch C runtime reports the current directory as "sdmc:/...", but
+    // the rest of this compatibility layer canonicalizes that namespace to
+    // "/switch/...". Returning the sdmc-prefixed form breaks the path model
+    // used by OpenPacksCommon/OpenPackCommon and can prevent root FCData PAKs
+    // from reaching ZipDir at all.
+    bool callerOwnsBuffer = (out != nullptr);
+    if (!out) {
+        out = (char*)malloc(PATH_MAX);
+        if (!out)
+            return nullptr;
+    }
+
+    auto writeCanonical = [&](const std::string& value) -> char* {
+        const std::string canonical = normalizeSwitchFsPath(value.c_str());
+        if (canonical.size() >= PATH_MAX) {
+            errno = ENAMETOOLONG;
+            if (!callerOwnsBuffer)
+                free(out);
+            return nullptr;
+        }
+        memcpy(out, canonical.c_str(), canonical.size() + 1);
+        return out;
+    };
+
+    if (strcmp(p, ".") == 0 || strcmp(p, "./") == 0) {
+        char cwd[PATH_MAX];
+        if (!::getcwd(cwd, sizeof(cwd))) {
+            if (!callerOwnsBuffer)
+                free(out);
+            return nullptr;
+        }
+        return writeCanonical(cwd);
+    }
+
+    // Shader cache files must never be considered by realpath() in this
+    // experiment, even when an older run already materialized one on disk.
+    // The previous check lived only in the PAK fallback below, so stale
+    // Shaders/Cache/*.cgps files still passed the initial stat() and reached
+    // CCGPShader_GL::mfLoad. Force these runtime cache artifacts to behave as
+    // missing and let CryEngine select its embedded fallback.
+    if (isShaderCacheLookupPath(p)) {
+        if (!callerOwnsBuffer)
+            free(out);
+        errno = ENOENT;
+        // Shader cache misses are intentionally silent in the compatibility log.
+        return nullptr;
+    }
+
+    // Android CryPak passes wildcard paths through AdjustFileName() before
+    // OpenPacksCommon(). A wildcard itself is not a filesystem object, so only
+    // resolve the existing parent directory and preserve the wildcard tail.
+    // This also fixes case-sensitive Switch paths such as FCData/*.pak without
+    // renaming the directory on SD.
+    if (strpbrk(p, "*?[]") != nullptr) {
+        const std::string normalized = normalizeSwitchFsPath(p);
+        const size_t wildcardPos = normalized.find_first_of("*?[]");
+        const size_t slashPos = normalized.rfind('/', wildcardPos);
+
+        std::string parent = slashPos == std::string::npos
+            ? std::string(".")
+            : normalized.substr(0, slashPos);
+        const std::string tail = slashPos == std::string::npos
+            ? normalized
+            : normalized.substr(slashPos + 1);
+
+        if (parent.empty())
+            parent = ".";
+
+        std::string resolvedParent;
+        if (resolvePathCaseInsensitive(parent.c_str(), resolvedParent)) {
+            std::string resolvedPattern;
+
+            if (!normalized.empty() && normalized[0] == '/') {
+                resolvedPattern = resolvedParent;
+            } else {
+                char cwd[PATH_MAX];
+                if (!::getcwd(cwd, sizeof(cwd))) {
+                    if (!callerOwnsBuffer)
+                        free(out);
+                    return nullptr;
+                }
+
+                resolvedPattern = cwd;
+                if (!resolvedParent.empty() && resolvedParent != ".") {
+                    if (!resolvedPattern.empty() && resolvedPattern.back() != '/')
+                        resolvedPattern += '/';
+                    resolvedPattern += resolvedParent;
+                }
+            }
+
+            if (!resolvedPattern.empty() && resolvedPattern.back() != '/')
+                resolvedPattern += '/';
+            resolvedPattern += tail;            return writeCanonical(resolvedPattern);
+        }
+
+        if (!callerOwnsBuffer)
+            free(out);
+        errno = ENOENT;        return nullptr;
+    }
+
+    struct stat st = {};
+    if (::stat(p, &st) == 0) {
+        if (p[0] == '/') {
+            return writeCanonical(p);
+        }
+
+        char cwd[PATH_MAX];
+        if (!::getcwd(cwd, sizeof(cwd))) {
+            if (!callerOwnsBuffer)
+                free(out);
+            return nullptr;
+        }
+
+        std::string absolute = cwd;
+        if (!absolute.empty() && absolute.back() != '/')
+            absolute += '/';
+        absolute += p;
+        return writeCanonical(absolute);
+    }
+
+    // A PAK entry is a real CryPak file even though there is no loose file on
+    // the Switch filesystem. Android CryPak keeps this virtual path alive and
+    // only opens the ZIP entry when FOpen()/GetFileData() is requested. Return
+    // the canonical virtual path here instead of materializing the entry.
+    if (!isShaderCacheLookupPath(p) &&
+        (strchr(p, '/') || strchr(p, '\\'))) {
+        std::string virtualPakPath;
+        PakEntryMeta virtualMeta;
+        if (pakFindVirtualEntry(p, virtualPakPath, virtualMeta)) {
+            std::string virtualPath = p;
+            if (virtualPath.empty() || virtualPath[0] != '/') {
+                char cwd[PATH_MAX];
+                if (::getcwd(cwd, sizeof(cwd))) {
+                    std::string absolute = cwd;
+                    if (!absolute.empty() && absolute.back() != '/')
+                        absolute += '/';
+                    absolute += virtualPath;
+                    virtualPath.swap(absolute);
+                }
+            }
+            return writeCanonical(virtualPath);
+        }
+    }
+
+    if (!callerOwnsBuffer)
+        free(out);
+    errno = ENOENT;    return nullptr;
+}
+static int stub_readlink(const char*, char* buf, size_t sz) {
+    if (sz > 0 && buf) buf[0] = '\0';
+    errno = EINVAL; return -1;
+}
+static int stub_chdir(const char* path) {
+    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
+
+    if (::chdir(ioPath) == 0)
+        return 0;
+    if (ioPath) {
+        std::string resolved;
+        if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
+            return ::chdir(resolved.c_str());
+    }
+    return -1;
+}
+static int stub_isatty(int)             { return 0; }
+// Network stubs
+static int stub_setsockopt(int, int, int, const void*, unsigned) { errno = ENOTSUP; return -1; }
+static int stub_accept(int, void*, void*)  { errno = ENOTSUP; return -1; }
+static int stub_poll(void*, unsigned, int) { return 0; }
+// User/group stubs
+static int stub_setuid(unsigned) { return 0; }
+static int stub_setgid(unsigned) { return 0; }
+// popen/pclose stubs
+static FILE* stub_popen(const char*, const char*) { return nullptr; }
+static int   stub_pclose(FILE*)                   { return -1; }
+// Terminal stubs
+static int stub_tcgetattr(int, void*)         { errno = ENOTTY; return -1; }
+static int stub_tcsetattr(int, int, const void*) { errno = ENOTTY; return -1; }
+// malloc_usable_size — dlmalloc/newlib provides this
+static size_t stub_malloc_usable_size(void* p) { return p ? malloc_usable_size(p) : 0; }
+// Locale-variant char/string functions — ignore locale, call base version
+static int stub_isdigit_l(int c, void*)   { return isdigit(c); }
+static int stub_islower_l(int c, void*)   { return islower(c); }
+static int stub_isupper_l(int c, void*)   { return isupper(c); }
+static int stub_isxdigit_l(int c, void*)  { return isxdigit(c); }
+static int stub_tolower_l(int c, void*)   { return tolower(c); }
+static int stub_toupper_l(int c, void*)   { return toupper(c); }
+static int stub_iswalpha_l(wint_t c, void*)   { return iswalpha(c); }
+static int stub_iswblank_l(wint_t c, void*)   { return iswblank(c); }
+static int stub_iswcntrl_l(wint_t c, void*)   { return iswcntrl(c); }
+static int stub_iswdigit_l(wint_t c, void*)   { return iswdigit(c); }
+static int stub_iswlower_l(wint_t c, void*)   { return iswlower(c); }
+static int stub_iswprint_l(wint_t c, void*)   { return iswprint(c); }
+static int stub_iswpunct_l(wint_t c, void*)   { return iswpunct(c); }
+static int stub_iswspace_l(wint_t c, void*)   { return iswspace(c); }
+static int stub_iswupper_l(wint_t c, void*)   { return iswupper(c); }
+static int stub_iswxdigit_l(wint_t c, void*)  { return iswxdigit(c); }
+static wint_t stub_towlower_l(wint_t c, void*) { return towlower(c); }
+static wint_t stub_towupper_l(wint_t c, void*) { return towupper(c); }
+static int stub_strcoll_l(const char* a, const char* b, void*) { return strcoll(a, b); }
+static size_t stub_strxfrm_l(char* d, const char* s, size_t n, void*) { return strxfrm(d, s, n); }
+static size_t stub_strftime_l(char* s, size_t m, const char* f, const struct tm* t, void*) {
+    return strftime(s, m, f, t);
+}
+static int stub_wcscoll_l(const wchar_t* a, const wchar_t* b, void*) { return wcscoll(a, b); }
+static size_t stub_wcsxfrm_l(wchar_t* d, const wchar_t* s, size_t n, void*) {
+    return wcsxfrm(d, s, n);
+}
+// Math: forward to newlib (these exist but may be missing from our list)
+static double stub_acosh(double x)  { return acosh(x); }
+static double stub_asinh(double x)  { return asinh(x); }
+static double stub_atanh(double x)  { return atanh(x); }
+static double stub_log1p(double x)  { return log1p(x); }
+static double stub_expm1(double x)  { return expm1(x); }
+static double stub_difftime(time_t a, time_t b) { return difftime(a, b); }
+// fesetround — forward to newlib
+static int stub_fesetround(int r) { return fesetround(r); }
+// strptime — newlib stub (may not exist in devkitA64 newlib)
+static char* stub_strptime(const char*, const char*, struct tm*) { return nullptr; }
+// clearerr / fileno / stat ABI / fdopen
+static void  stub_clearerr(FILE* f)              { clearerr(f); }
+static int stub_fileno(FILE* f) {
+    if (vpakOwns(f))
+        return -1;
+    return f ? ::fileno(f) : -1;
+}
+
+// Guest libraries are Android arm64 binaries, while this compatibility layer
+// is compiled against devkitA64/newlib. Their struct stat ABI is therefore not
+// interchangeable. Bionic arm64 lays out st_size at offset 48 and the three
+// timespecs starting at offsets 72/88/104, for a 128-byte structure.
+struct AndroidArm64Stat {
+    uint64_t st_dev;
+    uint64_t st_ino;
+    uint32_t st_mode;
+    uint32_t st_nlink;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint64_t st_rdev;
+    uint64_t __pad1;
+    int64_t  st_size;
+    int32_t  st_blksize;
+    int32_t  __pad2;
+    int64_t  st_blocks;
+    int64_t  st_atim_sec;
+    int64_t  st_atim_nsec;
+    int64_t  st_mtim_sec;
+    int64_t  st_mtim_nsec;
+    int64_t  st_ctim_sec;
+    int64_t  st_ctim_nsec;
+    uint32_t __unused4;
+    uint32_t __unused5;
+};
+
+static_assert(sizeof(AndroidArm64Stat) == 128, "AndroidArm64Stat size");
+static_assert(offsetof(AndroidArm64Stat, st_size) == 48, "AndroidArm64Stat st_size");
+static_assert(offsetof(AndroidArm64Stat, st_mtim_sec) == 88, "AndroidArm64Stat st_mtime");
+
+static void fillAndroidArm64Stat(const struct stat& nativeSt, void* out) {
+    if (!out)
+        return;
+
+    AndroidArm64Stat guest = {};
+    guest.st_mode = static_cast<uint32_t>(nativeSt.st_mode);
+    guest.st_nlink = static_cast<uint32_t>(nativeSt.st_nlink);
+    guest.st_uid = static_cast<uint32_t>(nativeSt.st_uid);
+    guest.st_gid = static_cast<uint32_t>(nativeSt.st_gid);
+    guest.st_size = static_cast<int64_t>(nativeSt.st_size);
+    guest.st_blksize = static_cast<int32_t>(nativeSt.st_blksize);
+    guest.st_blocks = static_cast<int64_t>(nativeSt.st_blocks);
+    guest.st_atim_sec = static_cast<int64_t>(nativeSt.st_atime);
+    guest.st_mtim_sec = static_cast<int64_t>(nativeSt.st_mtime);
+    guest.st_ctim_sec = static_cast<int64_t>(nativeSt.st_ctime);
+    std::memcpy(out, &guest, sizeof(guest));
+}
+
+static int stub_stat(const char* p, struct stat* ignored) {
+    (void)ignored;
+    if (!p) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    const std::string ioPathStorage = normalizeSwitchFsPath(p);
+    const char* ioPath = ioPathStorage.c_str();
+
+    struct stat nativeSt = {};
+    int rc = ::stat(ioPath, &nativeSt);
+    if (rc != 0) {
+        std::string resolved;
+        if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
+            rc = ::stat(resolved.c_str(), &nativeSt);
+    }
+
+    if (rc != 0) {
+        std::string pakPath;
+        PakEntryMeta meta;
+        if (pakFindVirtualEntry(ioPath, pakPath, meta)) {
+            nativeSt = {};
+            nativeSt.st_mode = S_IFREG | 0444;
+            nativeSt.st_nlink = 1;
+            nativeSt.st_uid = 0;
+            nativeSt.st_gid = 0;
+            nativeSt.st_size = (off_t)meta.uncompressedSize;
+            nativeSt.st_blksize = 4096;
+            nativeSt.st_blocks =
+                (blkcnt_t)(((uint64_t)meta.uncompressedSize + 511u) / 512u);
+            fillAndroidArm64Stat(nativeSt, ignored);
+            compatLogFmt("PAK VIRTUAL STAT: %s <- %s size=%u",
+                         ioPath, pakPath.c_str(),
+                         (unsigned)meta.uncompressedSize);
+            return 0;
+        }
+
+        if (pakVirtualDirectoryExists(ioPath)) {
+            nativeSt = {};
+            nativeSt.st_mode = S_IFDIR | 0555;
+            nativeSt.st_nlink = 2;
+            nativeSt.st_uid = 0;
+            nativeSt.st_gid = 0;
+            nativeSt.st_blksize = 4096;
+            fillAndroidArm64Stat(nativeSt, ignored);
+            return 0;
+        }
+
+        return rc;
+    }
+
+    fillAndroidArm64Stat(nativeSt, ignored);
+    return 0;
+}
+
+static int stub_fstat64(int fd, void* out) {
+    if (!out) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    struct stat st = {};
+    int rc = 0;
+    if (vpakFdOwns(fd))
+        rc = vpakFdFstat(fd, &st);
+    else
+        rc = ::fstat(fd, &st);
+    if (rc != 0)
+        return rc;
+
+    fillAndroidArm64Stat(st, out);
+    return 0;
+}
+static FILE* stub_fdopen(int fd, const char* m)  { (void)fd; (void)m; return nullptr; }
+// tmpfile — forward to newlib
+static FILE* stub_tmpfile()                      { return tmpfile(); }
+
+extern void compatLog(const char* msg);
+extern void compatLogFmt(const char* fmt, ...);
+extern void compatLogFlush();
+extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
+
+// Game-initiated termination is otherwise invisible (process just returns to
+// the Home menu with nothing in the log) — record it, plus the caller's
+// return address so the log names the code path that pulled the trigger.
+static void logTermCaller(const char* what, void* ret_addr) {
+    char where[256];
+    elfDescribePc((uint64_t)ret_addr, where, sizeof(where));
+    compatLogFmt("%s from %s", what, where);
+    compatLogFlush();
+}
+
+// Walk the AArch64 frame-pointer chain ([x29] = caller fp, [x29+8] = lr) and
+// symbolize every return address. NDK arm64 builds keep frame pointers, so
+// this names the whole game call path that led to abort/exit. Each line is
+// flushed as it's written — if the walk hits a bogus fp and faults, everything
+// up to that frame is already on disk (and we were dying anyway).
+static void logBacktrace(void* fp) {
+    struct Frame { Frame* fp; void* lr; };
+    Frame* f = (Frame*)fp;
+    for (int i = 0; i < 24 && f; i++) {
+        if (((uintptr_t)f & 0xF) != 0) { compatLogFmt("  bt[%d]: fp misaligned — stop", i); break; }
+        void* lr = f->lr;
+        if (!lr) break;
+        char where[256];
+        elfDescribePc((uint64_t)lr, where, sizeof(where));
+        compatLogFmt("  bt[%d]: %s", i, where);
+        compatLogFlush();
+        Frame* next = f->fp;
+        if (next <= f) break;   // frames must strictly ascend the stack
+        f = next;
+    }
+    compatLogFlush();
+}
+static void sh_exit(int code) {
+    compatLogFmt("game called exit(%d)", code);
+    logTermCaller("exit called", __builtin_return_address(0));
+    logBacktrace(__builtin_frame_address(0));
+    compatLogFlush();
+
+    // The Android game expects exit() to terminate the process immediately.
+    // Running newlib/SDL atexit handlers on Switch tears down objects that are
+    // still referenced by the guest stack and can fault after "Quit-Yes".
+    svcExitProcess();
+    __builtin_unreachable();
+}
+static void sh_abort() {
+    compatLog("game called abort()");
+    logTermCaller("abort called", __builtin_return_address(0));
+    logBacktrace(__builtin_frame_address(0));
+    abort();
+}
+
+extern "C" void __stack_chk_fail(void);
+static void sh_stack_chk_fail(void) {
+    void* ra = __builtin_return_address(0);
+    char where[256];
+    elfDescribePc((uint64_t)ra, where, sizeof(where));
+    compatLogFmt("STACK CHK FAIL from %p %s", ra, where);
+    compatLogFlush();
+    __stack_chk_fail();
+}
+static void sh_exit_raw(int code) {
+    compatLogFmt("game called _exit(%d)", code);
+    logTermCaller("_exit called", __builtin_return_address(0));
+    compatLogFlush();
+
+    // _exit() must bypass host-side atexit/SDL teardown as well.
+    svcExitProcess();
+    __builtin_unreachable();
+}
+
+// ─── Guarded free/realloc ─────────────────────────────────────────────────────
+// Build 60 forensics: the game free()d a pointer into our NRO's RX segment
+// (a JNI string constant), and newlib's _free_r faulted writing a free-list
+// link into read-only memory. Android's allocator tolerates some of this and
+// ART hands out heap copies, so be equally forgiving: only pass real heap
+// pointers to the allocator, and log (symbolized, rate-limited) who tried.
+// The heap is one contiguous region that only ever grows, so its extent is
+// worth caching: the validation below needs half a dozen range checks per
+// free, and an svcQueryMemory apiece would put a syscall storm in the
+// allocator's hot path.
+static uintptr_t g_heap_lo = 0, g_heap_hi = 0;
+
+static bool memIsHeap(const void* p) {
+    uintptr_t a = (uintptr_t)p;
+    if (a >= g_heap_lo && a < g_heap_hi) return true;
+    MemoryInfo mi = {};
+    u32 pageinfo = 0;
+    if (R_FAILED(svcQueryMemory(&mi, &pageinfo, (u64)p))) return false;
+    if (mi.type != MemType_Heap) return false;
+    g_heap_lo = (uintptr_t)mi.addr;
+    g_heap_hi = (uintptr_t)mi.addr + mi.size;
+    return true;
+}
+
+// newlib's malloc_chunk on aarch64. The mem pointer callers hold is chunk+16,
+// so the size field sits at p-8, and fd/bk — the pointers the consolidation
+// code stores *through* — are at chunk+16 and chunk+24.
+struct NlChunk {
+    size_t  prev_size;
+    size_t  size;
+    NlChunk* fd;
+    NlChunk* bk;
+};
+static const size_t NL_PREV_INUSE = 1;
+static inline size_t nlSize(const NlChunk* c) { return c->size & ~(size_t)7; }
+
+static bool nlChunkSane(const NlChunk* c) {
+    if (!c || ((uintptr_t)c & 15) != 0) return false;
+    if (!memIsHeap(c) || !memIsHeap((const char*)c + 16)) return false;
+    size_t sz = nlSize(c);
+    if (sz < 32 || (sz & 15) != 0) return false;             // MINSIZE, 16-aligned
+    if (!memIsHeap((const char*)c + sz)) return false;
+    return true;
+}
+
+// True if handing p to _free_r would make it walk into something that is not a
+// chunk. This is the fault Brain It On hits 155 times: free() decides to
+// consolidate with a neighbour, reads that neighbour's fd, and stores through
+// it — but the neighbour was never a chunk, so fd is zero and the store lands
+// on address 0x18. Predicting the consolidation is the only way to catch it,
+// because the pointer being freed is itself perfectly valid.
+//
+// fd/bk are only tested for null, deliberately. The head of a bin lives in
+// newlib's static arena rather than the heap, so a legitimate fd can point
+// outside it — anything stricter would reject good frees and leak.
+static bool freeWouldCorrupt(void* p) {
+    NlChunk* c = (NlChunk*)((char*)p - 16);
+    if (!nlChunkSane(c)) return true;
+
+    // Forward: newlib merges with the next chunk when the chunk after *that*
+    // reports its predecessor as free.
+    NlChunk* next = (NlChunk*)((char*)c + nlSize(c));
+    if (!nlChunkSane(next)) return true;
+    NlChunk* after = (NlChunk*)((char*)next + nlSize(next));
+    if (memIsHeap(after) && !(after->size & NL_PREV_INUSE)) {
+        if (!next->fd || !next->bk) return true;
+    }
+
+    // Backward: the same one chunk earlier, reached through prev_size.
+    if (!(c->size & NL_PREV_INUSE)) {
+        if (c->prev_size < 32 || (c->prev_size & 15) != 0) return true;
+        NlChunk* prev = (NlChunk*)((char*)c - c->prev_size);
+        if (!nlChunkSane(prev)) return true;
+        if (!prev->fd || !prev->bk) return true;
+    }
+    return false;
+}
+// A pointer that is in the heap page range (memIsHeap) can still be something
+// newlib never handed out: an interior pointer into a larger chunk, a slice out
+// of a memalign'd block, or a sub-allocation from a foreign allocator (il2cpp /
+// libgpg define their own operator new). Passing any of those to _free_r walks a
+// bogus chunk header and corrupts the free-list, which then faults on a *later*
+// free (observed: 155 Unity ctors crashing in _free_r+0x78's list insert on the
+// 1.6.234 Brain It On! build). newlib on aarch64 always returns pointers aligned
+// to MALLOC_ALIGNMENT (16) with a usable size that fits the heap, so anything
+// failing those cheap, zero-false-positive checks is provably not a real chunk —
+// leak it rather than corrupt the arena.
+[[maybe_unused]] static bool looksLikeNewlibChunk(void* p) {
+    if (((uintptr_t)p & 0xF) != 0) return false;          // newlib pointers are 16-aligned
+    size_t us = malloc_usable_size(p);                     // reads header; in-heap so fault-safe
+    if (us == 0 || us > (256u * 1024u * 1024u)) return false;
+    // usable_size only reads p-8, so a foreign pointer whose preceding bytes
+    // happen to look like a plausible size sails through. Walk the chunk graph
+    // and check the consolidation newlib would actually perform.
+    if (freeWouldCorrupt(p)) return false;
+    return true;
+}
+// Counted so the fault report can say whether the game's frees reach us at
+// all. Zero SKIP lines is ambiguous on its own: it means either every pointer
+// passed validation, or nothing ever came through here.
+volatile unsigned long g_sh_free_calls = 0;
+volatile unsigned long g_sh_malloc_calls = 0;
+volatile unsigned long g_sh_calloc_calls = 0;
+volatile unsigned long g_sh_realloc_calls = 0;
+volatile uint32_t g_last_allocator_kind = 0;
+volatile uint32_t g_last_allocator_phase = 0;
+volatile uint64_t g_last_allocator_pc = 0;
+volatile uint64_t g_last_allocator_ptr = 0;
+volatile uint64_t g_last_allocator_size = 0;
+volatile uint64_t g_last_allocator_size2 = 0;
+
+static void recordAllocatorEvent(uint32_t kind, uint64_t ptr, uint64_t size,
+                                  uint64_t size2, uint32_t phase) {
+    g_last_allocator_kind = kind;
+    g_last_allocator_ptr = ptr;
+    g_last_allocator_size = size;
+    g_last_allocator_size2 = size2;
+    g_last_allocator_pc = (uint64_t)(uintptr_t)__builtin_return_address(0);
+    g_last_allocator_phase = phase;
+}
+
+void shimLastAllocatorEvent(uint32_t* kind, uint32_t* phase, uint64_t* caller,
+                            uint64_t* ptr, uint64_t* size, uint64_t* size2) {
+    if (kind)  *kind  = g_last_allocator_kind;
+    if (phase) *phase = g_last_allocator_phase;
+    if (caller) *caller = g_last_allocator_pc;
+    if (ptr)   *ptr   = g_last_allocator_ptr;
+    if (size)  *size  = g_last_allocator_size;
+    if (size2) *size2 = g_last_allocator_size2;
+}
+
+unsigned long shimFreeCallCount(void) { return g_sh_free_calls; }
+void shimAllocCounts(unsigned long* m, unsigned long* c, unsigned long* r, unsigned long* f) {
+    if (m) *m = g_sh_malloc_calls;
+    if (c) *c = g_sh_calloc_calls;
+    if (r) *r = g_sh_realloc_calls;
+    if (f) *f = g_sh_free_calls;
+}
+
+// malloc and calloc were pointing straight at newlib, so nothing counted them.
+// Knowing how many allocations the game makes against how many frees reach us
+// is the difference between "the game barely allocates through libc" and "it
+// allocates through libc and frees through something else entirely" — and only
+// the second explains a fault in _free_r with our free shim barely called.
+// Check the arena immediately before delegating.
+//
+// Sampling av->top every 20ms never caught anything, and the reason is
+// structural: sysmalloc sets av->top to the NEW top before freeing the old
+// one, so by the time anything else can look, the pointer is valid again. The
+// bad value is old_top, a local, read from av->top at the instant the game
+// called malloc. This is that instant — the last point we control before
+// newlib reads it.
+static void arenaGate(const char* who) {
+    static int reported = 0;
+    if (reported >= 3) return;
+    char why[400];
+    if (shimHeapCheckFast(why, sizeof(why))) return;
+    reported++;}
+
+static void* sh_malloc(size_t n) {
+    g_sh_malloc_calls++;
+    recordAllocatorEvent(1, 0, n, 0, 1);
+    arenaGate("malloc");
+    void* r = malloc(n);
+    g_last_allocator_phase = 2;
+    g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
+    return r;
+}
+static void* sh_calloc(size_t a, size_t b) {
+    g_sh_calloc_calls++;
+    recordAllocatorEvent(2, 0, a, b, 1);
+    arenaGate("calloc");
+    void* r = calloc(a, b);
+    g_last_allocator_phase = 2;
+    g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
+    return r;
+}
+
+// ─── Heap integrity walk ────────────────────────────────────────────────────
+// The arena is corrupt before anything faults: _malloc_r calls _free_r
+// internally, so the constructors that "fail" are simply the first ones to
+// allocate after the damage, and the render thread wedges for the same reason
+// when SDL_ttf allocates. Constructor 117 is the first to fault in every run,
+// which means something in the 116 before it does the damage — but nothing
+// logs, so which one is unknown.
+//
+// Chunks are contiguous, so walking forward from a block allocated before any
+// game code ran covers everything allocated since. This reports where the
+// chain first stops making sense, and the caller can run it between
+// constructors to name the one that broke it.
+extern "C" void* _sbrk_r(struct _reent*, ptrdiff_t);   // current break = arena end
+
+// newlib's malloc arena. It lives in our .bss, not in the heap — which is why
+// a dozen clean heap walks meant nothing. av_[2] is the top chunk pointer, and
+// sysmalloc frees chunk2mem(top) when it extends the arena; that is precisely
+// the call that faults, with top pointing 375MB past the break at memory that
+// was never a chunk. Watching this one pointer catches the moment it goes bad.
+extern "C" void*  __malloc_av_[];
+extern "C" char*  __malloc_sbrk_base;
+extern "C" size_t __malloc_max_sbrked_mem;
+
+// The end of what newlib has actually taken from the system.
+//
+// _sbrk_r(_REENT, 0) is not usable for this: the walk and the extent report
+// call it identically and disagree — the walk covered 68000 chunks and claimed
+// to reach the break while the report put the break 4KB above the base, and
+// 68000 chunks do not fit in 4KB. newlib's own accounting does not have that
+// problem, and it is the number the allocator itself works from.
+static uintptr_t arenaEnd(void) {
+    return (uintptr_t)__malloc_sbrk_base + (uintptr_t)__malloc_max_sbrked_mem;
+}
+
+static void*  g_heap_anchor = nullptr;
+
+// One-word description of where an address lives, for fault reports. Naming
+// the region turns "x6 is some number" into "free() was called on something
+// that was never heap".
+const char* shimAddrRegion(uint64_t a) {
+    if (!a) return "null";
+    MemoryInfo mi = {}; u32 pi = 0;
+    if (R_FAILED(svcQueryMemory(&mi, &pi, a))) return "unmapped";
+    switch (mi.type) {
+        case MemType_Heap:              return "heap";
+        case MemType_CodeStatic:
+        case MemType_CodeMutable:       return "code";
+        // The game's modules are mapped with svcMapProcessCodeMemory, so a
+        // chunk pointer landing here means free() was handed something out of
+        // the game's own image rather than an allocation.
+        case MemType_ModuleCodeStatic:
+        case MemType_ModuleCodeMutable: return "game-module";
+        case MemType_MappedMemory:
+        case MemType_WeirdMappedMem:    return "mapped";
+        case MemType_ThreadLocal:       return "tls";
+        case MemType_Unmapped:          return "unmapped";
+        default:                        return "other";
+    }
+}
+
+void shimHeapAnchor(void) {
+    if (!g_heap_anchor) g_heap_anchor = malloc(64);
+}
+
+// Coverage of the last walk. A clean result means nothing unless it is known
+// how much ground was covered — twice now I have reported "the heap is clean"
+// when the walk had stopped after a few hundred chunks and never looked at the
+// rest.
+static int         g_walk_steps  = 0;
+static const char* g_walk_stop   = "not run";
+
+// Heap extent and how much of it is left. The block _free_r faults on is a
+// zero-size chunk at a 256MB-aligned address, which is what the top of the
+// arena looks like when the break has run into the end of the region — so
+// whether that address IS the end is the difference between "the game
+// corrupted the heap" and "the game ran out of it".
+void shimHeapExtent(uint64_t* lo, uint64_t* hi, uint64_t* brk) {
+    if (!g_heap_lo) { MemoryInfo mi = {}; u32 pi = 0;
+                      if (R_SUCCEEDED(svcQueryMemory(&mi, &pi, (u64)(uintptr_t)&g_heap_lo)))
+                          { } }
+    // Force the cache to populate off a known heap pointer.
+    if (!g_heap_lo && g_heap_anchor) memIsHeap(g_heap_anchor);
+    if (lo)  *lo  = g_heap_lo;
+    if (hi)  *hi  = g_heap_hi;
+    if (brk) *brk = (uint64_t)arenaEnd();
+}
+
+void shimHeapWalkStats(int* steps, const char** stop) {
+    if (steps) *steps = g_walk_steps;
+    if (stop)  *stop  = g_walk_stop;
+}
+
+// Arena head only — no walking. Cheap enough to run fifty times a second,
+// which is what turns "one of these constructors" into "this one".
+bool shimHeapCheckFast(char* why, size_t whysz) {
+    const uintptr_t base = (uintptr_t)__malloc_sbrk_base;
+    if (!base) return true;
+    const uintptr_t end = arenaEnd();
+    const uintptr_t top = (uintptr_t)__malloc_av_[2];
+    if (!top) { snprintf(why, whysz, "av->top is null"); return false; }
+    if (top < base || top >= end) {
+        snprintf(why, whysz, "av->top=%p outside [%p,%p)",
+                 (void*)top, (void*)base, (void*)end);
+        return false;
+    }
+    const size_t tsz = nlSize((const NlChunk*)top);
+    if (tsz == 0) {
+        snprintf(why, whysz, "av->top=%p has size 0 (points at zeroed memory)",
+                 (void*)top);
+        return false;
+    }
+    if (top + tsz > end + 0x1000) {
+        snprintf(why, whysz, "av->top=%p size %zu runs past arena end %p",
+                 (void*)top, tsz, (void*)end);
+        return false;
+    }
+    return true;
+}
+
+bool shimHeapCheck(char* why, size_t whysz) {
+    if (!g_heap_anchor) return true;
+
+    // sbrk(0) is the true end of the arena. The previous version stopped at the
+    // first zero-size chunk, which it reached after 612 steps every run — so it
+    // examined a fraction of the heap and reported the rest clean without ever
+    // looking at it. That is why the corruption below went unseen: it sits past
+    // that point.
+    const uintptr_t arena_end = arenaEnd();
+    g_walk_steps = 0;
+    g_walk_stop  = "completed";
+
+    // Check the arena before the heap. The top chunk must sit between the
+    // base sbrk handed out and the current break; anything else means the
+    // allocator's own state has been overwritten, and no amount of walking
+    // chunks would ever show it.
+    {
+        const uintptr_t top  = (uintptr_t)__malloc_av_[2];
+        const uintptr_t base = (uintptr_t)__malloc_sbrk_base;
+        if (base && top && (top < base || top >= arena_end)) {
+            snprintf(why, whysz,
+                     "malloc arena top=%p is outside [%p, %p) — newlib's av_ "
+                     "has been overwritten (av_ at %p)",
+                     (void*)top, (void*)base, (void*)arena_end,
+                     (void*)__malloc_av_);
+            g_walk_stop = "arena top invalid";
+            return false;
+        }
+        // Being in range is not enough, and that is exactly why this check has
+        // never fired. At the fault, top IS in range — 355MB into a 512MB
+        // arena — it just points at memory that is entirely zero. sysmalloc
+        // then frees chunk2mem(top), reads a null forward pointer out of those
+        // zeros, and stores through it.
+        //
+        // A real top chunk has a size, and that size reaches the end of the
+        // arena: it is by definition the last chunk. Checking the size is what
+        // catches "top points at nothing", which is the actual failure.
+        if (base && top) {
+            const NlChunk* tc  = (const NlChunk*)top;
+            const size_t   tsz = nlSize(tc);
+            if (tsz == 0) {
+                snprintf(why, whysz,
+                         "malloc arena top=%p has size 0 — it points at zeroed "
+                         "memory, so the next allocation will free a chunk that "
+                         "is not there (av_ at %p, arena ends %p)",
+                         (void*)top, (void*)__malloc_av_, (void*)arena_end);
+                g_walk_stop = "arena top has no size";
+                return false;
+            }
+            if (top + tsz > arena_end + 0x1000) {
+                snprintf(why, whysz,
+                         "malloc arena top=%p size %zu runs past the arena end "
+                         "%p (av_ at %p)",
+                         (void*)top, tsz, (void*)arena_end, (void*)__malloc_av_);
+                g_walk_stop = "arena top oversized";
+                return false;
+            }
+        }
+    }
+    // A break of 0 or -1 would make every bound below trivially true and turn
+    // the whole walk into an immediate "clean" — say so rather than pretend.
+    if (arena_end < 0x1000) { g_walk_stop = "no arena accounting"; return true; }
+
+    // Start where newlib actually started: __malloc_sbrk_base is the first
+    // address it took from the system, so it is the arena base by definition.
+    //
+    // The previous version scanned upward from the heap *region* base for
+    // something that looked like a chunk, and duly found one — the region base
+    // holds libnx's own data, whose first two words are pointers that happened
+    // to pass a size check. Everything after that was a misread, which is where
+    // the "prev_size 0 != prev size 4096" report came from.
+    const NlChunk* c = (const NlChunk*)__malloc_sbrk_base;
+    if (!__malloc_sbrk_base) { g_walk_stop = "no arena base"; return true; }
+
+    size_t prev_sz = 0;
+    const NlChunk* prev_c = nullptr;
+    const uintptr_t top_addr = (uintptr_t)__malloc_av_[2];
+    const NlChunk* top_chunk = (const NlChunk*)top_addr;
+    const size_t top_size = top_chunk ? nlSize(top_chunk) : 0;
+    static bool bounds_logged = false;
+    if (!bounds_logged) {
+        bounds_logged = true;    }
+
+    for (int i = 0; i < 400000; i++) {
+        g_walk_steps = i;
+        if (!memIsHeap(c)) { g_walk_stop = "left the heap region"; return true; }
+        if ((uintptr_t)c + 32 > arena_end) { g_walk_stop = "reached the break"; return true; }
+
+        // av_[2] is newlib's top chunk. It is not a normal free-bin chunk and
+        // therefore must be recognized before checking fd/bk or the boundary
+        // tag of the following zero-filled arena padding.
+        if (c == top_chunk) {
+            g_walk_stop = "reached top chunk";
+            return true;
+        }
+
+        size_t sz = nlSize(c);
+
+        // A zero-sized header immediately after the real top chunk is the
+        // unused arena tail, not heap corruption. This must be checked BEFORE
+        // PREV_INUSE/prev_size: the zeroed tail has prev_size=0 while prev_sz is
+        // the valid size of the top chunk, which otherwise creates the exact
+        // false-positive seen in the logs.
+        if (sz == 0) {
+            if (top_addr && top_size &&
+                (uintptr_t)c >= top_addr + top_size) {
+                g_walk_stop = "reached arena tail after top";
+                return true;
+            }
+            snprintf(why, whysz,
+                     "chunk %p has size 0 below the break (step %d)",
+                     (const void*)c, i);
+            g_walk_stop = "zero-size chunk";
+            return false;
+        }
+
+        // The invariant the fault actually violates. When PREV_INUSE is clear
+        // the previous chunk is free, and prev_size must equal its size —
+        // that pair is the boundary tag. _free_r trusts it to walk backwards,
+        // so a mismatch is precisely what sends it into untouched memory with a
+        // null forward pointer, which is the fault we keep seeing.
+        if (i > 0 && !(c->size & NL_PREV_INUSE) && c->prev_size != prev_sz) {
+            // Dump the overrun block's contents. The chain advanced correctly
+            // to get here, so this is a real boundary and these bytes are what
+            // the writer left behind — a string, a struct, a repeated pattern:
+            // whatever it is will identify the owner far faster than tracing
+            // allocations backwards.
+            char hex[3 * 48 + 1] = {}, asc[48 + 1] = {};
+            const unsigned char* d = (const unsigned char*)prev_c + 16;
+            size_t n = prev_sz > 16 ? prev_sz - 16 : 0;
+            if (n > 40) n = 40;
+            for (size_t j = 0; j < n; j++) {
+                snprintf(hex + j * 3, 4, "%02x ", d[j]);
+                asc[j] = (d[j] >= 32 && d[j] < 127) ? (char)d[j] : '.';
+            }
+            snprintf(why, whysz,
+                     "chunk %p (step %d): PREV_INUSE clear but prev_size %llu != "
+                     "prev size %zu | prev %p data: %s| %s",
+                     (const void*)c, i, (unsigned long long)c->prev_size, prev_sz,
+                     (const void*)prev_c, hex, asc);
+            g_walk_stop = "prev_size mismatch";
+            return false;
+        }
+
+        const NlChunk* this_prev_c  = prev_c;
+        const size_t   this_prev_sz = prev_sz;
+        (void)this_prev_sz;
+        prev_c  = c;
+        prev_sz = sz;
+        if (sz < 32 || (sz & 15) != 0) {
+            snprintf(why, whysz, "chunk %p has bad size %zu (step %d)", (const void*)c, sz, i);
+            g_walk_stop = "bad chunk size";
+            return false;
+        }
+        const NlChunk* next = (const NlChunk*)((const char*)c + sz);
+        if (next <= c) {
+            snprintf(why, whysz, "chunk %p does not advance (step %d)", (const void*)c, i);
+            g_walk_stop = "non-advancing chunk";
+            return false;
+        }
+        if (!memIsHeap(next)) {
+            g_walk_stop = "left heap after chunk";
+            return true;
+        }
+
+        // A chunk is free when the following chunk says its predecessor is not
+        // in use. Any such chunk is on a bin, so its fd and bk should be non-null.
+        // The top chunk was already handled above by identity.
+        if (!(next->size & NL_PREV_INUSE)) {
+            if (!c->fd || !c->bk) {
+                // Report the neighbours too. Once one size is misread every
+                // later "chunk" is user data reinterpreted as a header, and
+                // fd/bk full of small integers is exactly what that looks
+                // like — so a plausible predecessor means real corruption and
+                // an implausible one means the walk lost sync earlier.
+                g_walk_stop = "null bin pointers";
+                snprintf(why, whysz,
+                         "free chunk %p (size %zu) fd=%p bk=%p at step %d; "
+                         "prev %p size %zu",
+                         (const void*)c, sz, (const void*)c->fd, (const void*)c->bk,
+                         i, (const void*)this_prev_c, this_prev_sz);
+                return false;
+            }
+        }
+        c = next;
+    }
+    g_walk_stop = "hit the step limit";
+    return true;
+}
+
+static void sh_free(void* p) {
+    if (!p) return;
+    g_sh_free_calls++;
+    recordAllocatorEvent(3, (uint64_t)(uintptr_t)p, 0, 0, 1);
+    arenaGate("free");
+
+    // Android's original CMTSafeHeap::Free() calls plain ::free(p) on Linux.
+    // Do not second-guess the allocator's chunk metadata here: pointers coming
+    // from CrySystem/CMTSafeHeap can have allocator headers that differ from
+    // the conservative newlib chunk heuristic above. For this A/B experiment,
+    // only reject addresses that are not part of a Switch heap at all.
+    if (!memIsHeap(p))
+        return;
+
+    free(p);
+    g_last_allocator_phase = 2;
+}
+static void* sh_realloc(void* p, size_t n) {
+    g_sh_realloc_calls++;
+    recordAllocatorEvent(4, (uint64_t)(uintptr_t)p, n, 0, 1);
+    arenaGate("realloc");
+
+    if (!p)
+        return malloc(n);
+
+    // Do not apply free()-specific chunk heuristics to realloc(). A pointer can
+    // be a valid live newlib allocation even when freeWouldCorrupt() cannot
+    // prove that the surrounding free-list topology is safe. Rejecting such a
+    // pointer changes realloc semantics into malloc+memcpy+leak and changes the
+    // heap layout, which is particularly sensitive during CryEngine shader
+    // preprocessing.
+    if (memIsHeap(p)) {
+        void* r = realloc(p, n);
+        g_last_allocator_phase = 2;
+        g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
+        return r;
+    }
+
+    // Keep protection for pointers that are not part of the Switch heap at all.
+    // There is no trustworthy old size/owner information for these pointers,
+    // so do not pass them to newlib realloc.
+    void* r = malloc(n);
+    g_last_allocator_phase = 2;
+    g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
+    return r;
+}
+
+// ─── /dev/urandom virtual fd ─────────────────────────────────────────────────
+// libc++'s std::random_device ctor opens /dev/urandom — through bionic's
+// fortified __open_2, so no logged shim showed the failure. The path doesn't
+// exist on Switch, the ctor got -1, and __throw_system_error → abort() killed
+// the game ~170s in (confirmed by backtrace, build 54 log). Serve the open on
+// a magic fd backed by the Switch CSRNG instead.
+static const int URANDOM_FD = 0x55AA;
+static int devUrandomOpen(const char* p) {
+    if (p && (strcmp(p, "/dev/urandom") == 0 || strcmp(p, "/dev/random") == 0)) {
+        compatLogFmt("open %s → CSRNG virtual fd", p);
+        return URANDOM_FD;
+    }
+    return -1;
+}
+static ssize_t sh_read(int fd, void* b, size_t n) {
+    if (fd == URANDOM_FD) { if (b && n) randomGet(b, n); return (ssize_t)n; }
+    if (vpakFdOwns(fd))
+        return vpakFdRead(fd, b, n);
+    return read(fd, b, n);
+}
+
+static off_t sh_lseek(int fd, off_t off, int whence) {
+    if (vpakFdOwns(fd))
+        return vpakFdSeek(fd, off, whence);
+    return lseek(fd, off, whence);
+}
+
+static int sh_close(int fd) {
+    if (fd == URANDOM_FD) return 0;
+    if (vpakFdOwns(fd))
+        return vpakFdClose(fd);
+    return close(fd);
+}
+
+static int sh_fstat(int fd, struct stat* st) {
+    if (vpakFdOwns(fd))
+        return vpakFdFstat(fd, st);
+    return fstat(fd, st);
+}
+
+// write() routed through the log for stdout/stderr — libc++abi terminate
+// messages ("terminating with uncaught exception of type ...") land on fd 2.
+static ssize_t sh_write(int fd, const void* buf, size_t n) {
+    if ((fd == 1 || fd == 2) && buf && n > 0) {
+        char tmp[512];
+        size_t c = n < sizeof(tmp) - 1 ? n : sizeof(tmp) - 1;
+        memcpy(tmp, buf, c);
+        tmp[c] = '\0';
+        while (c > 0 && (tmp[c - 1] == '\n' || tmp[c - 1] == '\r')) tmp[--c] = '\0';
+        if (c > 0) compatLogFmt("game %s: %s", fd == 2 ? "stderr" : "stdout", tmp);
+        return (ssize_t)n;
+    }
+    return write(fd, buf, n);
+}
+
+// ─── Expansion files ─────────────────────────────────────────────────────────
+// Where this game's OBBs were installed, and which package they belong to. A
+// game that hardcodes /sdcard/Android/obb/<pkg>/main.<ver>.<pkg>.obb — plenty
+// do, rather than calling getObbDir() — would otherwise open nothing and
+// report its own data as missing.
+static std::string g_obb_dir;
+static std::string g_obb_pkg;
+void compatSetObbDir(const char* dir, const char* pkg) {
+    g_obb_dir = dir ? dir : "";
+    g_obb_pkg = pkg ? pkg : "";
+}
+// Returns the rewritten path, or an empty string to leave the call alone.
+static std::string obbRemap(const char* path) {
+    if (!path || g_obb_dir.empty()) return "";
+    return obb::remapPath(path, g_obb_pkg, g_obb_dir);
+}
+
+[[maybe_unused]] static std::string cdataToFcdata(const char* path) {
+    if (!path || !*path)
+        return "";
+
+    std::string p = path;
+    for (char& c : p) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    std::string lower = asciiLower(p);
+
+    if (lower == "cdata")
+        return "FCData";
+    if (lower.rfind("cdata/", 0) == 0)
+        return "FCData/" + p.substr(6);
+
+    // After the realpath fix above, CryPak may pass absolute CData paths to
+    // opendir/open/fopen. Remap only when CData is exactly below the current
+    // game working directory; do not rewrite arbitrary system paths.
+    char cwd[PATH_MAX];
+    if (::getcwd(cwd, sizeof(cwd))) {
+        std::string root = cwd;
+        for (char& c : root) {
+            if ((unsigned char)c == 92)
+                c = '/';
+        }
+        std::string rootLower = asciiLower(root);
+        if (!root.empty() && root.back() == '/')
+            root.pop_back(), rootLower.pop_back();
+
+        const std::string absPrefix = rootLower + "/cdata";
+        if (lower == absPrefix)
+            return root + "/FCData";
+        if (lower.rfind(absPrefix + "/", 0) == 0)
+            return root + "/FCData/" + p.substr(absPrefix.size() + 1);
+    }
+
+    return "";
+}
+
+
+// Missing PAK compatibility.
+// CryPak can throw ZipDir::Error when an Android-packaging path requests a
+// PAK that is not present on the Switch filesystem. Treat every missing PAK as
+// an empty, valid ZIP archive instead of allowing the exception to escape.
+// Only read-mode opens are handled here; existing PAK files are never changed.
+static std::string pakNormalizeName(const char* name) {
+    std::string out = name ? name : "";
+
+    // Match CryPak::BeautifyPath semantics closely enough for the virtual PAK
+    // index: native/non-native slashes become '/', names are case-folded, and
+    // redundant separators plus "/./" path components disappear. In
+    // particular, weapon animation lists routinely contain "dir\\.\\file.caf".
+    for (char& c : out) {
+        if ((unsigned char)c == 92)
+            c = '/';
+        else
+            c = (char)std::tolower((unsigned char)c);
+    }
+
+    std::string normalized;
+    normalized.reserve(out.size());
+
+    size_t i = 0;
+    while (i < out.size()) {
+        // Collapse repeated separators.
+        if (out[i] == '/') {
+            if (normalized.empty() || normalized.back() != '/')
+                normalized.push_back('/');
+            ++i;
+            continue;
+        }
+
+        // Remove a "." path component: "foo/./bar" -> "foo/bar".
+        if (out[i] == '.' &&
+            (i + 1 == out.size() ||
+             (i + 1 < out.size() && out[i + 1] == '/'))) {
+            ++i;
+            if (i < out.size() && out[i] == '/')
+                ++i;
+            continue;
+        }
+
+        normalized.push_back(out[i]);
+        ++i;
+    }
+
+    while (normalized.size() >= 2 &&
+           normalized[0] == '.' && normalized[1] == '/')
+        normalized.erase(0, 2);
+
+    // Do not leave a leading slash for ordinary relative PAK entries.
+    while (normalized.size() > 1 && normalized[0] == '/' &&
+           normalized[1] != '/')
+        normalized.erase(0, 1);
+
+    return normalized;
+}
+
+static uint16_t pakRd16(const unsigned char* p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t pakRd32(const unsigned char* p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static bool pakReadExact(FILE* f, void* dst, size_t n) {
+    return n == 0 || fread(dst, 1, n, f) == n;
+}
+
+static bool pakInflateRaw(const unsigned char* src, size_t srcSize,
+                          unsigned char* dst, size_t dstSize) {
+    if (!src || !dst || srcSize > 0xffffffffu || dstSize > 0xffffffffu)
+        return false;
+
+    z_stream zs = {};
+    zs.next_in = const_cast<unsigned char*>(src);
+    zs.avail_in = (unsigned int)srcSize;
+    zs.next_out = dst;
+    zs.avail_out = (unsigned int)dstSize;
+
+    const char* version = zlibVersion();
+    if (!version || inflateInit2_(&zs, -15, version, (int)sizeof(z_stream)) != 0)
+        return false;
+
+    // Keep these zlib status/action values local because this source intentionally
+    // declares the zlib ABI itself and does not depend on zlib.h being installed.
+    constexpr int kZOk = 0;
+    constexpr int kZStreamEnd = 1;
+    constexpr int kZBufError = -5;
+    constexpr int kZFinish = 4;
+
+    int rc = kZOk;
+    while (rc == kZOk && zs.avail_out > 0)
+        rc = inflate(&zs, kZFinish);
+
+    // Z_BUF_ERROR can be returned when the output buffer is exactly full before
+    // zlib gets a chance to report stream end. Treat that as success only when
+    // all requested output bytes were produced; otherwise the stream is bad.
+    const bool ok = (zs.total_out == dstSize) &&
+                    (rc == kZStreamEnd || rc == kZBufError);
+    if (!ok) {
+        (void)srcSize;
+        (void)dstSize;
+        (void)rc;
+        (void)zs;
+    }
+
+    inflateEnd(&zs);
+    return ok;
+}
+
+struct PakIndex {
+    bool valid = false;
+    std::unordered_map<std::string, PakEntryMeta> entries;
+};
+
+static std::atomic<unsigned> g_pakMemoryTraceEvents{0};
+
+static bool pakMemoryTracePath(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string lower(path);
+    for (char& c : lower)
+        c = (char)std::tolower((unsigned char)c);
+
+    return lower.find(".caf") != std::string::npos ||
+           lower.find(".cgf") != std::string::npos;
+}
+
+static bool pakMemoryTraceBudget(const char* path) {
+    if (!pakMemoryTracePath(path))
+        return false;
+
+    const unsigned n = g_pakMemoryTraceEvents.fetch_add(1);
+    return n < 160;
+}
+
+struct VirtualPakFile {
+    std::vector<unsigned char> data;
+    size_t pos = 0;
+    std::string name;
+    unsigned traceReads = 0;
+    bool trace = false;
+};
+
+static Mutex g_vpak_lock;
+static std::unordered_set<FILE*> g_vpak_handles;
+
+static bool vpakOwns(FILE* f) {
+    if (!f)
+        return false;
+    mutexLock(&g_vpak_lock);
+    const bool found = g_vpak_handles.find(f) != g_vpak_handles.end();
+    mutexUnlock(&g_vpak_lock);
+    return found;
+}
+
+static VirtualPakFile* vpakLookupLocked(FILE* f) {
+    if (!f || g_vpak_handles.find(f) == g_vpak_handles.end())
+        return nullptr;
+    return reinterpret_cast<VirtualPakFile*>(f);
+}
+
+static FILE* vpakOpen(std::vector<unsigned char>&& data,
+                           const char* requested,
+                           bool trace) {
+    VirtualPakFile* v = new VirtualPakFile();
+    if (!v)
+        return nullptr;
+    v->data = std::move(data);
+    if (requested)
+        v->name = requested;
+    v->trace = trace;
+    FILE* handle = reinterpret_cast<FILE*>(v);
+    mutexLock(&g_vpak_lock);
+    g_vpak_handles.insert(handle);
+    mutexUnlock(&g_vpak_lock);
+    return handle;
+}
+
+static size_t vpakRead(FILE* f, void* dst, size_t size, size_t count) {
+    if (!dst || size == 0 || count == 0)
+        return 0;
+
+    mutexLock(&g_vpak_lock);
+    VirtualPakFile* v = vpakLookupLocked(f);
+    if (!v || v->pos >= v->data.size()) {
+        mutexUnlock(&g_vpak_lock);
+        return 0;
+    }
+
+    const size_t maxBytes = v->data.size() - v->pos;
+    const size_t requested =
+        (count > SIZE_MAX / size) ? SIZE_MAX : size * count;
+    const size_t bytes = requested < maxBytes ? requested : maxBytes;
+    const size_t whole = bytes - (bytes % size);
+
+    if (whole) {
+        if (v->trace && v->traceReads < 8) {
+            compatLogFmt("PAK MEM TRACE READ: %s src=%p dst=%p pos=%zu bytes=%zu size=%zu",
+                         v->name.c_str(),
+                         (void*)(v->data.data() + v->pos),
+                         dst, v->pos, whole, v->data.size());
+            ++v->traceReads;
+        }
+        memcpy(dst, v->data.data() + v->pos, whole);
+        v->pos += whole;
+    }
+
+    mutexUnlock(&g_vpak_lock);
+    return whole / size;
+}
+
+static int vpakSeek(FILE* f, int64_t off, int whence) {
+    mutexLock(&g_vpak_lock);
+    VirtualPakFile* v = vpakLookupLocked(f);
+    if (!v) {
+        mutexUnlock(&g_vpak_lock);
+        return -1;
+    }
+
+    int64_t base = 0;
+    if (whence == SEEK_SET)
+        base = 0;
+    else if (whence == SEEK_CUR)
+        base = (int64_t)v->pos;
+    else if (whence == SEEK_END)
+        base = (int64_t)v->data.size();
+    else {
+        mutexUnlock(&g_vpak_lock);
+        return -1;
+    }
+
+    const int64_t next = base + off;
+    if (next < 0 || (uint64_t)next > (uint64_t)v->data.size()) {
+        mutexUnlock(&g_vpak_lock);
+        return -1;
+    }
+
+    v->pos = (size_t)next;
+    mutexUnlock(&g_vpak_lock);
+    return 0;
+}
+
+static long long vpakTell64(FILE* f) {
+    mutexLock(&g_vpak_lock);
+    VirtualPakFile* v = vpakLookupLocked(f);
+    const long long pos = v ? (long long)v->pos : -1;
+    mutexUnlock(&g_vpak_lock);
+    return pos;
+}
+
+static int vpakGetc(FILE* f) {
+    mutexLock(&g_vpak_lock);
+    VirtualPakFile* v = vpakLookupLocked(f);
+    if (!v || v->pos >= v->data.size()) {
+        mutexUnlock(&g_vpak_lock);
+        return EOF;
+    }
+    const int c = v->data[v->pos++];
+    mutexUnlock(&g_vpak_lock);
+    return c;
+}
+
+static int vpakEof(FILE* f) {
+    mutexLock(&g_vpak_lock);
+    VirtualPakFile* v = vpakLookupLocked(f);
+    const int eof = !v || v->pos >= v->data.size();
+    mutexUnlock(&g_vpak_lock);
+    return eof ? 1 : 0;
+}
+
+static int vpakClose(FILE* f) {
+    mutexLock(&g_vpak_lock);
+    auto it = g_vpak_handles.find(f);
+    if (it == g_vpak_handles.end()) {
+        mutexUnlock(&g_vpak_lock);
+        return -1;
+    }
+    g_vpak_handles.erase(it);
+    VirtualPakFile* v = reinterpret_cast<VirtualPakFile*>(f);
+    mutexUnlock(&g_vpak_lock);
+    delete v;
+    return 0;
+}
+
+// POSIX file-descriptor equivalent of the Android/CryPak pseudo-file.
+// Some guest code (notably CControllerManager::LoadAnimation) bypasses
+// stdio and uses open/read/lseek directly. Keep those handles entirely in
+// memory too; never create a loose copy of the PAK entry.
+struct VirtualPakFd {
+    std::vector<unsigned char> data;
+    off_t pos = 0;
+    std::string name;
+    unsigned traceReads = 0;
+    bool trace = false;
+};
+
+static constexpr int VPAK_FD_BASE = 0x6000;
+static constexpr int VPAK_FD_LIMIT = 0x6fff;
+static Mutex g_vpak_fd_lock;
+static std::unordered_map<int, VirtualPakFd*> g_vpak_fds;
+static int g_next_vpak_fd = VPAK_FD_BASE;
+
+static bool vpakFdOwns(int fd) {
+    mutexLock(&g_vpak_fd_lock);
+    const bool found = g_vpak_fds.find(fd) != g_vpak_fds.end();
+    mutexUnlock(&g_vpak_fd_lock);
+    return found;
+}
+
+static int vpakFdOpen(const char* requested, int flags) {
+    if (!requested || !*requested)
+        return -1;
+
+    // Virtual PAK entries are read-only. Writes/creates must continue to use
+    // the real filesystem rather than silently redirecting to an archive.
+    const int writeFlags = O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND;
+    if (flags & writeFlags)
+        return -1;
+
+    const bool trace = pakMemoryTraceBudget(requested);
+    const std::string wantedTrace = pakAssetRelativeName(requested);
+
+    std::string pakPath;
+    PakEntryMeta meta;
+    if (!pakFindVirtualEntry(requested, pakPath, meta)) {
+        if (trace) {
+            compatLogFmt("PAK MEM TRACE FD_MISS: requested=%s wanted=%s",
+                         requested, wantedTrace.c_str());
+        }
+        return -1;
+    }
+
+    if (trace) {
+        compatLogFmt("PAK MEM TRACE FD_FIND: requested=%s wanted=%s pak=%s c=%u u=%u method=%u local=%u",
+                     requested, wantedTrace.c_str(), pakPath.c_str(),
+                     meta.compressedSize, meta.uncompressedSize,
+                     (unsigned)meta.method, meta.localOffset);
+    }
+
+    std::vector<unsigned char> data;
+    if (!pakReadEntryToMemory(pakPath, meta, data)) {
+        if (trace) {
+            compatLogFmt("PAK MEM TRACE FD_READ_FAILED: %s <- %s",
+                         wantedTrace.c_str(), pakPath.c_str());
+        } else {
+            compatLogFmt("PAK VIRTUAL FD READ FAILED: %s <- %s",
+                         wantedTrace.c_str(),
+                         pakPath.c_str());
+        }
+        return -1;
+    }
+
+    if (trace) {
+        compatLogFmt("PAK MEM TRACE FD_DECOMP: %s plain=%p plain_size=%zu pak=%s",
+                     wantedTrace.c_str(), (void*)data.data(), data.size(),
+                     pakPath.c_str());
+    }
+
+    VirtualPakFd* v = new VirtualPakFd();
+    if (!v)
+        return -1;
+    v->data = std::move(data);
+    v->name = requested;
+    v->trace = trace;
+
+    mutexLock(&g_vpak_fd_lock);
+    int chosen = -1;
+    for (int i = 0; i <= (VPAK_FD_LIMIT - VPAK_FD_BASE); ++i) {
+        const int candidate =
+            VPAK_FD_BASE + ((g_next_vpak_fd - VPAK_FD_BASE + i) %
+                            (VPAK_FD_LIMIT - VPAK_FD_BASE + 1));
+        if (g_vpak_fds.find(candidate) == g_vpak_fds.end()) {
+            chosen = candidate;
+            g_next_vpak_fd = candidate + 1;
+            if (g_next_vpak_fd > VPAK_FD_LIMIT)
+                g_next_vpak_fd = VPAK_FD_BASE;
+            break;
+        }
+    }
+
+    if (chosen >= 0)
+        g_vpak_fds.emplace(chosen, v);
+    mutexUnlock(&g_vpak_fd_lock);
+
+    if (chosen < 0) {
+        delete v;
+        errno = EMFILE;
+        return -1;
+    }
+
+    compatLogFmt("PAK VIRTUAL FD OPEN: %s <- %s fd=%d size=%zu",
+                 pakAssetRelativeName(requested).c_str(),
+                 pakPath.c_str(), chosen, v->data.size());
+    return chosen;
+}
+
+static ssize_t vpakFdRead(int fd, void* dst, size_t count) {
+    if (!dst && count) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    mutexLock(&g_vpak_fd_lock);
+    auto it = g_vpak_fds.find(fd);
+    if (it == g_vpak_fds.end()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EBADF;
+        return -1;
+    }
+
+    VirtualPakFd* v = it->second;
+    if (v->pos >= (off_t)v->data.size()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        return 0;
+    }
+
+    const size_t available = v->data.size() - (size_t)v->pos;
+    const size_t bytes = count < available ? count : available;
+    if (bytes) {
+        if (v->trace && v->traceReads < 8) {
+            compatLogFmt("PAK MEM TRACE FDREAD: %s fd=%d src=%p dst=%p pos=%lld bytes=%zu size=%zu",
+                         v->name.c_str(), fd,
+                         (void*)(v->data.data() + v->pos),
+                         dst, (long long)v->pos, bytes, v->data.size());
+            ++v->traceReads;
+        }
+        memcpy(dst, v->data.data() + v->pos, bytes);
+    }
+    v->pos += (off_t)bytes;
+    mutexUnlock(&g_vpak_fd_lock);
+    return (ssize_t)bytes;
+}
+
+static off_t vpakFdSeek(int fd, off_t off, int whence) {
+    mutexLock(&g_vpak_fd_lock);
+    auto it = g_vpak_fds.find(fd);
+    if (it == g_vpak_fds.end()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EBADF;
+        return (off_t)-1;
+    }
+
+    VirtualPakFd* v = it->second;
+    off_t base = 0;
+    if (whence == SEEK_SET)
+        base = 0;
+    else if (whence == SEEK_CUR)
+        base = v->pos;
+    else if (whence == SEEK_END)
+        base = (off_t)v->data.size();
+    else {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EINVAL;
+        return (off_t)-1;
+    }
+
+    const off_t next = base + off;
+    if (next < 0 || next > (off_t)v->data.size()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EINVAL;
+        return (off_t)-1;
+    }
+
+    v->pos = next;
+    mutexUnlock(&g_vpak_fd_lock);
+    return next;
+}
+
+static ssize_t vpakFdPread(int fd, void* dst, size_t count, off_t offset) {
+    if (!dst && count) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    mutexLock(&g_vpak_fd_lock);
+    auto it = g_vpak_fds.find(fd);
+    if (it == g_vpak_fds.end()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EBADF;
+        return -1;
+    }
+
+    VirtualPakFd* v = it->second;
+    if (offset < 0 || offset >= (off_t)v->data.size()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        return 0;
+    }
+
+    const size_t available = v->data.size() - (size_t)offset;
+    const size_t bytes = count < available ? count : available;
+    if (bytes) {
+        if (v->trace && v->traceReads < 8) {
+            compatLogFmt("PAK MEM TRACE FDPREAD: %s fd=%d src=%p dst=%p pos=%lld bytes=%zu size=%zu",
+                         v->name.c_str(), fd,
+                         (void*)(v->data.data() + offset),
+                         dst, (long long)offset, bytes, v->data.size());
+            ++v->traceReads;
+        }
+        memcpy(dst, v->data.data() + offset, bytes);
+    }
+    mutexUnlock(&g_vpak_fd_lock);
+    return (ssize_t)bytes;
+}
+
+static int vpakFdClose(int fd) {
+    mutexLock(&g_vpak_fd_lock);
+    auto it = g_vpak_fds.find(fd);
+    if (it == g_vpak_fds.end()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EBADF;
+        return -1;
+    }
+
+    VirtualPakFd* v = it->second;
+    g_vpak_fds.erase(it);
+    mutexUnlock(&g_vpak_fd_lock);
+    delete v;
+    return 0;
+}
+
+static int vpakFdFstat(int fd, struct stat* st) {
+    if (!st) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    mutexLock(&g_vpak_fd_lock);
+    auto it = g_vpak_fds.find(fd);
+    if (it == g_vpak_fds.end()) {
+        mutexUnlock(&g_vpak_fd_lock);
+        errno = EBADF;
+        return -1;
+    }
+
+    std::memset(st, 0, sizeof(*st));
+    st->st_mode = S_IFREG | 0444;
+    st->st_nlink = 1;
+    st->st_size = (off_t)it->second->data.size();
+    st->st_blksize = 4096;
+    st->st_blocks = (blkcnt_t)((it->second->data.size() + 511u) / 512u);
+    mutexUnlock(&g_vpak_fd_lock);
+    return 0;
+}
+
+static Mutex g_pak_index_lock;
+static std::unordered_map<std::string, PakIndex> g_pak_indexes;
+static std::vector<std::string> g_active_level_paks;
+
+struct PakLookupCacheEntry {
+    std::string pakPath;
+    PakEntryMeta meta;
+};
+
+static std::vector<std::string> g_global_pak_paths;
+static bool g_global_pak_paths_ready = false;
+static std::unordered_map<std::string, PakLookupCacheEntry> g_pak_lookup_cache;
+static std::unordered_set<std::string> g_pak_lookup_misses;
+
+static void rememberActiveLevelPak(const char* path) {
+    if (!path || !*path)
+        return;
+
+    std::string candidate = normalizeSwitchFsPath(path);
+    std::string lower = candidate;
+    for (char& c : lower)
+        c = (char)std::tolower((unsigned char)c);
+
+    const bool levelPak =
+        (lower.find("/levels/") != std::string::npos ||
+         lower.rfind("levels/", 0) == 0) &&
+        lower.size() >= 4 &&
+        lower.compare(lower.size() - 4, 4, ".pak") == 0;
+    if (!levelPak)
+        return;
+
+    struct stat st = {};
+    if (::stat(candidate.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+        // CryPak can hand us a lower-case level PAK name (for example
+        // "levellm.pak") while the real Switch filesystem contains
+        // "LevelLM.pak". Resolve the existing path without changing what
+        // CryPak sees, then remember the actual on-disk spelling.
+        std::string resolved;
+        if (!resolvePathCaseInsensitive(candidate.c_str(), resolved))
+            return;
+
+        st = {};
+        if (::stat(resolved.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+            return;
+
+        candidate = resolved;
+    }
+
+    compatLogFmt("PAK LEVEL REGISTER: requested=%s actual=%s",
+                 path, candidate.c_str());
+
+    if (!candidate.empty() && candidate[0] != '/') {
+        char cwd[PATH_MAX];
+        if (::getcwd(cwd, sizeof(cwd))) {
+            std::string absolute(cwd);
+            if (!absolute.empty() && absolute.back() != '/')
+                absolute += '/';
+            absolute += candidate;
+            candidate = absolute;
+        }
+    }
+
+    mutexLock(&g_pak_index_lock);
+    if (std::find(g_active_level_paks.begin(),
+                  g_active_level_paks.end(), candidate) ==
+        g_active_level_paks.end()) {
+        g_active_level_paks.emplace_back(candidate);
+        g_pak_lookup_cache.clear();
+        g_pak_lookup_misses.clear();
+    }
+    mutexUnlock(&g_pak_index_lock);
+}
+
+static std::vector<std::string> collectGlobalPakPaths() {
+    std::vector<std::string> paths;
+    std::unordered_set<std::string> seen;
+
+    const char* roots[] = {
+        ".",
+        "FCData",
+        "fcdata",
+        "FCData/Localized",
+        "fcdata/Localized",
+        "FCData/localized",
+        "fcdata/localized",
+        nullptr
+    };
+
+    for (size_t r = 0; roots[r]; ++r) {
+        std::string actualDir = roots[r];
+        DIR* dir = ::opendir(actualDir.c_str());
+        if (!dir && resolvePathCaseInsensitive(roots[r], actualDir))
+            dir = ::opendir(actualDir.c_str());
+        if (!dir)
+            continue;
+
+        while (dirent* ent = ::readdir(dir)) {
+            const char* name = ent->d_name;
+            if (!name || !*name)
+                continue;
+
+            const size_t len = std::strlen(name);
+            if (len < 4)
+                continue;
+
+            const char c0 = (char)std::tolower((unsigned char)name[len - 4]);
+            const char c1 = (char)std::tolower((unsigned char)name[len - 3]);
+            const char c2 = (char)std::tolower((unsigned char)name[len - 2]);
+            const char c3 = (char)std::tolower((unsigned char)name[len - 1]);
+            if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
+                continue;
+
+            std::string pakPath = actualDir;
+            if (pakPath.empty() || pakPath == ".")
+                pakPath = name;
+            else {
+                if (pakPath.back() != '/')
+                    pakPath += '/';
+                pakPath += name;
+            }
+
+            std::string resolved;
+            if (resolvePathCaseInsensitive(pakPath.c_str(), resolved))
+                pakPath = resolved;
+
+            std::string key = asciiLower(pakPath);
+            for (char& ch : key)
+                if ((unsigned char)ch == '\\')
+                    ch = '/';
+
+            if (seen.insert(key).second)
+                paths.emplace_back(std::move(pakPath));
+        }
+        ::closedir(dir);
+    }
+
+    std::sort(paths.begin(), paths.end());
+    return paths;
+}
+
+static std::vector<std::string> getGlobalPakPathsSnapshot() {
+    mutexLock(&g_pak_index_lock);
+    if (g_global_pak_paths_ready) {
+        std::vector<std::string> snapshot = g_global_pak_paths;
+        mutexUnlock(&g_pak_index_lock);
+        return snapshot;
+    }
+    mutexUnlock(&g_pak_index_lock);
+
+    std::vector<std::string> discovered = collectGlobalPakPaths();
+
+    mutexLock(&g_pak_index_lock);
+    if (!g_global_pak_paths_ready) {
+        g_global_pak_paths = std::move(discovered);
+        g_global_pak_paths_ready = true;
+        compatLogFmt("PAK PATHS: cached %zu unique global archives",
+                     g_global_pak_paths.size());
+    }
+    std::vector<std::string> snapshot = g_global_pak_paths;
+    mutexUnlock(&g_pak_index_lock);
+    return snapshot;
+}
+
+static bool buildPakIndexLocked(const std::string& pakPath, PakIndex& index) {
+    FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak)
+        return false;
+
+    if (fseek(pak, 0, SEEK_END) != 0) {
+        fclose(pak);
+        return false;
+    }
+
+    const long fileSize = ftell(pak);
+    if (fileSize < 22) {
+        fclose(pak);
+        return false;
+    }
+
+    const size_t tailSize =
+        (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
+    std::vector<unsigned char> tail(tailSize);
+    if (fseek(pak, fileSize - (long)tailSize, SEEK_SET) != 0 ||
+        !pakReadExact(pak, tail.data(), tail.size())) {
+        fclose(pak);
+        return false;
+    }
+
+    size_t eocd = tail.size();
+    while (eocd >= 22) {
+        --eocd;
+        if (eocd + 4 <= tail.size() &&
+            pakRd32(tail.data() + eocd) == 0x06054b50u)
+            break;
+    }
+    if (eocd + 22 > tail.size()) {
+        fclose(pak);
+        return false;
+    }
+
+    const uint16_t entries = pakRd16(tail.data() + eocd + 10);
+    const uint32_t cdSize = pakRd32(tail.data() + eocd + 12);
+    const uint32_t cdOffset = pakRd32(tail.data() + eocd + 16);
+
+    if (!entries || !cdSize || cdSize > 128 * 1024 * 1024u ||
+        (uint64_t)cdOffset + (uint64_t)cdSize > (uint64_t)fileSize) {
+        fclose(pak);
+        return false;
+    }
+
+    std::vector<unsigned char> cd(cdSize);
+    if (fseek(pak, (long)cdOffset, SEEK_SET) != 0 ||
+        !pakReadExact(pak, cd.data(), cd.size())) {
+        fclose(pak);
+        return false;
+    }
+    fclose(pak);
+
+    index.entries.reserve((size_t)entries * 2u);
+
+    size_t pos = 0;
+    for (uint16_t i = 0; i < entries && pos + 46 <= cd.size(); ++i) {
+        const unsigned char* h = cd.data() + pos;
+        if (pakRd32(h) != 0x02014b50u)
+            break;
+
+        const uint16_t nameLen = pakRd16(h + 28);
+        const uint16_t extraLen = pakRd16(h + 30);
+        const uint16_t commentLen = pakRd16(h + 32);
+        const size_t recordSize = 46u + nameLen + extraLen + commentLen;
+        if (pos + recordSize > cd.size())
+            break;
+
+        const std::string name((const char*)h + 46, nameLen);
+        const std::string normalized = pakNormalizeName(name.c_str());
+
+        PakEntryMeta meta;
+        meta.method = pakRd16(h + 10);
+        meta.compressedSize = pakRd32(h + 20);
+        meta.uncompressedSize = pakRd32(h + 24);
+        meta.expectedCrc = pakRd32(h + 16);
+        meta.localOffset = pakRd32(h + 42);
+
+        // Keep the first matching entry, matching the old linear lookup.
+        index.entries.emplace(normalized, meta);
+
+        pos += recordSize;
+    }
+
+    index.valid = true;    return true;
+}
+
+static bool pakFindEntryCached(const std::string& pakPath,
+                               const std::string& wanted,
+                               PakEntryMeta& meta) {
+    const std::string normalizedWanted = pakNormalizeName(wanted.c_str());
+
+    mutexLock(&g_pak_index_lock);
+
+    auto it = g_pak_indexes.find(pakPath);
+    if (it == g_pak_indexes.end()) {
+        PakIndex fresh;
+        const bool ok = buildPakIndexLocked(pakPath, fresh);
+        auto inserted = g_pak_indexes.emplace(pakPath, std::move(fresh));
+        it = inserted.first;
+        if (!ok) {
+            mutexUnlock(&g_pak_index_lock);
+            return false;
+        }
+    }
+
+    const bool found = it->second.valid &&
+                       it->second.entries.find(normalizedWanted) !=
+                           it->second.entries.end();
+    if (found)
+        meta = it->second.entries.find(normalizedWanted)->second;
+
+    mutexUnlock(&g_pak_index_lock);
+    return found;
+}
+
+static bool pakReadEntryToMemory(const std::string& pakPath,
+                                   const PakEntryMeta& meta,
+                                   std::vector<unsigned char>& plain) {
+    if (!meta.compressedSize || !meta.uncompressedSize ||
+        meta.compressedSize > 128 * 1024 * 1024u ||
+        meta.uncompressedSize > 128 * 1024 * 1024u) {
+        return false;
+    }
+
+    FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak)
+        return false;
+
+    unsigned char local[30];
+    if (fseek(pak, (long)meta.localOffset, SEEK_SET) != 0 ||
+        !pakReadExact(pak, local, sizeof(local)) ||
+        pakRd32(local) != 0x04034b50u) {
+        fclose(pak);
+        return false;
+    }
+
+    const uint16_t localMethod = pakRd16(local + 8);
+    const uint16_t nameLen = pakRd16(local + 26);
+    const uint16_t extraLen = pakRd16(local + 28);
+    const long dataOffset =
+        (long)meta.localOffset + 30L + nameLen + extraLen;
+
+    if (meta.method != localMethod || dataOffset < 0 ||
+        fseek(pak, dataOffset, SEEK_SET) != 0) {
+        fclose(pak);
+        return false;
+    }
+
+    std::vector<unsigned char> compressed(meta.compressedSize);
+    plain.resize(meta.uncompressedSize);
+
+    const bool readOk =
+        pakReadExact(pak, compressed.data(), compressed.size());
+    fclose(pak);
+
+    if (!readOk)
+        return false;
+
+    if (meta.method == 0 &&
+        meta.compressedSize == meta.uncompressedSize) {
+        memcpy(plain.data(), compressed.data(), plain.size());
+        return true;
+    }
+
+    if (meta.method == 8) {
+        return pakInflateRaw(compressed.data(), compressed.size(),
+                             plain.data(), plain.size());
+    }
+
+    return false;
+}
+
+// ─── Shader source discovery ────────────────────────────────────────────────
+// Only check the expected loose paths. The old recursive scan walked the entire
+// game tree (~12k entries) on every launch just to report that these files were
+// not loose. CryPak can load shader content from PAKs, so a full-tree crawl is
+// unnecessary for runtime and is kept out of startup.
+static std::string pakAssetRelativeName(const char* requested) {
+    if (!requested || !*requested)
+        return std::string();
+
+    std::string wanted = pakNormalizeName(requested);
+
+    // Prefer the explicit game root marker. This remains reliable even when
+    // CryPak changes the process CWD or passes an already-absolute Switch path.
+    const std::string gameMarker = "/game/";
+    const size_t gamePos = wanted.find(gameMarker);
+    if (gamePos != std::string::npos)
+        wanted.erase(0, gamePos + gameMarker.size());
+
+    // Fall back to the actual CWD when the request did not contain /game/.
+    if (wanted.size() && wanted[0] == '/') {
+        char cwd[PATH_MAX];
+        if (::getcwd(cwd, sizeof(cwd))) {
+            std::string cwdNorm = pakNormalizeName(cwd);
+            while (cwdNorm.size() > 1 && cwdNorm.back() == '/')
+                cwdNorm.pop_back();
+
+            const std::string prefix = cwdNorm + "/";
+            if (wanted.rfind(prefix, 0) == 0)
+                wanted.erase(0, prefix.size());
+        }
+    }
+
+    // Explicit FCData paths are virtual mount paths, not PAK entry prefixes.
+    if (wanted.rfind("fcdata/", 0) == 0)
+        wanted.erase(0, 7);
+
+    // CryPak exposes the compiled geometry cache through the virtual
+    // CCGF_CACHE namespace, but the actual archive entries are rooted at
+    // objects/... (CCGF_CACHE.PAK is the archive, not an entry-directory).
+    // Keep the namespace for the physical file lookup, but remove it when
+    // comparing against PAK entry names.
+    if (wanted.rfind("ccgf_cache/", 0) == 0)
+        wanted.erase(0, 11);
+
+    while (wanted.rfind("./", 0) == 0)
+        wanted.erase(0, 2);
+
+    return wanted;
+}
+
+// Level-local PAKs are mounted by CryPak at the level directory itself.
+// Keep this lookup isolated from the global FCData search: changing the global
+// root order/entry name would affect scripts and other shared assets.
+static bool pakFindLevelLocalEntry(const std::string& wanted,
+                                   std::string& pakPathOut,
+                                   PakEntryMeta& metaOut) {
+    pakPathOut.clear();
+    metaOut = {};
+
+    const std::string wantedNorm = pakNormalizeName(wanted.c_str());
+    const size_t slash = wantedNorm.find_last_of('/');
+    if (slash == std::string::npos)
+        return false;
+
+    const std::string requestedDir = wantedNorm.substr(0, slash);
+    if (requestedDir.empty() ||
+        requestedDir.rfind("levels/", 0) != 0) {
+        return false;
+    }
+
+    // Resolve "levels/training" to the actual on-disk spelling without
+    // modifying the pathname exposed to CryPak.
+    std::string resolvedDir;
+    if (!resolvePathCaseInsensitive(requestedDir.c_str(), resolvedDir))
+        return false;
+
+    DIR* dir = opendir(resolvedDir.c_str());
+    if (!dir)
+        return false;
+
+    const std::string resolvedNorm = pakNormalizeName(resolvedDir.c_str());
+    const std::string prefix = resolvedNorm + "/";
+    std::string lookup = wantedNorm;
+    if (wantedNorm.rfind(prefix, 0) == 0)
+        lookup = wantedNorm.substr(prefix.size());
+
+    while (dirent* ent = readdir(dir)) {
+        const char* name = ent->d_name;
+        if (!name)
+            continue;
+
+        const size_t len = std::strlen(name);
+        if (len < 4)
+            continue;
+
+        const char c0 = (char)std::tolower((unsigned char)name[len - 4]);
+        const char c1 = (char)std::tolower((unsigned char)name[len - 3]);
+        const char c2 = (char)std::tolower((unsigned char)name[len - 2]);
+        const char c3 = (char)std::tolower((unsigned char)name[len - 1]);
+        if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
+            continue;
+
+        std::string pakPath = resolvedDir;
+        if (!pakPath.empty() && pakPath.back() != '/')
+            pakPath += '/';
+        pakPath += name;
+
+        PakEntryMeta meta;
+        if (!pakFindEntryCached(pakPath, lookup, meta) &&
+            lookup != wantedNorm &&
+            !pakFindEntryCached(pakPath, wantedNorm, meta)) {
+            continue;
+        }
+
+        pakPathOut = pakPath;
+        metaOut = meta;
+        closedir(dir);        return true;
+    }
+
+    closedir(dir);
+    return false;
+}
+
+static void pakTraceMissDetails(const std::string& wanted) {
+    const std::string::size_type basenamePos = wanted.find_last_of('/');
+    const std::string wantedBase =
+        basenamePos == std::string::npos ? wanted : wanted.substr(basenamePos + 1);
+
+    // Cry3D constructs optional low-LOD names (foo_lod1.cgf, foo_lod2.cgf, ...)
+    // from the base object foo.cgf. A missing external LOD companion is normal,
+    // so keep a separate exact lookup for the corresponding base object.
+    std::string lodBaseWanted;
+    const std::string::size_type lodPos = wantedBase.rfind("_lod");
+    if (lodPos != std::string::npos &&
+        wantedBase.size() > lodPos + 8 &&
+        wantedBase.compare(wantedBase.size() - 4, 4, ".cgf") == 0) {
+        bool digitsOnly = true;
+        for (std::string::size_type i = lodPos + 4; i < wantedBase.size() - 4; ++i) {
+            if (wantedBase[i] < '0' || wantedBase[i] > '9') {
+                digitsOnly = false;
+                break;
+            }
+        }
+
+        if (digitsOnly) {
+            const std::string::size_type fullLodPos =
+                wanted.size() - (wantedBase.size() - lodPos);
+            lodBaseWanted = wanted.substr(0, fullLodPos) + ".cgf";
+        }
+    }
+
+    size_t lodBaseMatches = 0;
+    std::string firstLodBasePak;
+    std::string firstLodBaseEntry;
+
+    auto tracePak = [&](const std::string& pakPath) {
+        mutexLock(&g_pak_index_lock);
+        auto it = g_pak_indexes.find(pakPath);
+        if (it == g_pak_indexes.end()) {
+            PakIndex fresh;
+            const bool ok = buildPakIndexLocked(pakPath, fresh);
+            auto inserted = g_pak_indexes.emplace(pakPath, std::move(fresh));
+            it = inserted.first;
+            if (!ok) {
+                mutexUnlock(&g_pak_index_lock);
+                compatLogFmt("PAK MEM TRACE INDEX: pak=%s build=FAIL",
+                             pakPath.c_str());
+                return;
+            }
+        }
+
+        size_t baseMatches = 0;
+        std::string firstMatch;
+        for (const auto& item : it->second.entries) {
+            const std::string& entry = item.first;
+            const size_t slash = entry.find_last_of('/');
+            const std::string base =
+                slash == std::string::npos ? entry : entry.substr(slash + 1);
+            if (base == wantedBase) {
+                ++baseMatches;
+                if (firstMatch.empty())
+                    firstMatch = entry;
+            }
+        }
+
+        const size_t entryCount = it->second.entries.size();
+        const bool valid = it->second.valid;
+
+        if (!lodBaseWanted.empty()) {
+            auto baseIt = it->second.entries.find(lodBaseWanted);
+            if (baseIt != it->second.entries.end()) {
+                ++lodBaseMatches;
+                if (firstLodBasePak.empty()) {
+                    firstLodBasePak = pakPath;
+                    firstLodBaseEntry = lodBaseWanted;
+                }
+            }
+        }
+
+        mutexUnlock(&g_pak_index_lock);
+
+        if (baseMatches) {
+            compatLogFmt("PAK MEM TRACE INDEX: pak=%s valid=%d entries=%zu basename_matches=%zu first=%s",
+                         pakPath.c_str(), valid ? 1 : 0, entryCount,
+                         baseMatches, firstMatch.c_str());
+        } else {
+            compatLogFmt("PAK MEM TRACE INDEX: pak=%s valid=%d entries=%zu basename_matches=0",
+                         pakPath.c_str(), valid ? 1 : 0, entryCount);
+        }
+    };
+
+    std::vector<std::string> activeLevelPaks;
+    mutexLock(&g_pak_index_lock);
+    activeLevelPaks = g_active_level_paks;
+    mutexUnlock(&g_pak_index_lock);
+
+    for (const std::string& pakPath : activeLevelPaks)
+        tracePak(pakPath);
+
+    const char* roots[] = {
+        ".",
+        "FCData",
+        "fcdata",
+        "FCData/Localized",
+        "fcdata/Localized",
+        "FCData/localized",
+        "fcdata/localized",
+        nullptr
+    };
+
+    for (size_t r = 0; roots[r]; ++r) {
+        DIR* dir = opendir(roots[r]);
+        if (!dir)
+            continue;
+
+        while (dirent* ent = readdir(dir)) {
+            const char* name = ent->d_name;
+            const size_t len = std::strlen(name);
+            if (len < 4)
+                continue;
+
+            const char c0 = (char)std::tolower((unsigned char)name[len - 4]);
+            const char c1 = (char)std::tolower((unsigned char)name[len - 3]);
+            const char c2 = (char)std::tolower((unsigned char)name[len - 2]);
+            const char c3 = (char)std::tolower((unsigned char)name[len - 1]);
+            if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
+                continue;
+
+            std::string pakPath = roots[r];
+            if (pakPath != ".")
+                pakPath += "/";
+            pakPath += name;
+
+            bool alreadySeen = false;
+            for (const std::string& active : activeLevelPaks) {
+                if (active == pakPath) {
+                    alreadySeen = true;
+                    break;
+                }
+            }
+            if (!alreadySeen)
+                tracePak(pakPath);
+        }
+
+        closedir(dir);
+    }
+
+    if (!lodBaseWanted.empty()) {
+        if (lodBaseMatches) {
+            compatLogFmt("PAK MEM TRACE LODBASE: wanted=%s matches=%zu first_pak=%s first=%s",
+                         lodBaseWanted.c_str(), lodBaseMatches,
+                         firstLodBasePak.c_str(), firstLodBaseEntry.c_str());
+        } else {
+            compatLogFmt("PAK MEM TRACE LODBASE: wanted=%s matches=0",
+                         lodBaseWanted.c_str());
+        }
+    }
+}
+
+static bool pakFindVirtualEntry(const char* requested,
                                std::string& pakPathOut,
                                PakEntryMeta& metaOut) {
     pakPathOut.clear();
@@ -122,8 +2702,6 @@ static bool pakFindVirtualEntry(const char* requested,
     if (wanted.empty())
         return false;
 
-    // The active level PAKs have priority over global archives. Their list can
-    // change during level transitions, so take a snapshot before searching.
     std::vector<std::string> activeLevelPaks;
     {
         mutexLock(&g_pak_index_lock);
@@ -134,24 +2712,24 @@ static bool pakFindVirtualEntry(const char* requested,
     for (const std::string& levelPak : activeLevelPaks) {
         if (pakFindEntryCached(levelPak, wanted, metaOut)) {
             pakPathOut = levelPak;
-
             mutexLock(&g_pak_index_lock);
-            g_pak_lookup_cache[wanted] = PakLookupCacheEntry{pakPathOut, metaOut};
+            g_pak_lookup_cache[wanted] =
+                PakLookupCacheEntry{pakPathOut, metaOut};
+            g_pak_lookup_misses.erase(wanted);
             mutexUnlock(&g_pak_index_lock);
             return true;
         }
     }
 
-    // Only level-local paths get the direct directory lookup as a fallback.
     if (pakFindLevelLocalEntry(wanted, pakPathOut, metaOut)) {
         mutexLock(&g_pak_index_lock);
-        g_pak_lookup_cache[wanted] = PakLookupCacheEntry{pakPathOut, metaOut};
+        g_pak_lookup_cache[wanted] =
+            PakLookupCacheEntry{pakPathOut, metaOut};
+        g_pak_lookup_misses.erase(wanted);
         mutexUnlock(&g_pak_index_lock);
         return true;
     }
 
-    // Reuse a previously resolved global hit or a known global miss. Level
-    // PAK registration clears both caches.
     {
         mutexLock(&g_pak_index_lock);
         auto hit = g_pak_lookup_cache.find(wanted);
@@ -169,7 +2747,8 @@ static bool pakFindVirtualEntry(const char* requested,
         mutexUnlock(&g_pak_index_lock);
     }
 
-    const std::vector<std::string> globalPaks = getGlobalPakPathsSnapshot();
+    const std::vector<std::string> globalPaks =
+        getGlobalPakPathsSnapshot();
     for (const std::string& pakPath : globalPaks) {
         PakEntryMeta meta;
         if (!pakFindEntryCached(pakPath, wanted, meta))
@@ -179,7 +2758,8 @@ static bool pakFindVirtualEntry(const char* requested,
         metaOut = meta;
 
         mutexLock(&g_pak_index_lock);
-        g_pak_lookup_cache[wanted] = PakLookupCacheEntry{pakPathOut, metaOut};
+        g_pak_lookup_cache[wanted] =
+            PakLookupCacheEntry{pakPathOut, metaOut};
         g_pak_lookup_misses.erase(wanted);
         mutexUnlock(&g_pak_index_lock);
         return true;
@@ -2724,9 +5304,6 @@ static DIR* stub_opendir(const char* path) {
 
     rememberActiveLevelPak(ioPath);
 
-    // A PAK path is a regular file, never a directory. CryPak sometimes probes
-    // it with opendir() before opening the archive; do not run the expensive
-    // virtual-directory scan for that known-invalid operation.
     if (ioPath) {
         const size_t len = std::strlen(ioPath);
         if (len >= 4 &&
