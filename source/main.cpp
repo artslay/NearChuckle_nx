@@ -1,10 +1,6 @@
 #include "config.h"
 #include "compat/loader.h"
 
-extern void compatPrepareShaderDirectories(const char* dataRoot);
-extern void compatPrepareScriptDirectories(const char* dataRoot);
-extern void compatProbePakArchives(const char* dataRoot);
-
 #include <switch.h>
 
 #include <algorithm>
@@ -308,22 +304,10 @@ static void setup_environment() {
 
     chdir(config.data_root);
 
-    // Normalize the existing data tree first, then materialize the shader
-    // directories with their original CryEngine spelling (Shaders/...).
-    // Keeping the real directory name avoids relying on a case-fix wrapper
-    // for CryEngine's internal shader-directory scan.
+    // Keep the Android data layout as-is. PAKs are opened by the guest
+    // CryPak implementation; never preload, scan, or extract their entries.
     normalize_engine_data_dirs();
-    compatPrepareShaderDirectories(config.data_root);
-    compatPrepareScriptDirectories(config.data_root);
-
-    // PAK layout probes are intentionally diagnostic-only. The runtime already
-    // knows the game data root and FCData directory; do not enumerate all PAKs
-    // on every startup unless an explicit diagnostic run is requested.
-    const char* pakDiag = std::getenv("NEARCHUCKLE_PAK_DIAG");
-    if (pakDiag && pakDiag[0] == '1') {
-        compatProbePakArchives(config.data_root);
-        probe_engine_data_layout();
-    }
+    compatLog("PAK IO: Android-style virtual mode; no resource extraction/preload");
 }
 
 static void log_system_resources(const char* stage) {
