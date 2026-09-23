@@ -1837,17 +1837,43 @@ static int vpakFdOpen(const char* requested, int flags) {
     if (flags & writeFlags)
         return -1;
 
+    const bool trace = pakMemoryTraceBudget(requested);
+    const std::string wantedTrace = pakAssetRelativeName(requested);
+
     std::string pakPath;
     PakEntryMeta meta;
-    if (!pakFindVirtualEntry(requested, pakPath, meta))
+    if (!pakFindVirtualEntry(requested, pakPath, meta)) {
+        if (trace) {
+            compatLogFmt("PAK MEM TRACE FD_MISS: requested=%s wanted=%s",
+                         requested, wantedTrace.c_str());
+        }
         return -1;
+    }
+
+    if (trace) {
+        compatLogFmt("PAK MEM TRACE FD_FIND: requested=%s wanted=%s pak=%s c=%u u=%u method=%u local=%u",
+                     requested, wantedTrace.c_str(), pakPath.c_str(),
+                     meta.compressedSize, meta.uncompressedSize,
+                     (unsigned)meta.method, meta.localOffset);
+    }
 
     std::vector<unsigned char> data;
     if (!pakReadEntryToMemory(pakPath, meta, data)) {
-        compatLogFmt("PAK VIRTUAL FD READ FAILED: %s <- %s",
-                     pakAssetRelativeName(requested).c_str(),
-                     pakPath.c_str());
+        if (trace) {
+            compatLogFmt("PAK MEM TRACE FD_READ_FAILED: %s <- %s",
+                         wantedTrace.c_str(), pakPath.c_str());
+        } else {
+            compatLogFmt("PAK VIRTUAL FD READ FAILED: %s <- %s",
+                         wantedTrace.c_str(),
+                         pakPath.c_str());
+        }
         return -1;
+    }
+
+    if (trace) {
+        compatLogFmt("PAK MEM TRACE FD_DECOMP: %s plain=%p plain_size=%zu pak=%s",
+                     wantedTrace.c_str(), (void*)data.data(), data.size(),
+                     pakPath.c_str());
     }
 
     VirtualPakFd* v = new VirtualPakFd();
@@ -1855,7 +1881,7 @@ static int vpakFdOpen(const char* requested, int flags) {
         return -1;
     v->data = std::move(data);
     v->name = requested;
-    v->trace = pakMemoryTraceBudget(requested);
+    v->trace = trace;
 
     mutexLock(&g_vpak_fd_lock);
     int chosen = -1;
@@ -2555,14 +2581,18 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (!requested || !mode || mode[0] != 'r')
         return nullptr;
 
+    const bool trace = pakMemoryTraceBudget(requested);
+    const std::string wantedTrace = pakAssetRelativeName(requested);
+
     std::string pakPath;
     PakEntryMeta meta;
-    if (!pakFindVirtualEntry(requested, pakPath, meta))
+    if (!pakFindVirtualEntry(requested, pakPath, meta)) {
+        if (trace) {
+            compatLogFmt("PAK MEM TRACE MISS: requested=%s wanted=%s",
+                         requested, wantedTrace.c_str());
+        }
         return nullptr;
-
-    const bool trace = pakMemoryTraceBudget(requested);
-
-    std::string wantedTrace = pakAssetRelativeName(requested);
+    }
     if (trace) {
         compatLogFmt("PAK MEM TRACE FIND: requested=%s wanted=%s pak=%s c=%u u=%u method=%u local=%u",
                      requested,
