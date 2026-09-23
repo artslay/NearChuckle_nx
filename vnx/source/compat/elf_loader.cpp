@@ -1133,13 +1133,11 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
         return false;
     };
 
-    // Search only executable pages for code xrefs.
+    // Search the whole mapped image for code xrefs. The dynamic symbol table
+    // may not contain CreateRendererVars(), so the CVar name itself is the
+    // reliable anchor.
     std::vector<Ref> names;
     for (size_t off = 0; off + 8 <= alloc_size; off += 4) {
-        uint32_t w = *reinterpret_cast<uint32_t*>(stage_base + min_vaddr + off);
-        if (!is_adrp(w))
-            continue;
-
         Ref ref;
         if (make_ref(image, min_vaddr, off, kName, ref))
             names.push_back(ref);
@@ -1150,30 +1148,25 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
         return false;
     }
 
-    // The shipped lib should have one code reference for this renderer CVar.
-    // If there are multiple, select only a reference followed by an x1="0"
-    // load before the next branch-with-link.
     Ref* selected_name = nullptr;
     Ref* selected_zero = nullptr;
     size_t candidate_count = 0;
+    static Ref zero_holder;
 
     for (Ref& name_ref : names) {
-        uint8_t* code = reinterpret_cast<uint8_t*>(
-            reinterpret_cast<uintptr_t>(name_ref.first) - image_base);
+        const size_t name_off =
+            name_ref.byte_off >= min_vaddr
+                ? static_cast<size_t>(name_ref.byte_off - min_vaddr)
+                : 0;
 
-        // name_ref.byte_off is the virtual address of the ADRP instruction.
-        const size_t start_off = static_cast<size_t>(
-            name_ref.byte_off >= min_vaddr ? name_ref.byte_off - min_vaddr : 0);
+        // Inspect one small basic-block-sized window around the name reference.
+        // CreateVariable(name, default, flags, help) receives name in x0 and
+        // default in x1. The compiler may schedule those loads in either order.
+        const size_t begin = name_off > 0x80 ? name_off - 0x80 : 0;
+        const size_t finish =
+            name_off + 0x100 < alloc_size ? name_off + 0x100 : alloc_size - 8;
 
-        for (size_t rel = 8; rel <= 0x100 && start_off + rel + 8 <= alloc_size; rel += 4) {
-            const size_t off = start_off + rel;
-            const uint32_t insn = *reinterpret_cast<uint32_t*>(
-                stage_base + min_vaddr + off);
-
-            // BL: stop at the CreateVariable call. The x1 load must precede it.
-            if ((insn & 0xfc000000u) == 0x94000000u)
-                break;
-
+        for (size_t off = begin; off <= finish; off += 4) {
             Ref zero_ref;
             if (!make_ref(image, min_vaddr, off, kZero, zero_ref))
                 continue;
@@ -1181,14 +1174,16 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
             if (zero_ref.reg != 1)
                 continue;
 
+            const size_t distance = (off > name_off)
+                ? off - name_off
+                : name_off - off;
+            if (distance > 0x80)
+                continue;
+
             ++candidate_count;
-            if (!selected_zero || zero_ref.byte_off < selected_zero->byte_off) {
-                selected_name = &name_ref;
-                // Store a copy because this object is temporary in the loop.
-                static Ref holder;
-                holder = zero_ref;
-                selected_zero = &holder;
-            }
+            zero_holder = zero_ref;
+            selected_name = &name_ref;
+            selected_zero = &zero_holder;
         }
     }
 
