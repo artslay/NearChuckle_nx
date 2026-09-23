@@ -1328,63 +1328,6 @@ static bool patchFarCrySystemUpdate(LoadedSo* so, uint8_t* stage_base,
     return true;
 }
 
-// Far Cry's Linux/Android CXGame::GetPlayerProfilePath() contains debug traps
-// when the Profiles/Player directory is not discovered through readdir(). The
-// Switch filesystem can legitimately report a directory in a form the guest
-// Android code does not recognize. Keep the normal function body intact, but
-// neutralize BRK #0 instructions inside this one function so the diagnostic trap
-// cannot abort the game during menu/save-list handling.
-static bool patchFarCryProfilePathTraps(LoadedSo* so, uint8_t* stage_base,
-                                        uint64_t min_vaddr, size_t alloc_size) {
-    if (!so || !stage_base || !alloc_size)
-        return false;
-
-    const char* path = so->path.c_str();
-    const char* base = std::strrchr(path, '/');
-    base = base ? base + 1 : path;
-    if (std::strcmp(base, "libCryGame.so") != 0)
-        return false;
-
-    constexpr const char* kSym = "_ZN6CXGame20GetPlayerProfilePathEv";
-    void* fn = so->findSym(kSym);
-    if (!fn) {
-        compatLogFmt("FARCRY PROFILE PATH: symbol not found: %s", kSym);
-        return false;
-    }
-
-    const uintptr_t image_base = reinterpret_cast<uintptr_t>(so->base);
-    const uintptr_t addr = reinterpret_cast<uintptr_t>(fn);
-    if (addr < image_base || addr - image_base >= alloc_size) {
-        compatLogFmt("FARCRY PROFILE PATH: symbol outside image fn=%p base=%p size=0x%llx",
-                     fn, reinterpret_cast<void*>(image_base),
-                     (unsigned long long)alloc_size);
-        return false;
-    }
-
-    const uint64_t fn_off = static_cast<uint64_t>(addr - image_base);
-    uint8_t* code = stage_base + min_vaddr + fn_off;
-    constexpr size_t kScanBytes = 0x300;
-    const size_t scan_bytes = std::min(kScanBytes, alloc_size - fn_off);
-
-    unsigned patched = 0;
-    for (size_t off = 0; off + 4 <= scan_bytes; off += 4) {
-        uint32_t* insn = reinterpret_cast<uint32_t*>(code + off);
-        if (*insn != 0xd4200020u)
-            continue;
-
-        const uint32_t old = *insn;
-        *insn = 0xd503201fu; // NOP instead of __builtin_trap()/BRK #0
-        armICacheInvalidate(insn, 4);
-        ++patched;
-        compatLogFmt("FARCRY PROFILE PATH: BRK #0 disabled at function +0x%zx old=%08x new=%08x",
-                     off, old, *insn);
-    }
-
-    compatLogFmt("FARCRY PROFILE PATH: disabled %u BRK #0 traps at function +0x%llx",
-                 patched, (unsigned long long)fn_off);
-    return patched != 0;
-}
-
 // Temporary A/B: bypass CXGame::LoadConfiguration(). The fault stack repeatedly
 // contained libCryGame.so +0xf9718, identified as LoadConfiguration +0x60.
 // Therefore the current function start is +0xf96b8 for this exact Android lib.
@@ -1670,9 +1613,6 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
                      (unsigned long long)alloc_size);
         if (!patchVideoPanelIsPlaying(so, stage_base, min_vaddr, alloc_size))
             compatLog("VIDEO PANEL PATCH: not applied");
-
-        if (!patchFarCryProfilePathTraps(so, stage_base, min_vaddr, alloc_size))
-            compatLog("FARCRY PROFILE PATH: no traps patched");
 
         // Do not patch the CryInput/CryGame input callbacks. The Android
         // SDL input bridge in runtime.cpp now delivers real Switch HID events
