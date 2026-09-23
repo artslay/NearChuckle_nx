@@ -2362,6 +2362,11 @@ static bool pakFindVirtualEntry(const char* requested,
 // fopen(), which makes every PAK-backed .caf/.cgf look missing to the
 // animation/model loaders.
 extern "C" unsigned compatGuestGetFileSize(void* /*self*/, const char* requested, unsigned /*flags*/) {
+    static unsigned g_cafDiag = 0;
+    const bool diag = requested && *requested &&
+                      std::strstr(requested, ".caf") != nullptr &&
+                      g_cafDiag < 96;
+
     if (!requested || !*requested)
         return 0;
 
@@ -2382,9 +2387,21 @@ extern "C" unsigned compatGuestGetFileSize(void* /*self*/, const char* requested
 
     std::string pakPath;
     PakEntryMeta meta;
-    if (pakFindVirtualEntry(path, pakPath, meta))
+    if (pakFindVirtualEntry(path, pakPath, meta)) {
+        if (diag) {
+            compatLogFmt("FARCRY GETFILESIZE CALL: %s -> %u via %s",
+                         requested, (unsigned)meta.uncompressedSize,
+                         pakPath.c_str());
+            ++g_cafDiag;
+        }
         return meta.uncompressedSize;
+    }
 
+    if (diag) {
+        compatLogFmt("FARCRY GETFILESIZE MISS: %s normalized=%s",
+                     requested, path);
+        ++g_cafDiag;
+    }
     return 0;
 }
 

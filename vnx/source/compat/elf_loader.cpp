@@ -1829,7 +1829,7 @@ static bool patchFarCryGetFileSize(LoadedSo* so, uint8_t* stage_base,
 
     const uintptr_t imageBase = reinterpret_cast<uintptr_t>(so->base);
     const uintptr_t addr = reinterpret_cast<uintptr_t>(fn);
-    if (addr < imageBase || addr - imageBase + 16 > alloc_size) {
+    if (addr < imageBase || addr - imageBase >= alloc_size) {
         compatLogFmt(
             "FARCRY GETFILESIZE: symbol outside image fn=%p base=%p size=0x%llx",
             fn, reinterpret_cast<void*>(imageBase),
@@ -1837,20 +1837,48 @@ static bool patchFarCryGetFileSize(LoadedSo* so, uint8_t* stage_base,
         return false;
     }
 
+    const uint64_t helper = reinterpret_cast<uint64_t>(&compatGuestGetFileSize);
+
+    // GetFileSize is virtual in IStreamEngine. Patch the CRefStreamEngine
+    // vtable entry first so calls through g_GetStreamEngine() land here even
+    // when the compiler uses a thunk for the concrete implementation.
+    constexpr const char* kVtableSym = "_ZTV16CRefStreamEngine";
+    void* vtable = so->findSym(kVtableSym);
+    if (vtable) {
+        const uintptr_t vtAddr = reinterpret_cast<uintptr_t>(vtable);
+        if (vtAddr >= imageBase && vtAddr - imageBase + 0x38 <= alloc_size) {
+            // Itanium ABI: symbol starts at offset-to-top/typeinfo;
+            // object vptr points at symbol+0x10. In this class the slots are:
+            // dtor, deleting dtor, GetStreamCompressionMask, StartRead,
+            // GetFileSize => GetFileSize is symbol + 0x30.
+            uint64_t* slot = reinterpret_cast<uint64_t*>(
+                stage_base + min_vaddr + (vtAddr - imageBase) + 0x30);
+            const uint64_t old = *slot;
+            *slot = helper;
+            armICacheInvalidate(slot, sizeof(*slot));
+
+            compatLogFmt(
+                "FARCRY GETFILESIZE VTBL: vtable=%p slot=%p old=%p new=%p",
+                vtable, (void*)slot, (void*)old,
+                reinterpret_cast<void*>(helper));
+            return true;
+        }
+
+        compatLogFmt(
+            "FARCRY GETFILESIZE VTBL: vtable outside image vtable=%p base=%p size=0x%llx",
+            vtable, reinterpret_cast<void*>(imageBase),
+            (unsigned long long)alloc_size);
+    } else {
+        compatLog("FARCRY GETFILESIZE VTBL: vtable symbol not found; using entry hook");
+    }
+
+    // Fallback: patch the implementation entry itself. ABI remains:
+    // x0=this, x1=path, w2=flags.
     uint32_t* insn = reinterpret_cast<uint32_t*>(
         stage_base + min_vaddr + (addr - imageBase));
 
-    const uint64_t helper =
-        reinterpret_cast<uint64_t>(&compatGuestGetFileSize);
-
-    // ldr x16, #+8
-    // br  x16
-    // .quad helper
-    //
-    // x0 (this) and x1 (path) pass through unchanged; the helper returns
-    // the file size in w0 exactly as the member function does.
-    insn[0] = 0x58000050u;
-    insn[1] = 0xd61f0200u;
+    insn[0] = 0x58000050u; // ldr x16, #+8
+    insn[1] = 0xd61f0200u; // br x16
     std::memcpy(&insn[2], &helper, sizeof(helper));
     armICacheInvalidate(insn, 16);
 
