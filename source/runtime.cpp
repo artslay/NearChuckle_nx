@@ -220,10 +220,10 @@ struct SwitchKeyBinding {
 static constexpr SwitchKeyBinding kSwitchKeyBindings[] = {
     // Menu / common actions.
     {HidNpadButton_A,          66,  "A -> ENTER"},
-    {HidNpadButton_B,          111, "B -> ESCAPE"},
+    {HidNpadButton_B,          62,  "B -> SPACE"},
     {HidNpadButton_X,          46,  "X -> R"},
     {HidNpadButton_Y,          33,  "Y -> E"},
-    {HidNpadButton_L,          59,  "L -> LSHIFT"},
+    {HidNpadButton_L,          31,  "L -> C"},
     {HidNpadButton_R,          113, "R -> LCTRL"},
     {HidNpadButton_Plus,       111, "PLUS -> ESCAPE"},
     {HidNpadButton_Minus,       61, "MINUS -> TAB"},
