@@ -102,8 +102,6 @@ static int stub_clock_gettime(int clock_id, struct timespec* ts);
 // Case-insensitive filesystem resolver used by file wrappers below.
 static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
 
-static bool compatIsPakPath(const char* path);
-
 struct PakEntryMeta {
     uint32_t localOffset = 0;
     uint32_t compressedSize = 0;
