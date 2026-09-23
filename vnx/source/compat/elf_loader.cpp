@@ -1804,7 +1804,7 @@ static bool patchFarCryGetFileSize(LoadedSo* so, uint8_t* stage_base,
         return false;
 
     constexpr const char* kSym =
-        "_ZN16CRefStreamEngine12GetFileSizeEPKcj";
+        "_ZN16CRefStreamEngine11GetFileSizeEPKcj";
 
     void* fn = so->findSym(kSym);
     if (!fn) {
