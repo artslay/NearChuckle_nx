@@ -4840,10 +4840,15 @@ static bool tryMaterializePakDirectory(const char* path) {
     // Script assets must remain entirely PAK-backed. Never materialize the
     // Scripts tree just because opendir()/directory enumeration requested it.
     const std::string wantedLower = asciiLower(wanted);
-    if (wantedLower == "scripts" ||
-        wantedLower.rfind("scripts/", 0) == 0) {
+    // Keep the script tree virtual, but materialize only the physical
+    // material-definition directory. CryEngine's physical material manager
+    // enumerates scripts/materials before models are loaded and therefore
+    // cannot discover those definitions from a FILE-backed virtual stream.
+    if (wantedLower == "scripts")
         return false;
-    }
+    if (wantedLower.rfind("scripts/", 0) == 0 &&
+        wantedLower != "scripts/materials")
+        return false;
 
     // CryPak::ScanZips() checks every opened archive whose bind root matches
     // the requested directory. Do the same here: shader scripts are not
@@ -5070,7 +5075,12 @@ void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
     mkdir("scripts", 0755);
     mkdir("scripts/materials", 0755);
 
-    compatLog("scripts preload: virtual PAK mode (no SD extraction)");
+    // The general Lua tree remains virtual. Material definitions are a
+    // small exception because CryEngine enumerates this directory rather than
+    // opening a single known file when constructing physical materials.
+    const bool materialsReady = tryMaterializePakDirectory("scripts/materials");
+    compatLogFmt("scripts preload: virtual PAK mode, materials=%s",
+                 materialsReady ? "materialized" : "not found");
 
     // Do not create the old persistent "ready" marker here: that marker means
     // a physical extracted tree exists, which is intentionally no longer true.
@@ -6417,6 +6427,15 @@ static int stub_access(const char* path, int mode) {
 
     if (::access(ioPath, mode) == 0)
         return 0;
+
+    // access() is used by a few file loaders as a cheap existence test before
+    // they call open(). Treat a PAK entry as an existing read-only file too.
+    if ((mode & W_OK) == 0) {
+        std::string pakPath;
+        PakEntryMeta meta;
+        if (pakFindVirtualEntry(ioPath, pakPath, meta))
+            return 0;
+    }
 
     std::string resolved;
     if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
