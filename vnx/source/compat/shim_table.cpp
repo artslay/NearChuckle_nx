@@ -2943,6 +2943,29 @@ static int stub_open(const char* path, int flags, ...) {
         }
     }
 
+    // Some Android asset loaders bypass stdio completely and reach the
+    // POSIX open() shim (for example CControllerManager::LoadAnimation).
+    // VirtualPakFile cannot be returned as an fd to std::ifstream, so for a
+    // read-only PAK miss materialize just that one requested entry into the
+    // persistent cache and open the real file. This is lazy: there is no bulk
+    // PAK extraction at startup and repeated requests hit _pakcache_v3.
+    if (fd < 0 && ioPath &&
+        (flags & O_ACCMODE) == O_RDONLY &&
+        !(flags & (O_CREAT | O_TRUNC | O_APPEND))) {
+        std::string materialized;
+        if (tryMaterializePakPath(ioPath, materialized)) {
+            int mfd = doOpen(materialized.c_str());
+            if (mfd >= 0) {
+                if (videoIo) g_near_video_open_failed = 0;
+                compatLogFmt("open PAK EXACT: %s -> %s fd=%d",
+                             ioPath, materialized.c_str(), mfd);
+                return mfd;
+            }
+            compatLogFmt("open PAK EXACT FAILED: %s -> %s",
+                         ioPath, materialized.c_str());
+        }
+    }
+
     // BinkDecoder/FileStream in the Android port ultimately reaches open()
     // through std::ifstream. Our PAK reader returns FILE*, which is not useful
     // to std::ifstream, so materialize the archive entry into a real file and
