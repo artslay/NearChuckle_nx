@@ -4449,6 +4449,35 @@ static int vpakDirClose(DIR* dir) {
 static std::unordered_map<DIR*, std::string> g_readdirPaths;
 static std::unordered_map<DIR*, unsigned> g_readdirCounts;
 
+// Android's CXGame::GetPlayerProfilePath() checks dirent::d_type directly.
+// newlib on Switch can return DT_UNKNOWN for a valid filesystem entry, which
+// makes the Android/Linux code incorrectly conclude that Profiles/Player does
+// not exist. Recover the type from the real filesystem before returning the
+// entry to the guest.
+static void fixDirentType(const std::string& directory, struct dirent* ent) {
+    if (!ent || ent->d_type == DT_DIR || ent->d_type == DT_LNK)
+        return;
+
+    std::string full;
+    if (directory.empty() || directory == ".")
+        full = std::string("./") + ent->d_name;
+    else {
+        full = directory;
+        if (full.back() != '/')
+            full.push_back('/');
+        full += ent->d_name;
+    }
+
+    struct stat st = {};
+    if (stat(full.c_str(), &st) != 0)
+        return;
+
+    if (S_ISDIR(st.st_mode))
+        ent->d_type = DT_DIR;
+    else if (S_ISREG(st.st_mode))
+        ent->d_type = DT_REG;
+}
+
 static struct dirent* stub_readdir(DIR* dir) {
     if (!dir)
         return nullptr;
@@ -4462,10 +4491,13 @@ static struct dirent* stub_readdir(DIR* dir) {
 
     auto it = g_readdirPaths.find(dir);
     if (it != g_readdirPaths.end()) {
+        fixDirentType(it->second, ent);
+
         unsigned& count = g_readdirCounts[dir];
         if (count < 32 && !isShaderPathForDiag(it->second.c_str())) {
-            compatLogFmt("readdir[%u] %s -> %s",
-                         count, it->second.c_str(), ent->d_name);
+            compatLogFmt("readdir[%u] %s -> %s type=%u",
+                         count, it->second.c_str(), ent->d_name,
+                         (unsigned)ent->d_type);
         }
         ++count;
     }
@@ -4500,10 +4532,13 @@ static struct dirent* stub_readdir64(DIR* dir) {
 
     auto it = g_readdirPaths.find(dir);
     if (it != g_readdirPaths.end()) {
+        fixDirentType(it->second, ent);
+
         unsigned& count = g_readdirCounts[dir];
         if (count < 32 && !isShaderPathForDiag(it->second.c_str())) {
-            compatLogFmt("readdir64[%u] %s -> %s",
-                         count, it->second.c_str(), ent->d_name);
+            compatLogFmt("readdir64[%u] %s -> %s type=%u",
+                         count, it->second.c_str(), ent->d_name,
+                         (unsigned)ent->d_type);
         }
         ++count;
     }
@@ -4527,14 +4562,8 @@ static DIR* stub_opendir(const char* path) {
 
     DIR* d = opendir(ioPath);
     if (d) {
-        std::string low = ioPath ? asciiLower(ioPath) : std::string();
-        if (low.find("/fcdata") != std::string::npos ||
-            low == "fcdata" ||
-            low.find("/localized") != std::string::npos ||
-            isShaderPathForDiag(ioPath)) {
-            g_readdirPaths[d] = ioPath;
-            g_readdirCounts[d] = 0;
-        }
+        g_readdirPaths[d] = ioPath ? ioPath : "";
+        g_readdirCounts[d] = 0;
         return d;
     }
 
@@ -4543,14 +4572,8 @@ static DIR* stub_opendir(const char* path) {
         d = opendir(resolved.c_str());
         if (d) {
             if (ioPath) {
-                std::string low = asciiLower(ioPath);
-                if (low.find("/fcdata") != std::string::npos ||
-                    low == "fcdata" ||
-                    low.find("/localized") != std::string::npos ||
-                    isShaderPathForDiag(ioPath)) {
-                    g_readdirPaths[d] = resolved;
-                    g_readdirCounts[d] = 0;
-                }
+                g_readdirPaths[d] = resolved;
+                g_readdirCounts[d] = 0;
             }
             if (!isShaderPathForDiag(ioPath))
                 compatLogFmt("opendir CASEFIX: %s -> %s",
