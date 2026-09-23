@@ -2214,7 +2214,7 @@ static bool pakFindVirtualEntry(const char* requested,
 // Android source contains an unfinished __linux stub that returns 0 after
 // fopen(), which makes every PAK-backed .caf/.cgf look missing to the
 // animation/model loaders.
-extern "C" unsigned compatGuestGetFileSize(const char* requested, unsigned /*flags*/) {
+extern "C" unsigned compatGuestGetFileSize(void* /*self*/, const char* requested, unsigned /*flags*/) {
     if (!requested || !*requested)
         return 0;
 
