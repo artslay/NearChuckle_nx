@@ -9,6 +9,7 @@
 #include <cctype>
 #include <string>
 #include <sys/iosupport.h>
+#include <switch/services/hid.h>
 
 // SDL3's Android glue registers these callbacks with JNI_OnLoad. We invoke the
 // registered native functions directly from the Switch main/render thread so
@@ -227,10 +228,10 @@ static constexpr SwitchKeyBinding kSwitchKeyBindings[] = {
     {HidNpadButton_Minus,      67,  "MINUS -> F1"},
 
     // Digital pad stays available as Android DPAD keys for menu navigation.
-    {HidNpadButton_DpadUp,      19, "DPAD UP"},
-    {HidNpadButton_DpadDown,    20, "DPAD DOWN"},
-    {HidNpadButton_DpadLeft,    21, "DPAD LEFT"},
-    {HidNpadButton_DpadRight,   22, "DPAD RIGHT"},
+    {HidNpadButton_Up,          19, "DPAD UP"},
+    {HidNpadButton_Down,        20, "DPAD DOWN"},
+    {HidNpadButton_Left,        21, "DPAD LEFT"},
+    {HidNpadButton_Right,       22, "DPAD RIGHT"},
 
     // Left stick -> classic Far Cry WASD movement. Each direction is sampled
     // as a digital key so it also works with the original Android input path.
@@ -302,7 +303,13 @@ static void pollSwitchInputInternal() {
         return;
 
     hidScanInput();
-    const u64 held = hidKeysHeld(CONTROLLER_P1_AUTO);
+    // libnx versions used by this project expose the legacy HID polling API
+    // with HidNpadIdType values rather than CONTROLLER_P1_AUTO. Include both
+    // player-1 and handheld state so the bridge works in docked and handheld
+    // modes without depending on a deprecated macro.
+    const u64 held =
+        hidKeysHeld(HidNpadIdType_No1) |
+        hidKeysHeld(HidNpadIdType_Handheld);
 
     for (const SwitchKeyBinding& b : kSwitchKeyBindings) {
         const bool was_down = (g_switch_input_previous & b.mask) != 0;
