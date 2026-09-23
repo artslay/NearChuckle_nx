@@ -408,16 +408,6 @@ static char* stub_realpath(const char* p, char* out) {
         }
     }
 
-    // Keep the old extraction path available only as an explicit compatibility
-    // escape hatch. Normal PAK I/O on this branch must stay virtual.
-    if (std::getenv("NEARCHUCKLE_PAK_LEGACY_MATERIALIZE") &&
-        !isShaderCacheLookupPath(p) &&
-        (strchr(p, '/') || strchr(p, '\\'))) {
-        std::string materialized;
-        if (tryMaterializePakPath(p, materialized))
-            return writeCanonical(materialized);
-    }
-
     if (!callerOwnsBuffer)
         free(out);
     errno = ENOENT;
@@ -2882,7 +2872,6 @@ static int sh_fclose(FILE* f) {
 static int stub_open(const char* path, int flags, ...) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
-
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
@@ -2891,7 +2880,8 @@ static int stub_open(const char* path, int flags, ...) {
         compatLogFmt("path NORMALIZE: open %s -> %s", path, ioPathStorage.c_str());
 
     int vfd = devUrandomOpen(ioPath);
-    if (vfd >= 0) return vfd;
+    if (vfd >= 0)
+        return vfd;
 
     va_list va;
     va_start(va, flags);
@@ -2906,8 +2896,8 @@ static int stub_open(const char* path, int flags, ...) {
 
     if (std::string mapped = obbRemap(ioPath); !mapped.empty()) {
         int mfd = doOpen(mapped.c_str());
-        compatLogFmt("obb: open %s -> %s (fd=%d)", ioPath ? ioPath : "?",
-                     mapped.c_str(), mfd);
+        compatLogFmt("obb: open %s -> %s (fd=%d)",
+                     ioPath ? ioPath : "?", mapped.c_str(), mfd);
         if (mfd >= 0) {
             if (videoIo) g_near_video_open_failed = 0;
             return mfd;
@@ -2919,102 +2909,26 @@ static int stub_open(const char* path, int flags, ...) {
         (shaderPathHasExt(ioPath, ".csl") ||
          shaderPathHasExt(ioPath, ".csi") ||
          shaderPathHasExt(ioPath, ".crycg"));
+
     if (shaderSourceOpen)
-        compatLogFmt("open SHADER REQUEST: path=%s flags=0x%x",
-                     ioPath, flags);
+        compatLogFmt("open SHADER REQUEST: path=%s flags=0x%x", ioPath, flags);
 
     int fd = doOpen(ioPath);
+
     if (shaderSourceOpen)
         compatLogFmt("open SHADER DIRECT: path=%s result=%s fd=%d",
                      ioPath, fd >= 0 ? "OK" : "FAIL", fd);
+
     if (fd < 0 && ioPath) {
         std::string resolved;
-        if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath) {
+        if (resolvePathCaseInsensitive(ioPath, resolved) &&
+            resolved != ioPath) {
             int rfd = doOpen(resolved.c_str());
             if (rfd >= 0) {
-                compatLogFmt("open CASEFIX: %s -> %s fd=%d", ioPath, resolved.c_str(), rfd);
-                if (shaderSourceOpen)
-                    compatLogFmt("open SHADER CASEFIX: requested=%s resolved=%s result=OK fd=%d",
-                                 ioPath, resolved.c_str(), rfd);
+                compatLogFmt("open CASEFIX: %s -> %s fd=%d",
+                             ioPath, resolved.c_str(), rfd);
                 if (videoIo) g_near_video_open_failed = 0;
                 return rfd;
-            }
-            if (shaderSourceOpen)
-                compatLogFmt("open SHADER CASEFIX: requested=%s resolved=%s result=FAIL",
-                             ioPath, resolved.c_str());
-        }
-    }
-
-    // Some Android asset loaders bypass stdio completely and reach the
-    // POSIX open() shim (for example CControllerManager::LoadAnimation).
-    // VirtualPakFile cannot be returned as an fd to std::ifstream, so for a
-    // read-only PAK miss materialize just that one requested entry into the
-    // persistent cache and open the real file. This is lazy: there is no bulk
-    // PAK extraction at startup and repeated requests hit _pakcache_v3.
-    if (fd < 0 && ioPath &&
-        (flags & O_ACCMODE) == O_RDONLY &&
-        !(flags & (O_CREAT | O_TRUNC | O_APPEND))) {
-        std::string materialized;
-        if (tryMaterializePakPath(ioPath, materialized)) {
-            int mfd = doOpen(materialized.c_str());
-            if (mfd >= 0) {
-                if (videoIo) g_near_video_open_failed = 0;
-                compatLogFmt("open PAK EXACT: %s -> %s fd=%d",
-                             ioPath, materialized.c_str(), mfd);
-                return mfd;
-            }
-            compatLogFmt("open PAK EXACT FAILED: %s -> %s",
-                         ioPath, materialized.c_str());
-        }
-    }
-
-    // BinkDecoder/FileStream in the Android port ultimately reaches open()
-    // through std::ifstream. Our PAK reader returns FILE*, which is not useful
-    // to std::ifstream, so materialize the archive entry into a real file and
-    // then let the normal Switch open() consume that file descriptor.
-    //
-    // Restrict this extra lookup to video assets. The general CryPak path already
-    // handles other PAK-backed assets through fopen()/realpath(), while video
-    // decoding specifically bypasses those stdio wrappers.
-    if (fd < 0 && ioPath &&
-        (shaderPathHasExt(ioPath, ".bik") ||
-         shaderPathHasExt(ioPath, ".avi"))) {
-        std::string materialized;
-        if (tryMaterializePakPath(ioPath, materialized)) {
-            int mfd = doOpen(materialized.c_str());
-            if (mfd >= 0) {
-                if (videoIo) g_near_video_open_failed = 0;
-                compatLogFmt("open VIDEO PAK EXACT: %s -> %s fd=%d",
-                             ioPath, materialized.c_str(), mfd);
-                return mfd;
-            }
-            compatLogFmt("open VIDEO PAK EXACT FAILED: %s -> %s",
-                         ioPath, materialized.c_str());
-        }
-
-        // Match the Android path fallback: if the virtual directory differs but
-        // the basename is unique in the PAK set, use that single unambiguous match.
-        if (tryMaterializeUniquePakBasename(ioPath)) {
-            const std::string materializedName = pakPreserveCasePath(ioPath);
-            char cwd[PATH_MAX];
-            if (::getcwd(cwd, sizeof(cwd))) {
-                std::string materializedPath = materializedName;
-                if (materializedPath.empty() || materializedPath[0] != '/') {
-                    materializedPath = std::string(cwd);
-                    if (!materializedPath.empty() && materializedPath.back() != '/')
-                        materializedPath += '/';
-                    materializedPath += materializedName;
-                }
-
-                int mfd = doOpen(materializedPath.c_str());
-                if (mfd >= 0) {
-                    if (videoIo) g_near_video_open_failed = 0;
-                    compatLogFmt("open VIDEO PAK BASENAME: %s -> %s fd=%d",
-                                 ioPath, materializedPath.c_str(), mfd);
-                    return mfd;
-                }
-                compatLogFmt("open VIDEO PAK BASENAME FAILED: %s -> %s",
-                             ioPath, materializedPath.c_str());
             }
         }
     }
@@ -3022,11 +2936,10 @@ static int stub_open(const char* path, int flags, ...) {
     if (fd < 0) {
         if (videoIo) g_near_video_open_failed = 1;
         compatLogFmt("open FAIL: %s flags=0x%x", ioPath ? ioPath : "?", flags);
+    } else if (videoIo) {
+        g_near_video_open_failed = 0;
     }
-    else {
-        if (videoIo) g_near_video_open_failed = 0;
-        compatLogFmt("open OK:   %s flags=0x%x fd=%d", ioPath ? ioPath : "?", flags, fd);
-    }
+
     return fd;
 }
 
@@ -3461,17 +3374,12 @@ static EGLBoolean w_eglMakeCurrent(EGLDisplay d, EGLSurface draw, EGLSurface rea
     return ok;
 }
 
-// Basic Switch controller -> SDL Android input mapping.
-// Left stick: W/A/S/D
-// Right stick: relative mouse movement
-// ZL: left mouse button
-// ZR: right mouse button
-//
-// SDL's Android port already exposes these callbacks through JNI, so feed the
-// Switch HID state into the existing guest SDL input path instead of creating a
-// second event system.
+// Switch HID -> the same Android GamepadMapper event model.
+// Far Cry receives translated SDL Android key/mouse events, not SDL gamepad events.
 extern void* jniFindRegisteredNative(const char* name, int occurrence);
-extern void* jniFindRegisteredNativeExact(const char* name, const char* signature, int occurrence);
+extern void* jniFindRegisteredNativeExact(const char* name,
+                                          const char* signature,
+                                          int occurrence);
 
 namespace {
 using GuestKeyFn = void (*)(void*, void*, int);
@@ -3480,49 +3388,77 @@ using GuestMouseFn = void (*)(void*, void*, int, int, float, float, unsigned cha
 static GuestKeyFn g_guest_key_down = nullptr;
 static GuestKeyFn g_guest_key_up = nullptr;
 static GuestMouseFn g_guest_mouse = nullptr;
-static bool g_guest_input_callbacks_initialized = false;
+static bool g_guest_keys_ready = false;
+static bool g_guest_mouse_ready = false;
+
 static PadState g_switch_pad = {};
 static bool g_switch_pad_initialized = false;
 static bool g_input_connection_logged = false;
-static bool g_input_event_logged = false;
+static uint64_t g_last_pad_buttons = UINT64_MAX;
 
 static bool g_w_down = false;
 static bool g_a_down = false;
 static bool g_s_down = false;
 static bool g_d_down = false;
+static bool g_shift_down = false;
+static bool g_v_down = false;
+static bool g_g_down = false;
+static bool g_space_down = false;
+static bool g_c_down = false;
+static bool g_r_down = false;
+static bool g_f_down = false;
+static bool g_escape_down = false;
+static bool g_tab_down = false;
 static bool g_zl_down = false;
 static bool g_zr_down = false;
 
 static void initGuestInputCallbacks() {
-    if (g_guest_input_callbacks_initialized)
-        return;
+    if (!g_guest_keys_ready) {
+        g_guest_key_down =
+            reinterpret_cast<GuestKeyFn>(jniFindRegisteredNativeExact(
+                "onNativeKeyDown", "(I)V", 0));
+        g_guest_key_up =
+            reinterpret_cast<GuestKeyFn>(jniFindRegisteredNativeExact(
+                "onNativeKeyUp", "(I)V", 0));
 
-    // The SDL Android methods are registered by SDL's JNI_OnLoad. Do not latch
-    // a permanent failure here: the first EGL frame can race SDL's registration.
-    g_guest_key_down =
-        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNativeExact(
-            "onNativeKeyDown", "(I)V", 0));
-    g_guest_key_up =
-        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNativeExact(
-            "onNativeKeyUp", "(I)V", 0));
-    g_guest_mouse =
-        reinterpret_cast<GuestMouseFn>(jniFindRegisteredNativeExact(
-            "onNativeMouse", "(IIFFZ)V", 0));
+        if (!g_guest_key_down)
+            g_guest_key_down =
+                reinterpret_cast<GuestKeyFn>(
+                    jniFindRegisteredNative("onNativeKeyDown", 0));
+        if (!g_guest_key_up)
+            g_guest_key_up =
+                reinterpret_cast<GuestKeyFn>(
+                    jniFindRegisteredNative("onNativeKeyUp", 0));
 
-    if (g_guest_key_down && g_guest_key_up && g_guest_mouse) {
-        g_guest_input_callbacks_initialized = true;
-        compatLogFmt("INPUT: SDL callbacks ready keydown=%p keyup=%p mouse=%p",
-                     reinterpret_cast<void*>(g_guest_key_down),
-                     reinterpret_cast<void*>(g_guest_key_up),
-                     reinterpret_cast<void*>(g_guest_mouse));
-    } else {
-        static unsigned miss_log_counter = 0;
-        if ((miss_log_counter++ % 120u) == 0u) {
-            compatLogFmt("INPUT: SDL callbacks not ready keydown=%p keyup=%p mouse=%p",
-                         reinterpret_cast<void*>(g_guest_key_down),
-                         reinterpret_cast<void*>(g_guest_key_up),
-                         reinterpret_cast<void*>(g_guest_mouse));
-        }
+        g_guest_keys_ready =
+            g_guest_key_down != nullptr && g_guest_key_up != nullptr;
+    }
+
+    if (!g_guest_mouse_ready) {
+        g_guest_mouse =
+            reinterpret_cast<GuestMouseFn>(jniFindRegisteredNativeExact(
+                "onNativeMouse", "(IIFFZ)V", 0));
+
+        if (!g_guest_mouse)
+            g_guest_mouse =
+                reinterpret_cast<GuestMouseFn>(
+                    jniFindRegisteredNative("onNativeMouse", 0));
+
+        g_guest_mouse_ready = g_guest_mouse != nullptr;
+    }
+
+    static bool reported = false;
+    static unsigned retries = 0;
+    if (!reported && (g_guest_keys_ready || g_guest_mouse_ready)) {
+        reported = true;
+        compatLogFmt(
+            "INPUT: SDL Android callbacks ready keydown=%p keyup=%p mouse=%p",
+            reinterpret_cast<void*>(g_guest_key_down),
+            reinterpret_cast<void*>(g_guest_key_up),
+            reinterpret_cast<void*>(g_guest_mouse));
+    } else if (!g_guest_keys_ready && !g_guest_mouse_ready &&
+               (++retries % 120u) == 0u) {
+        compatLog("INPUT: SDL Android callbacks unresolved");
     }
 }
 
@@ -3537,7 +3473,7 @@ static void initSwitchPad() {
 }
 
 static void updateMappedKey(bool desired, bool& current, int androidKeycode) {
-    if (desired == current || !g_guest_key_down || !g_guest_key_up)
+    if (!g_guest_keys_ready || desired == current)
         return;
 
     if (desired)
@@ -3546,44 +3482,33 @@ static void updateMappedKey(bool desired, bool& current, int androidKeycode) {
         g_guest_key_up(nullptr, nullptr, androidKeycode);
 
     current = desired;
-
-    if (!g_input_event_logged) {
-        g_input_event_logged = true;
-        compatLogFmt("INPUT: mapped key event keycode=%d action=%s",
-                     androidKeycode, desired ? "DOWN" : "UP");
-    }
 }
 
-static void sendMappedMouseState(bool zl, bool zr, bool& old_zl, bool& old_zr) {
-    if (!g_guest_mouse)
+static void sendMappedMouse(bool desired, bool& current, int button) {
+    if (!g_guest_mouse_ready || desired == current)
         return;
 
-    const int old_state = (old_zl ? 1 : 0) | (old_zr ? 2 : 0);
-    const int new_state = (zl ? 1 : 0) | (zr ? 2 : 0);
+    const int action = desired ? 0 : 1; // ACTION_DOWN / ACTION_UP
+    g_guest_mouse(nullptr, nullptr, button, action, 0.0f, 0.0f, 0);
+    current = desired;
+}
 
-    if (old_state == new_state)
+static void sendMouseMove(float dx, float dy) {
+    if (!g_guest_mouse_ready || (dx == 0.0f && dy == 0.0f))
         return;
 
-    const int action = new_state > old_state ? 0 : 1;
-    g_guest_mouse(nullptr, nullptr, new_state, action, 0.0f, 0.0f, 0);
-
-    if (!g_input_event_logged) {
-        g_input_event_logged = true;
-        compatLogFmt("INPUT: mapped mouse state old=0x%x new=0x%x",
-                     old_state, new_state);
-    }
-
-    old_zl = zl;
-    old_zr = zr;
+    // ACTION_MOVE=2, relative=true, same as Android GamepadMapper.
+    g_guest_mouse(nullptr, nullptr, 0, 2, dx, dy, 1);
 }
 
 static void compatPollSwitchInput() {
     initGuestInputCallbacks();
     initSwitchPad();
-    if (!g_guest_input_callbacks_initialized)
+
+    if (!g_switch_pad_initialized ||
+        (!g_guest_keys_ready && !g_guest_mouse_ready))
         return;
 
-    initSwitchPad();
     padUpdate(&g_switch_pad);
 
     const u64 held = padGetButtons(&g_switch_pad);
@@ -3593,40 +3518,59 @@ static void compatPollSwitchInput() {
     const bool connected = padIsConnected(&g_switch_pad);
     if (connected && !g_input_connection_logged) {
         g_input_connection_logged = true;
-        compatLogFmt("INPUT: controller connected style=0x%x buttons=0x%llx",
-                     padGetStyleSet(&g_switch_pad),
-                     static_cast<unsigned long long>(held));
+        compatLogFmt("INPUT: controller connected style=0x%x",
+                     padGetStyleSet(&g_switch_pad));
+    }
+
+    if (held != g_last_pad_buttons) {
+        if (g_last_pad_buttons != UINT64_MAX)
+            compatLogFmt("INPUT: Switch buttons 0x%llx -> 0x%llx",
+                         (unsigned long long)g_last_pad_buttons,
+                         (unsigned long long)held);
+        g_last_pad_buttons = held;
     }
 
     constexpr float kStickMax = 32767.0f;
     constexpr float kDeadzone = 0.22f;
-    constexpr float kMouseSensitivity = 10.0f;
+    constexpr float kLookGain = 16.0f;
 
-    const float lx =
-        static_cast<float>(left.x) / kStickMax;
-    const float ly =
-        static_cast<float>(left.y) / kStickMax;
-    const float rx =
-        static_cast<float>(right.x) / kStickMax;
-    const float ry =
-        static_cast<float>(right.y) / kStickMax;
+    const float lx = static_cast<float>(left.x) / kStickMax;
+    const float ly = static_cast<float>(left.y) / kStickMax;
+    const float rx = static_cast<float>(right.x) / kStickMax;
+    const float ry = static_cast<float>(right.y) / kStickMax;
 
-    updateMappedKey(lx < -kDeadzone, g_a_down, 29); // Android KEYCODE_A
-    updateMappedKey(lx >  kDeadzone, g_d_down, 32); // Android KEYCODE_D
-    updateMappedKey(ly >  kDeadzone, g_w_down, 51); // Android KEYCODE_W
-    updateMappedKey(ly < -kDeadzone, g_s_down, 47); // Android KEYCODE_S
+    // Android button layout:
+    // A=Space(62), B=C(31), X=R(46), Y=F(34), L1=Shift(59),
+    // L-stick=V(50), R-stick=G(35), Start=Escape(111), Select=Tab(61).
+    updateMappedKey((held & HidNpadButton_A) != 0, g_space_down, 62);
+    updateMappedKey((held & HidNpadButton_B) != 0, g_c_down, 31);
+    updateMappedKey((held & HidNpadButton_X) != 0, g_r_down, 46);
+    updateMappedKey((held & HidNpadButton_Y) != 0, g_f_down, 34);
+    updateMappedKey((held & HidNpadButton_L) != 0, g_shift_down, 59);
+    updateMappedKey((held & HidNpadButton_StickL) != 0, g_v_down, 50);
+    updateMappedKey((held & HidNpadButton_StickR) != 0, g_g_down, 35);
+    updateMappedKey((held & HidNpadButton_Plus) != 0, g_escape_down, 111);
+    updateMappedKey((held & HidNpadButton_Minus) != 0, g_tab_down, 61);
 
-    const bool zl = (held & HidNpadButton_ZL) != 0;
-    const bool zr = (held & HidNpadButton_ZR) != 0;
-    sendMappedMouseState(zl, zr, g_zl_down, g_zr_down);
+    // D-pad and analog stick both feed movement, like Android GamepadMapper.
+    const bool move_w = (held & HidNpadButton_Up) != 0 || ly > kDeadzone;
+    const bool move_s = (held & HidNpadButton_Down) != 0 || ly < -kDeadzone;
+    const bool move_a = (held & HidNpadButton_Left) != 0 || lx < -kDeadzone;
+    const bool move_d = (held & HidNpadButton_Right) != 0 || lx > kDeadzone;
 
-    if (g_guest_mouse &&
-        (std::fabs(rx) > kDeadzone || std::fabs(ry) > kDeadzone)) {
-        g_guest_mouse(nullptr, nullptr, 0, 2,
-                      rx * kMouseSensitivity,
-                      -ry * kMouseSensitivity,
-                      1);
-    }
+    updateMappedKey(move_w, g_w_down, 51);
+    updateMappedKey(move_s, g_s_down, 47);
+    updateMappedKey(move_a, g_a_down, 29);
+    updateMappedKey(move_d, g_d_down, 32);
+
+    // Android: R1/R2 -> primary mouse button, L2 -> secondary mouse button.
+    const bool fire = (held & (HidNpadButton_ZR | HidNpadButton_R)) != 0;
+    const bool aim = (held & HidNpadButton_ZL) != 0;
+    sendMappedMouse(fire, g_zr_down, 1);
+    sendMappedMouse(aim, g_zl_down, 2);
+
+    if (std::fabs(rx) > kDeadzone || std::fabs(ry) > kDeadzone)
+        sendMouseMove(rx * kLookGain, -ry * kLookGain);
 }
 
 } // namespace
@@ -4918,27 +4862,9 @@ static bool materialPrepCacheReady() {
            S_ISREG(st.st_mode);
 }
 
-void compatPrepareScriptDirectories(const char* /*dataRoot*/) {
-    // PAK-backed scripts stay virtual. Do not materialize the Scripts tree
-    // onto the SD card. Individual Lua/material assets are served lazily by
-    // tryOpenFromPaks() through VirtualPakFile.
-    mkdir("scripts", 0755);
-    mkdir("scripts/materials", 0755);
-
-    // The general Lua tree remains virtual. Physical material definitions are
-    // the one targeted exception because CryEngine enumerates this directory
-    // while constructing physical materials instead of opening one known file.
-    if (materialPrepCacheReady()) {
-        compatLog("scripts preload: virtual PAK mode, materials=cached");
-        return;
-    }
-
-    const bool materialsReady = tryMaterializePakDirectory("scripts/materials");
-    if (materialsReady)
-        writePrepMarker(kMaterialPrepMarker);
-
-    compatLogFmt("scripts preload: virtual PAK mode, materials=%s",
-                 materialsReady ? "materialized" : "not found");
+void compatPrepareScriptDirectories(const char* dataRoot) {
+    (void)dataRoot;
+    compatLog("script preload: disabled; CryPak reads scripts from PAKs");
 }
 void compatProbePakArchives(const char* dataRoot) {
     const std::string root = dataRoot ? dataRoot : "";
@@ -5014,189 +4940,8 @@ static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
 
 void compatPrepareShaderDirectories(const char* dataRoot) {
-    // A matching persistent marker means the known-good prepared tree can
-    // be reused. Otherwise perform the normal preparation pass once.
-    if (shaderPrepCacheReady()) {
-        compatLog("shader preload: cached=1 (skip FCData PAK scan)");
-        return;
-    }
-
-    compatLog("shader preload: cache invalid/incomplete -> refresh shader source tree");
-
-    // One HWScripts pass also materializes its nested Declarations tree, so
-    // scanning Declarations separately only repeats the same 17-Pak walk.
-    const char* dirs[] = {
-        "Shaders/HWScripts",
-        "Shaders/Scripts",
-        nullptr
-    };
-
-    bool shaderScriptsPakReady = false;
-
-    prepareShaderSourceFiles(dataRoot);
-
-    for (size_t i = 0; dirs[i]; ++i) {
-        const bool ready = tryMaterializePakDirectory(dirs[i]);
-
-        int cslCount = 0;
-        int csiCount = 0;
-        std::string resolved = dirs[i];
-        if (!resolvePathCaseInsensitive(dirs[i], resolved))
-            resolved = dirs[i];
-        countShaderScriptsRecursive(resolved, cslCount, csiCount);
-
-        compatLogFmt("shader prep dir: %s pak_ready=%d csl=%d csi=%d",
-                     dirs[i], ready ? 1 : 0, cslCount, csiCount);
-
-        if (std::strcmp(dirs[i], "Shaders/Scripts") == 0)
-            shaderScriptsPakReady = ready;
-    }
-
-    // The Android CryPak implementation used by the guest shader loader can
-    // enumerate the physical directory without reproducing the ZIP directory
-    // tree exactly as desktop CryPak does. In particular, the two declaration
-    // CSL files live below HWScripts/Declarations and are required to register
-    // logical Cg scripts such as CommonSubroutines. Materialize these few
-    // declaration sources at the HWScripts root as a compatibility fallback.
-    const bool rootCgvProgramms =
-        tryMaterializeUniquePakBasename(
-            "Shaders/HWScripts/CGVProgramms.csl");
-    const bool rootCgvMacro =
-        tryMaterializeUniquePakBasename(
-            "Shaders/HWScripts/CGVPMacro.csi");
-    const bool rootCgpShaders =
-        tryMaterializeUniquePakBasename(
-            "Shaders/HWScripts/CGPShaders.csl");
-
-    (void)rootCgvProgramms;
-    (void)rootCgvMacro;
-    (void)rootCgpShaders;
-
-    // This pass is intentionally only part of the versioned first-run shader
-    // preparation. It restores the exact original declaration sources from
-    // Shaders.pak instead of trusting files left by an older compatibility build.
-    const bool declarationsRestored = refreshCoreShaderDeclarationsFromPak();
-    const bool commonStandaloneReady = materializeCommonSubroutinesScript();
-
-    // CryEngine's runtime Cg loader resolves dependent scripts such as
-    // CommonSubroutines and PosCommon from the Shaders/Scripts enumeration,
-    // even though the original declaration files are stored below
-    // HWScripts/Declarations. Keep exact copies in Scripts as well so the
-    // runtime loader sees the DeclareCGScript entries through the same
-    // directory it scans for menu shaders.
-    auto copyShaderDeclarationToScripts =
-        [](const char* sourcePath, const char* outputPath) -> bool {
-            std::string sourceResolved;
-            if (!resolvePathCaseInsensitive(sourcePath, sourceResolved))
-                return false;
-
-            FILE* in = fopen(sourceResolved.c_str(), "rb");
-            if (!in)
-                return false;
-
-            if (fseek(in, 0, SEEK_END) != 0) {
-                fclose(in);
-                return false;
-            }
-
-            const long size = ftell(in);
-            if (size < 0 || size > 1024 * 1024) {
-                fclose(in);
-                return false;
-            }
-
-            if (fseek(in, 0, SEEK_SET) != 0) {
-                fclose(in);
-                return false;
-            }
-
-            std::vector<char> data((size_t)size);
-            const size_t got =
-                size ? fread(data.data(), 1, data.size(), in) : 0;
-            fclose(in);
-
-            if (got != data.size())
-                return false;
-
-            FILE* out = fopen(outputPath, "wb");
-            if (!out)
-                return false;
-
-            const size_t written =
-                data.empty() ? 0 : fwrite(data.data(), 1, data.size(), out);
-            fclose(out);
-
-            return written == data.size();
-        };
-
-    const bool scriptCgvProgrammsReady =
-        copyShaderDeclarationToScripts(
-            "Shaders/HWScripts/Declarations/CGVProgramms.csl",
-            "Shaders/Scripts/CGVProgramms.csl");
-    const bool scriptCgpShadersReady =
-        copyShaderDeclarationToScripts(
-            "Shaders/HWScripts/Declarations/CGPShaders.csl",
-            "Shaders/Scripts/CGPShaders.csl");
-
-    compatLogFmt("shader dependency scripts: CGVProgramms=%d CGPShaders=%d",
-                 scriptCgvProgrammsReady ? 1 : 0,
-                 scriptCgpShadersReady ? 1 : 0);
-
-    // Keep the original CryEngine shader declaration layout intact:
-    // CGVPMacro.csi contains the SubrScript placeholder, while
-    // CGVProgramms.csl owns the DeclareCGScript definitions. Modifying the
-    // included CSI changes the top-level token stream seen by the legacy
-    // shader parser and can prevent DeclareCGScript entries such as PosCommon
-    // from being registered.
-    // Reaching this point means the one-time preparation pass has completed.
-    // Record the new marker only after the restored core declaration files exist.
-    bool coreReady = true;
-    const char* required[] = {
-        "Shaders/HWScripts/Declarations/CGVProgramms.csl",
-        "Shaders/HWScripts/Declarations/CGVPMacro.csi",
-        "Shaders/HWScripts/Declarations/CGPShaders.csl",
-        "Shaders/HWScripts/CGVProgramms.csl",
-        "Shaders/HWScripts/CGVPMacro.csi",
-        "Shaders/HWScripts/CGPShaders.csl",
-        nullptr
-    };
-    for (size_t i = 0; required[i]; ++i) {
-        struct stat st = {};
-        if (::stat(required[i], &st) != 0 || !S_ISREG(st.st_mode)) {
-            coreReady = false;
-            break;
-        }
-    }
-
-    int finalScriptCslCount = 0;
-    int finalScriptCsiCount = 0;
-    countShaderScriptsRecursive("Shaders/Scripts",
-                                finalScriptCslCount,
-                                finalScriptCsiCount);
-
-    struct stat finalScriptsDir = {};
-    const bool finalScriptsDirPresent =
-        (::stat("Shaders/Scripts", &finalScriptsDir) == 0) &&
-        S_ISDIR(finalScriptsDir.st_mode);
-
-    compatLogFmt("shader prep tree: Shaders/Scripts pak_ready=%d present=%d csl=%d csi=%d",
-                 shaderScriptsPakReady ? 1 : 0,
-                 finalScriptsDirPresent ? 1 : 0,
-                 finalScriptCslCount,
-                 finalScriptCsiCount);
-
-    // The dependency declarations must be visible from the Scripts
-    // enumeration as well; otherwise CCGVProgram_GL can load a system shader
-    // but still report missing CommonSubroutines/PosCommon when a menu material
-    // references them.
-    if (coreReady && declarationsRestored && commonStandaloneReady &&
-        scriptCgvProgrammsReady && scriptCgpShadersReady &&
-        finalScriptsDirPresent && finalScriptCslCount >= 4) {
-        writePrepMarker(kShaderPrepMarker);
-        compatLog("shader preload: persistent cache marker ready");
-    } else {
-        compatLog("shader preload: persistent cache marker NOT created (core shader declarations incomplete)");
-    }
+    (void)dataRoot;
+    compatLog("shader preload: disabled; CryPak reads shaders from PAKs");
 }
 
 
@@ -5633,20 +5378,6 @@ static DIR* stub_opendir(const char* path) {
             if (!isShaderPathForDiag(ioPath))
                 compatLogFmt("opendir CASEFIX: %s -> %s",
                              ioPath ? ioPath : "?", resolved.c_str());
-            return d;
-        }
-    }
-
-    if (ioPath && tryMaterializePakDirectory(ioPath)) {
-        d = opendir(ioPath);
-        if (!d) {
-            std::string dirResolved;
-            if (resolvePathCaseInsensitive(ioPath, dirResolved))
-                d = opendir(dirResolved.c_str());
-        }
-        if (d) {
-            if (!isShaderPathForDiag(ioPath))
-                compatLogFmt("opendir PAK: %s", ioPath);
             return d;
         }
     }
@@ -6282,15 +6013,6 @@ static int stub_access(const char* path, int mode) {
 
     if (::access(ioPath, mode) == 0)
         return 0;
-
-    // access() is used by a few file loaders as a cheap existence test before
-    // they call open(). Treat a PAK entry as an existing read-only file too.
-    if ((mode & W_OK) == 0) {
-        std::string pakPath;
-        PakEntryMeta meta;
-        if (pakFindVirtualEntry(ioPath, pakPath, meta))
-            return 0;
-    }
 
     std::string resolved;
     if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath)
