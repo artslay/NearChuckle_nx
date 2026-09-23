@@ -1564,13 +1564,55 @@ static std::string obbRemap(const char* path) {
 // Only read-mode opens are handled here; existing PAK files are never changed.
 static std::string pakNormalizeName(const char* name) {
     std::string out = name ? name : "";
+
+    // Match CryPak::BeautifyPath semantics closely enough for the virtual PAK
+    // index: native/non-native slashes become '/', names are case-folded, and
+    // redundant separators plus "/./" path components disappear. In
+    // particular, weapon animation lists routinely contain "dir\\.\\file.caf".
     for (char& c : out) {
-        if ((unsigned char)c == 92) c = '/';
-        else c = (char)std::tolower((unsigned char)c);
+        if ((unsigned char)c == 92)
+            c = '/';
+        else
+            c = (char)std::tolower((unsigned char)c);
     }
-    while (out.size() >= 2 && out[0] == '.' && out[1] == '/')
-        out.erase(0, 2);
-    return out;
+
+    std::string normalized;
+    normalized.reserve(out.size());
+
+    size_t i = 0;
+    while (i < out.size()) {
+        // Collapse repeated separators.
+        if (out[i] == '/') {
+            if (normalized.empty() || normalized.back() != '/')
+                normalized.push_back('/');
+            ++i;
+            continue;
+        }
+
+        // Remove a "." path component: "foo/./bar" -> "foo/bar".
+        if (out[i] == '.' &&
+            (i + 1 == out.size() ||
+             (i + 1 < out.size() && out[i + 1] == '/'))) {
+            ++i;
+            if (i < out.size() && out[i] == '/')
+                ++i;
+            continue;
+        }
+
+        normalized.push_back(out[i]);
+        ++i;
+    }
+
+    while (normalized.size() >= 2 &&
+           normalized[0] == '.' && normalized[1] == '/')
+        normalized.erase(0, 2);
+
+    // Do not leave a leading slash for ordinary relative PAK entries.
+    while (normalized.size() > 1 && normalized[0] == '/' &&
+           normalized[1] != '/')
+        normalized.erase(0, 1);
+
+    return normalized;
 }
 
 static uint16_t pakRd16(const unsigned char* p) {
