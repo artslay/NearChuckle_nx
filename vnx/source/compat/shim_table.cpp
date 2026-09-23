@@ -131,6 +131,11 @@ static bool pakVirtualDirectoryExists(const char* directory);
 static bool isShaderCacheLookupPath(const char* path);
 static bool isShaderPathForDiag(const char* path);
 static void compatLogPakOpenState(FILE* f, const char* path);
+static bool pakAssetNeedsMaterialization(const char* requested);
+static bool materializeVirtualPakEntry(const char* requested,
+                                       const std::string& pakPath,
+                                       const PakEntryMeta& meta,
+                                       std::string& outPath);
  
 extern "C" {
 volatile int g_near_video_open_failed = 0;
