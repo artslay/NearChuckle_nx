@@ -225,8 +225,8 @@ static constexpr SwitchKeyBinding kSwitchKeyBindings[] = {
     {HidNpadButton_Y,          33,  "Y -> E"},
     {HidNpadButton_L,          59,  "L -> LSHIFT"},
     {HidNpadButton_R,          113, "R -> LCTRL"},
-    {HidNpadButton_Plus,       13,  "PLUS -> TAB"},
-    {HidNpadButton_Minus,      67,  "MINUS -> F1"},
+    {HidNpadButton_Plus,       111, "PLUS -> ESCAPE"},
+    {HidNpadButton_Minus,       61, "MINUS -> TAB"},
 
     // Digital pad stays available as Android DPAD keys for menu navigation.
     {HidNpadButton_Up,          19, "DPAD UP"},
@@ -326,17 +326,25 @@ static void pollSwitchInputInternal() {
     }
 
     // ZR/ZL are the two mouse buttons in the PC control scheme. SDL's Android
-    // glue passes MotionEvent BUTTON_PRIMARY/SECONDARY (1/2) plus ACTION_DOWN/UP.
+    // glue treats the integer argument as the complete MotionEvent button-state
+    // bitmask, not just the button that changed. Keep both held-button bits in
+    // that state so pressing/releasing the second mouse button cannot corrupt
+    // SDL's internal last_state tracking.
     if (g_sdl_mouse) {
         const bool old_zr = (g_switch_input_previous & HidNpadButton_ZR) != 0;
         const bool new_zr = (held & HidNpadButton_ZR) != 0;
-        if (old_zr != new_zr)
-            switchEmitMouse(g_sdl_mouse, 1, new_zr ? 0 : 1);
-
         const bool old_zl = (g_switch_input_previous & HidNpadButton_ZL) != 0;
         const bool new_zl = (held & HidNpadButton_ZL) != 0;
+
+        const int old_mouse_state = (old_zr ? 1 : 0) | (old_zl ? 2 : 0);
+        const int new_mouse_state = (new_zr ? 1 : 0) | (new_zl ? 2 : 0);
+
+        if (old_zr != new_zr)
+            switchEmitMouse(g_sdl_mouse, new_mouse_state,
+                            new_zr ? 0 : 1);
         if (old_zl != new_zl)
-            switchEmitMouse(g_sdl_mouse, 2, new_zl ? 0 : 1);
+            switchEmitMouse(g_sdl_mouse, new_mouse_state,
+                            new_zl ? 0 : 1);
 
         const bool rs_left  = (held & HidNpadButton_StickRLeft)  != 0;
         const bool rs_right = (held & HidNpadButton_StickRRight) != 0;
