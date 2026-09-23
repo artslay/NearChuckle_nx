@@ -3431,8 +3431,6 @@ static void* w_SDL_GL_CreateContext(void* window) {
     return ctx;
 }
 
-static void frameDebugLogFmt(const char* fmt, ...);
-
 static int w_SDL_GL_MakeCurrent(void* window, void* context) {
     using Fn = bool (*)(void*, void*);
     Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_GL_MakeCurrent"));
@@ -3798,6 +3796,8 @@ static int  stub_dl_iterate_phdr(void*, void*) { return 0; }
 // and would wipe the black bars with the game's background colour, which is
 // how a "letterboxed" game ends up with coloured bars that flicker. Scissoring
 // the clear to the content rect is what actually keeps the bars black.
+static void frameDebugLogFmt(const char* fmt, ...);
+
 static void w_glViewport(GLint x, GLint y, GLsizei w, GLsizei h) {
     const Presentation& p = orientGet();
     glViewport(x + p.content_x, y + p.content_y, w, h);
@@ -3808,7 +3808,34 @@ static void w_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
     glScissor(x + p.content_x, y + p.content_y, w, h);
 }
 
+static void w_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
+    static unsigned int draw_arrays_trace_count = 0;
+    if (draw_arrays_trace_count < 8) {
+        ++draw_arrays_trace_count;
+        frameDebugLogFmt("GL DRAWARRAYS[%u]: mode=0x%x first=%d count=%d",
+                         draw_arrays_trace_count, (unsigned)mode, first, count);
+    }
+    glDrawArrays(mode, first, count);
+}
+
+static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
+    static unsigned int draw_elements_trace_count = 0;
+    if (draw_elements_trace_count < 8) {
+        ++draw_elements_trace_count;
+        frameDebugLogFmt("GL DRAWELEMENTS[%u]: mode=0x%x count=%d type=0x%x indices=%p",
+                         draw_elements_trace_count, (unsigned)mode, count,
+                         (unsigned)type, indices);
+    }
+    glDrawElements(mode, count, type, indices);
+}
+
 static void w_glClear(GLbitfield mask) {
+    static unsigned int clear_trace_count = 0;
+    if (clear_trace_count < 8) {
+        ++clear_trace_count;
+        frameDebugLogFmt("GL CLEAR[%u]: mask=0x%x", clear_trace_count, (unsigned)mask);
+    }
+
     const Presentation& p = orientGet();
     if (!p.pillarboxed) { glClear(mask); return; }
 
@@ -3826,6 +3853,71 @@ static void w_glClear(GLbitfield mask) {
     if (!had) glDisable(GL_SCISSOR_TEST);
 }
 
+
+// ─── GLES/OES compatibility aliases ─────────────────────────────────────────
+// libSDL3.so still imports a small set of Android GLES/OES entry points that
+// Mesa's desktop GL context does not expose under their OES names. The
+// corresponding operations are identical to the core desktop entry points, so
+// provide direct ABI-compatible aliases instead of leaving the guest relocations
+// unresolved.
+extern "C" {
+static void shim_glBlendEquationOES(GLenum mode) {
+    glBlendEquation(mode);
+}
+
+static void shim_glBlendEquationSeparateOES(GLenum rgb, GLenum alpha) {
+    glBlendEquationSeparate(rgb, alpha);
+}
+
+static void shim_glBlendFuncSeparateOES(GLenum srcRGB, GLenum dstRGB,
+                                        GLenum srcAlpha, GLenum dstAlpha) {
+    glBlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha);
+}
+
+static void shim_glOrthof(GLfloat left, GLfloat right, GLfloat bottom,
+                          GLfloat top, GLfloat zNear, GLfloat zFar) {
+    glOrtho((GLdouble)left, (GLdouble)right,
+            (GLdouble)bottom, (GLdouble)top,
+            (GLdouble)zNear, (GLdouble)zFar);
+}
+
+static void shim_glGenFramebuffersOES(GLsizei n, GLuint* framebuffers) {
+    glGenFramebuffers(n, framebuffers);
+}
+
+static void shim_glBindFramebufferOES(GLenum target, GLuint framebuffer) {
+    glBindFramebuffer(target, framebuffer);
+}
+
+static void shim_glFramebufferTexture2DOES(GLenum target, GLenum attachment,
+                                           GLenum textarget, GLuint texture,
+                                           GLint level) {
+    glFramebufferTexture2D(target, attachment, textarget, texture, level);
+}
+
+static GLenum shim_glCheckFramebufferStatusOES(GLenum target) {
+    return glCheckFramebufferStatus(target);
+}
+
+static void shim_glDeleteFramebuffersOES(GLsizei n, const GLuint* framebuffers) {
+    glDeleteFramebuffers(n, framebuffers);
+}
+
+// OES_draw_texture is used by Android/SDL helper code for screen-space quads.
+// Recreate its conventional rectangle operation with the current fixed-function
+// texture state in the desktop compatibility profile.
+static void shim_glDrawTexfOES(GLfloat x, GLfloat y, GLfloat z,
+                               GLfloat width, GLfloat height) {
+    const GLfloat x2 = x + width;
+    const GLfloat y2 = y + height;
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f); glVertex3f(x,  y,  z);
+    glTexCoord2f(1.0f, 0.0f); glVertex3f(x2, y,  z);
+    glTexCoord2f(1.0f, 1.0f); glVertex3f(x2, y2, z);
+    glTexCoord2f(0.0f, 1.0f); glVertex3f(x,  y2, z);
+    glEnd();
+}
+}
 
 // ─── ARM32 (AArch32) EABI helpers ───────────────────────────────────────────
 // armeabi-v7a compilers emit these instead of plain memcpy/memset for aggregate
@@ -6923,8 +7015,8 @@ static const ShimEntry g_shims[] = {
     {"glDetachShader",      (void*)glDetachShader},
     {"glDisable",           (void*)glDisable},
     {"glDisableVertexAttribArray",(void*)glDisableVertexAttribArray},
-    {"glDrawArrays",        (void*)glDrawArrays},
-    {"glDrawElements",      (void*)glDrawElements},
+    {"glDrawArrays",        (void*)w_glDrawArrays},
+    {"glDrawElements",      (void*)w_glDrawElements},
     {"glEnable",            (void*)glEnable},
     {"glEnableVertexAttribArray",(void*)glEnableVertexAttribArray},
     {"glFinish",            (void*)glFinish},
@@ -7488,6 +7580,18 @@ static const ShimEntry g_shims[] = {
     {"__readlink_chk",         (void*)stub___readlink_chk},
 
     // sentinel
+    // Android GLES/OES aliases used by libSDL3.so.
+    {"glBlendEquationOES",             (void*)shim_glBlendEquationOES},
+    {"glBlendEquationSeparateOES",     (void*)shim_glBlendEquationSeparateOES},
+    {"glBlendFuncSeparateOES",        (void*)shim_glBlendFuncSeparateOES},
+    {"glDrawTexfOES",                  (void*)shim_glDrawTexfOES},
+    {"glGenFramebuffersOES",           (void*)shim_glGenFramebuffersOES},
+    {"glOrthof",                       (void*)shim_glOrthof},
+    {"glBindFramebufferOES",           (void*)shim_glBindFramebufferOES},
+    {"glFramebufferTexture2DOES",     (void*)shim_glFramebufferTexture2DOES},
+    {"glCheckFramebufferStatusOES",   (void*)shim_glCheckFramebufferStatusOES},
+    {"glDeleteFramebuffersOES",        (void*)shim_glDeleteFramebuffersOES},
+
     // Desktop OpenGL 1.x/2.1 entry points used by Far Cry's XRenderOGL.
     {"glActiveStencilFaceEXT", (void*)shim_glActiveStencilFaceEXT},
     {"glAlphaFunc", (void*)glAlphaFunc},
