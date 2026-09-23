@@ -4601,11 +4601,6 @@ static struct dirent* stub_readdir(DIR* dir) {
         fixDirentType(it->second, ent);
 
         unsigned& count = g_readdirCounts[dir];
-        if (count < 32 && !isShaderPathForDiag(it->second.c_str())) {
-            compatLogFmt("readdir[%u] %s -> %s type=%u",
-                         count, it->second.c_str(), ent->d_name,
-                         (unsigned)ent->d_type);
-        }
         ++count;
     }
     return ent;
@@ -4642,11 +4637,6 @@ static struct dirent* stub_readdir64(DIR* dir) {
         fixDirentType(it->second, ent);
 
         unsigned& count = g_readdirCounts[dir];
-        if (count < 32 && !isShaderPathForDiag(it->second.c_str())) {
-            compatLogFmt("readdir64[%u] %s -> %s type=%u",
-                         count, it->second.c_str(), ent->d_name,
-                         (unsigned)ent->d_type);
-        }
         ++count;
     }
     return ent;
