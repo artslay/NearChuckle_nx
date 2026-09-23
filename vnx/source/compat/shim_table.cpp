@@ -6593,6 +6593,90 @@ static unsigned stub_if_nametoindex(const char*) { return 0; }
 static int stub_link(const char*, const char*)      { errno = EPERM;  return -1; }
 static int stub_futimens(int, const void*)          { return 0; }   // timestamps are cosmetic
 
+// Android/Bionic libc compatibility used by SDL3 and the CryEngine libraries.
+static size_t shim_wcsnlen(const wchar_t* s, size_t maxlen) {
+    if (!s) return 0;
+    size_t n = 0;
+    while (n < maxlen && s[n] != L'\\0')
+        ++n;
+    return n;
+}
+
+static size_t shim_wcslcpy(wchar_t* dst, const wchar_t* src, size_t size) {
+    if (!src) {
+        if (dst && size) dst[0] = L'\\0';
+        return 0;
+    }
+    const size_t src_len = wcslen(src);
+    if (dst && size) {
+        const size_t n = (src_len < size - 1) ? src_len : size - 1;
+        if (n) wmemcpy(dst, src, n);
+        dst[n] = L'\\0';
+    }
+    return src_len;
+}
+
+static size_t shim_wcslcat(wchar_t* dst, const wchar_t* src, size_t size) {
+    if (!dst || !src || size == 0)
+        return dst ? wcslen(dst) : 0;
+
+    const size_t dst_len = shim_wcsnlen(dst, size);
+    if (dst_len == size)
+        return size + wcslen(src);
+
+    const size_t src_len = wcslen(src);
+    const size_t avail = size - dst_len - 1;
+    const size_t n = src_len < avail ? src_len : avail;
+    if (n) wmemcpy(dst + dst_len, src, n);
+    dst[dst_len + n] = L'\\0';
+    return dst_len + src_len;
+}
+
+static size_t shim_strlcat(char* dst, const char* src, size_t size) {
+    if (!dst || !src || size == 0)
+        return dst ? strlen(dst) : 0;
+
+    size_t dst_len = 0;
+    while (dst_len < size && dst[dst_len] != '\\0')
+        ++dst_len;
+    if (dst_len == size)
+        return size + strlen(src);
+
+    const size_t src_len = strlen(src);
+    const size_t avail = size - dst_len - 1;
+    const size_t n = src_len < avail ? src_len : avail;
+    if (n) memcpy(dst + dst_len, src, n);
+    dst[dst_len + n] = '\\0';
+    return dst_len + src_len;
+}
+
+static float shim_scalbnf(float x, int exp) {
+    return scalbnf(x, exp);
+}
+
+static int shim_fdatasync(int fd) {
+    return fsync(fd);
+}
+
+static int shim_fseeko64(FILE* f, long long off, int whence) {
+    return f ? fseeko(f, (off_t)off, whence) : -1;
+}
+
+static long long shim_ftello64(FILE* f) {
+    return f ? (long long)ftello(f) : -1;
+}
+
+static size_t shim___fread_chk(void* ptr, size_t, size_t size,
+                               size_t nmemb, FILE* stream) {
+    return stream ? fread(ptr, size, nmemb, stream) : 0;
+}
+
+static int shim_pthread_getschedparam(void*, int* policy, void* param) {
+    if (policy) *policy = 0;
+    if (param) *reinterpret_cast<int*>(param) = 0;
+    return 0;
+}
+
 struct ShimEntry { const char* name; void* ptr; };
 
 extern "C" void near_openal_tls_local_context_init();
@@ -6632,6 +6716,21 @@ static const ShimEntry g_shims[] = {
     {"mrand48",         (void*)stub_mrand48},
     {"drand48",         (void*)stub_drand48},
     {"fnmatch",         (void*)fnmatch},
+    {"ldiv",           (void*)ldiv},
+    {"scalbnf",        (void*)shim_scalbnf},
+    {"feholdexcept",   (void*)feholdexcept},
+    {"fesetenv",       (void*)fesetenv},
+
+    // ── SDL/Bionic libc64 compatibility ────────────────────────────────────
+    {"fdatasync",       (void*)shim_fdatasync},
+    {"fseeko64",        (void*)shim_fseeko64},
+    {"ftello64",        (void*)shim_ftello64},
+    {"__fread_chk",     (void*)shim___fread_chk},
+    {"wcsnlen",         (void*)shim_wcsnlen},
+    {"wcslcpy",         (void*)shim_wcslcpy},
+    {"wcslcat",         (void*)shim_wcslcat},
+    {"strlcat",         (void*)shim_strlcat},
+    {"pthread_getschedparam", (void*)shim_pthread_getschedparam},
 
     // ── Android / POSIX surface with no Horizon equivalent ─────────────────
     {"__system_property_find", (void*)stub_system_property_find},
