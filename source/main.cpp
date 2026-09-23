@@ -566,10 +566,6 @@ static int run_farcry(LoadedSo* game_so) {
     std::snprintf(arg8, sizeof(arg8), "\"GL_NV30_PS20 1\"");
     std::snprintf(arg9, sizeof(arg9), "\"r_UseHWShaders 1\"");
     std::snprintf(arg10, sizeof(arg10), "\"r_VSync 0\"");
-    // CXGame::Update() gates RenderBegin/Render/RenderEnd on the r_Render CVar.
-    // Force rendering on the Switch build so an existing game.cfg cannot leave
-    // the Android game loop alive while producing a permanently black frame.
-    std::snprintf(arg11, sizeof(arg11), "\"r_Render 1\"");
     // ui_BackGroundVideo is created later by CUISystem::CreateCVars(), so a
     // startup command cannot override its default value of 1 reliably.
     // It is intentionally not included in the early command-line argument list.
