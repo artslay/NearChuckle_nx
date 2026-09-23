@@ -3791,184 +3791,8 @@ static bool w_SDL_GetWindowSizeInPixels(void* window, int* w, int* h) {
 }
 
 
-namespace {
-
-static PadState g_switch_pad;
-static bool g_switch_pad_initialized = false;
-static bool g_switch_controller_added = false;
-static u64 g_switch_last_buttons = 0;
-static s32 g_switch_last_lx = INT32_MIN;
-static s32 g_switch_last_ly = INT32_MIN;
-static s32 g_switch_last_rx = INT32_MIN;
-static s32 g_switch_last_ry = INT32_MIN;
-static s32 g_switch_last_zl = -1;
-static s32 g_switch_last_zr = -1;
-
-using SwitchPadCallback = jboolean (*)(JNIEnv*, jclass, jint, jint, jint);
-using SwitchJoyCallback = void (*)(JNIEnv*, jclass, jint, jint, jfloat);
-using SwitchAddJoystickCallback =
-    void (*)(JNIEnv*, jclass, jint, jstring, jstring, jint, jint, jint, jint,
-             jint, jboolean, jboolean, jboolean, jboolean);
-
-static constexpr jint kSwitchDeviceId = 0x4E58; // "NX"
-static constexpr jint kAndroidKeyBack = 4;
-static constexpr jint kAndroidKeyDpadUp = 19;
-static constexpr jint kAndroidKeyDpadDown = 20;
-static constexpr jint kAndroidKeyDpadLeft = 21;
-static constexpr jint kAndroidKeyDpadRight = 22;
-static constexpr jint kAndroidKeyButtonA = 96;
-static constexpr jint kAndroidKeyButtonB = 97;
-static constexpr jint kAndroidKeyButtonX = 99;
-static constexpr jint kAndroidKeyButtonY = 100;
-static constexpr jint kAndroidKeyButtonL1 = 102;
-static constexpr jint kAndroidKeyButtonR1 = 103;
-static constexpr jint kAndroidKeyButtonL2 = 104;
-static constexpr jint kAndroidKeyButtonR2 = 105;
-static constexpr jint kAndroidKeyButtonThumbl = 106;
-static constexpr jint kAndroidKeyButtonThumbr = 107;
-static constexpr jint kAndroidKeyButtonStart = 108;
-
-struct SwitchButtonMap {
-    u64 mask;
-    jint keycode;
-};
-
-static const SwitchButtonMap kSwitchButtons[] = {
-    { HidNpadButton_A,       kAndroidKeyButtonA       },
-    { HidNpadButton_B,       kAndroidKeyButtonB       },
-    { HidNpadButton_X,       kAndroidKeyButtonX       },
-    { HidNpadButton_Y,       kAndroidKeyButtonY       },
-    { HidNpadButton_StickL,  kAndroidKeyButtonThumbl  },
-    { HidNpadButton_StickR,  kAndroidKeyButtonThumbr  },
-    { HidNpadButton_L,       kAndroidKeyButtonL1       },
-    { HidNpadButton_R,       kAndroidKeyButtonR1       },
-    { HidNpadButton_ZL,      kAndroidKeyButtonL2       },
-    { HidNpadButton_ZR,      kAndroidKeyButtonR2       },
-    { HidNpadButton_Plus,    kAndroidKeyButtonStart    },
-    { HidNpadButton_Minus,   kAndroidKeyBack           },
-    { HidNpadButton_Up,      kAndroidKeyDpadUp         },
-    { HidNpadButton_Down,    kAndroidKeyDpadDown       },
-    { HidNpadButton_Left,    kAndroidKeyDpadLeft       },
-    { HidNpadButton_Right,   kAndroidKeyDpadRight      },
-};
-
-static void switchInputAddController() {
-    if (g_switch_controller_added)
-        return;
-
-    if (!g_switch_pad_initialized) {
-        padConfigureInput(1, HidNpadStyleSet_NpadStandard);
-        padInitializeDefault(&g_switch_pad);
-        g_switch_pad_initialized = true;
-    }
-
-    CompatLayer* cl = compatGet();
-    if (!cl || !cl->env_outer) {
-        compatLog("Switch input: fake JNI environment unavailable");
-        return;
-    }
-
-    void* add_sym = jniFindRegisteredNative(
-        "nativeAddJoystick", 0);
-    if (!add_sym) {
-        compatLog("Switch input: SDL nativeAddJoystick not registered");
-        return;
-    }
-
-    JNIEnv* env = reinterpret_cast<JNIEnv*>(cl->env_outer);
-    const jclass controller_class = reinterpret_cast<jclass>(0x1001);
-    auto add = reinterpret_cast<SwitchAddJoystickCallback>(add_sym);
-
-    // Android SDL's controller manager describes the first four axes as the
-    // two sticks and the next two as L2/R2. Its button mask reserves the first
-    // 17 bits for A/B/X/Y/back/start/guide/sticks/shoulders/dpad/triggers.
-    add(env, controller_class,
-        kSwitchDeviceId,
-        reinterpret_cast<jstring>(const_cast<char*>("Nintendo Switch Controller")),
-        reinterpret_cast<jstring>(const_cast<char*>("Nintendo Switch HID via libnx")),
-        0x057E, 0x2009,
-        0x0001FFFF, 6, 0x0000003F, 1,
-        JNI_FALSE, JNI_FALSE, JNI_FALSE, JNI_FALSE);
-
-    g_switch_controller_added = true;
-    compatLog("Switch input: SDL controller registered (device=0x4e58, axes=6, hats=1)");
-}
-
-static void switchInputPump() {
-    if (!g_switch_pad_initialized)
-        switchInputAddController();
-    if (!g_switch_pad_initialized || !g_switch_controller_added)
-        return;
-
-    padUpdate(&g_switch_pad);
-
-    CompatLayer* cl = compatGet();
-    if (!cl || !cl->env_outer)
-        return;
-
-    JNIEnv* env = reinterpret_cast<JNIEnv*>(cl->env_outer);
-    const jclass controller_class = reinterpret_cast<jclass>(0x1001);
-
-    void* down_sym = jniFindRegisteredNative("onNativePadDown", 0);
-    void* up_sym = jniFindRegisteredNative("onNativePadUp", 0);
-    void* joy_sym = jniFindRegisteredNative("onNativeJoy", 0);
-    if (!down_sym || !up_sym || !joy_sym)
-        return;
-
-    const u64 buttons = padGetButtons(&g_switch_pad);
-    const u64 down = buttons & ~g_switch_last_buttons;
-    const u64 up = g_switch_last_buttons & ~buttons;
-
-    auto down_cb = reinterpret_cast<SwitchPadCallback>(down_sym);
-    auto up_cb = reinterpret_cast<SwitchPadCallback>(up_sym);
-    for (const SwitchButtonMap& b : kSwitchButtons) {
-        if (down & b.mask) {
-            (void)down_cb(env, controller_class, kSwitchDeviceId, b.keycode, 0);
-            compatLogFmt("Switch input: DOWN key=%d", (int)b.keycode);
-        }
-        if (up & b.mask) {
-            (void)up_cb(env, controller_class, kSwitchDeviceId, b.keycode, 0);
-            compatLogFmt("Switch input: UP key=%d", (int)b.keycode);
-        }
-    }
-    g_switch_last_buttons = buttons;
-
-    const HidAnalogStickState left = padGetStickPos(&g_switch_pad, 0);
-    const HidAnalogStickState right = padGetStickPos(&g_switch_pad, 1);
-    auto joy_cb = reinterpret_cast<SwitchJoyCallback>(joy_sym);
-
-    auto sendAxis = [&](int axis, s32 raw, s32& previous) {
-        if (raw == previous)
-            return;
-        previous = raw;
-        float value = (float)raw / (float)JOYSTICK_MAX;
-        if (value < -1.0f) value = -1.0f;
-        if (value > 1.0f) value = 1.0f;
-        joy_cb(env, controller_class, kSwitchDeviceId, axis, value);
-    };
-
-    sendAxis(0, left.x, g_switch_last_lx);
-    sendAxis(1, left.y, g_switch_last_ly);
-    sendAxis(2, right.x, g_switch_last_rx);
-    sendAxis(3, right.y, g_switch_last_ry);
-
-    const int zl = (buttons & HidNpadButton_ZL) ? 1 : 0;
-    const int zr = (buttons & HidNpadButton_ZR) ? 1 : 0;
-    sendAxis(4, zl ? JOYSTICK_MAX : 0, g_switch_last_zl);
-    sendAxis(5, zr ? JOYSTICK_MAX : 0, g_switch_last_zr);
-}
-
-} // namespace
-
-extern "C" void compatSynthesizeSwitchController() {
-    switchInputAddController();
-}
 
 static bool w_SDL_GL_SwapWindow(void* window) {
-    // SDL's Android Java backend has no Switch event source. Poll libnx once
-    // per presented frame and feed the guest Android SDL controller callbacks.
-    switchInputPump();
-
     (void)window;
 
     static unsigned int swap_count = 0;
@@ -4022,18 +3846,6 @@ static bool w_SDL_GL_SwapWindow(void* window) {
     }
 
     return ok;
-}
-
-static void w_SDL_PumpEvents() {
-    using Fn = void (*)();
-    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_PumpEvents"));
-    if (fn)
-        fn();
-
-    // Android's Java controller manager normally injects controller events
-    // between the platform event pump and SDL event consumers. On Switch there
-    // is no Java event source, so feed the libnx PadState at the same point.
-    switchInputPump();
 }
 
 static void* w_SDL_CreateWindow(const char* title, int w, int h, uint32_t flags) {
@@ -7531,7 +7343,6 @@ static const ShimEntry g_shims[] = {
     {"SDL_CreateWindow",           (void*)w_SDL_CreateWindow},
     {"SDL_GL_CreateContext",       (void*)w_SDL_GL_CreateContext},
     {"SDL_GL_MakeCurrent",         (void*)w_SDL_GL_MakeCurrent},
-    {"SDL_PumpEvents",              (void*)w_SDL_PumpEvents},
     {"SDL_GL_SwapWindow",          (void*)w_SDL_GL_SwapWindow},
 
     // ── libandroid ───────────────────────────────────────────────────────────
