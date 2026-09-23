@@ -4624,7 +4624,7 @@ static struct dirent* stub_readdir(DIR* dir) {
         AndroidDirentCompat& compat = g_readdirCompat[dir];
         std::memset(&compat, 0, sizeof(compat));
         compat.d_ino = (uint64_t)ent->d_ino;
-        compat.d_off = (int64_t)ent->d_off;
+        compat.d_off = 0;
         compat.d_type = (uint8_t)ent->d_type;
 
         const size_t srcLen = std::strlen(ent->d_name);
@@ -4676,7 +4676,7 @@ static struct dirent* stub_readdir64(DIR* dir) {
         AndroidDirentCompat& compat = g_readdirCompat[dir];
         std::memset(&compat, 0, sizeof(compat));
         compat.d_ino = (uint64_t)ent->d_ino;
-        compat.d_off = (int64_t)ent->d_off;
+        compat.d_off = 0;
         compat.d_type = (uint8_t)ent->d_type;
 
         const size_t srcLen = std::strlen(ent->d_name);
