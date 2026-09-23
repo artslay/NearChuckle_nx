@@ -2084,8 +2084,24 @@ static void rememberActiveLevelPak(const char* path) {
         return;
 
     struct stat st = {};
-    if (::stat(candidate.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
-        return;
+    if (::stat(candidate.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+        // CryPak can hand us a lower-case level PAK name (for example
+        // "levellm.pak") while the real Switch filesystem contains
+        // "LevelLM.pak". Resolve the existing path without changing what
+        // CryPak sees, then remember the actual on-disk spelling.
+        std::string resolved;
+        if (!resolvePathCaseInsensitive(candidate.c_str(), resolved))
+            return;
+
+        st = {};
+        if (::stat(resolved.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+            return;
+
+        candidate = resolved;
+    }
+
+    compatLogFmt("PAK LEVEL REGISTER: requested=%s actual=%s",
+                 path, candidate.c_str());
 
     if (!candidate.empty() && candidate[0] != '/') {
         char cwd[PATH_MAX];
