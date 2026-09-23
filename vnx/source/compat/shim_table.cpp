@@ -4058,6 +4058,31 @@ static bool sameNameNoCase(const char* a, const char* b) {
     return a && b && asciiLower(a) == asciiLower(b);
 }
 
+// The Android Cry3DEngine implementation uses strcasecmp() to locate
+// "LevelLM.pak" in the level directory. Keep this comparison on the same
+// ASCII/case-folding rules as the Switch filesystem helper and make the exact
+// lightmap lookup visible in the log. This is intentionally narrow: every
+// other strcasecmp() call keeps normal libc semantics.
+static int stub_strcasecmp(const char* a, const char* b) {
+    if (!a || !b)
+        return a == b ? 0 : (a ? 1 : -1);
+
+    const std::string la = asciiLower(a);
+    const std::string lb = asciiLower(b);
+
+    if (la == "levellm.pak" || lb == "levellm.pak") {
+        const int rc = la.compare(lb);
+        compatLogFmt("LMPAK STRCASECMP: \"%s\" vs \"%s\" -> %d",
+                     a, b, rc);
+        compatLogFlush();
+        return rc;
+    }
+
+    if (la == lb)
+        return 0;
+    return la < lb ? -1 : 1;
+}
+
 // Resolve a path component-by-component without changing the path returned to
 // callers. This is only used after the normal direct lookup fails.
 static bool resolvePathCaseInsensitive(const char* input, std::string& resolved) {
@@ -6187,7 +6212,7 @@ static const ShimEntry g_shims[] = {
     {"strnlen",     (void*)stub_strnlen},
     {"strcmp",      (void*)strcmp},
     {"strncmp",     (void*)strncmp},
-    {"strcasecmp",  (void*)strcasecmp},
+    {"strcasecmp",  (void*)stub_strcasecmp},
     {"strncasecmp", (void*)strncasecmp},
     {"strcpy",      (void*)strcpy},
     {"strncpy",     (void*)strncpy},
