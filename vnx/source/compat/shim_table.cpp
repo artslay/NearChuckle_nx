@@ -202,17 +202,34 @@ extern "C" uint32_t compatGuestCallReadFileEx(void* proxy) {
 
     const uintptr_t base = reinterpret_cast<uintptr_t>(proxy);
 
-    // CRefReadStreamProxy:
-    //   +0x18 m_pStream
-    //   +0x20 StreamReadParams
-    // StreamReadParams.pBuffer = +0x18 within the params,
-    // nOffset = +0x20, nSize = +0x24.
-    void* stream = *reinterpret_cast<void**>(base + 0x18);
-    void* buffer = *reinterpret_cast<void**>(base + 0x20 + 0x18);
+    // CRefReadStreamProxy Android/libc++ object layout:
+    //   +0x08 m_numRetries
+    //   +0x10 m_pStream
+    //   +0x18 m_Params (sizeof(StreamReadParams) == 0x30)
+    //
+    // StreamReadParams:
+    //   +0x00 dwUserData
+    //   +0x08 nPriority
+    //   +0x0c nLoadTime
+    //   +0x10 nMaxLoadTime
+    //   +0x18 pBuffer
+    //   +0x20 nOffset
+    //   +0x24 nSize
+    //   +0x28 nFlags
+    //
+    // Proxy fields after m_Params:
+    //   +0x48 m_strClient
+    //   +0x60 m_pCallback
+    //   +0x68 m_pBuffer
+    //   +0x70 m_numBytesRead
+    //   +0x74 m_nPieceOffset
+    //   +0x78 m_nPieceLength
+    void* stream = *reinterpret_cast<void**>(base + 0x10);
+    void* buffer = *reinterpret_cast<void**>(base + 0x30);
     const uint32_t paramsOffset =
-        *reinterpret_cast<const uint32_t*>(base + 0x20 + 0x20);
+        *reinterpret_cast<const uint32_t*>(base + 0x38);
     const uint32_t paramsSize =
-        *reinterpret_cast<const uint32_t*>(base + 0x20 + 0x24);
+        *reinterpret_cast<const uint32_t*>(base + 0x3c);
     const uint32_t pieceOffset =
         *reinterpret_cast<const uint32_t*>(base + 0x74);
     const uint32_t pieceLength =
