@@ -131,11 +131,6 @@ static bool pakVirtualDirectoryExists(const char* directory);
 static bool isShaderCacheLookupPath(const char* path);
 static bool isShaderPathForDiag(const char* path);
 static void compatLogPakOpenState(FILE* f, const char* path);
-static bool pakAssetNeedsMaterialization(const char* requested);
-static bool materializeVirtualPakEntry(const char* requested,
-                                       const std::string& pakPath,
-                                       const PakEntryMeta& meta,
-                                       std::string& outPath);
  
 extern "C" {
 volatile int g_near_video_open_failed = 0;
@@ -440,17 +435,7 @@ static char* stub_realpath(const char* p, char* out) {
         std::string virtualPakPath;
         PakEntryMeta virtualMeta;
         if (pakFindVirtualEntry(p, virtualPakPath, virtualMeta)) {
-            if (pakAssetNeedsMaterialization(p)) {
-                std::string materialized;
-                if (materializeVirtualPakEntry(p, virtualPakPath, virtualMeta, materialized))
-                    return writeCanonical(materialized);
-            }
-
             std::string virtualPath = p;
-            for (char& c : virtualPath) {
-                if ((unsigned char)c == 92)
-                    c = '/';
-            }
             if (virtualPath.empty() || virtualPath[0] != '/') {
                 char cwd[PATH_MAX];
                 if (::getcwd(cwd, sizeof(cwd))) {
@@ -2077,131 +2062,6 @@ static std::string pakAssetRelativeName(const char* requested) {
         wanted.erase(0, 2);
 
     return wanted;
-}
-
-
-// Some CryEngine paths are resolved through realpath()/CryPak first and then
-// consumed by code paths that do not call our fopen/open shims. For these assets,
-// keep the PAK as the source of truth but lazily materialize only the requested
-// animation/model file at its canonical game path. This avoids unpacking FCData
-// wholesale and makes the file visible to every downstream engine subsystem.
-static bool pakAssetNeedsMaterialization(const char* requested) {
-    const std::string rel = pakAssetRelativeName(requested);
-    if (rel.empty())
-        return false;
-
-    const size_t dot = rel.rfind('.');
-    if (dot == std::string::npos)
-        return false;
-
-    const std::string ext = rel.substr(dot);
-    return ext == ".caf" || ext == ".cgf" ||
-           ext == ".cga" || ext == ".chr" ||
-           ext == ".skin";
-}
-
-static bool pathHasParentTraversal(const std::string& path) {
-    size_t pos = 0;
-    while (pos < path.size()) {
-        while (pos < path.size() && path[pos] == '/')
-            ++pos;
-        const size_t end = path.find('/', pos);
-        const size_t len = (end == std::string::npos ? path.size() : end) - pos;
-        if (len == 2 && path.compare(pos, 2, "..") == 0)
-            return true;
-        if (end == std::string::npos)
-            break;
-        pos = end + 1;
-    }
-    return false;
-}
-
-static bool mkdirsForFile(const std::string& filePath) {
-    const size_t lastSlash = filePath.rfind('/');
-    if (lastSlash == std::string::npos || lastSlash == 0)
-        return true;
-
-    std::string dir = filePath.substr(0, lastSlash);
-    size_t pos = 1;
-    while (pos <= dir.size()) {
-        size_t slash = dir.find('/', pos);
-        if (slash == std::string::npos)
-            slash = dir.size();
-
-        const std::string part = dir.substr(0, slash);
-        if (!part.empty() && ::mkdir(part.c_str(), 0777) != 0 && errno != EEXIST)
-            return false;
-
-        if (slash == dir.size())
-            break;
-        pos = slash + 1;
-    }
-    return true;
-}
-
-static bool materializeVirtualPakEntry(const char* requested,
-                                       const std::string& pakPath,
-                                       const PakEntryMeta& meta,
-                                       std::string& outPath) {
-    if (!requested || !*requested)
-        return false;
-
-    std::string req = requested;
-    for (char& c : req) {
-        if ((unsigned char)c == 92)
-            c = '/';
-    }
-
-    if (pathHasParentTraversal(req))
-        return false;
-
-    std::string target;
-    if (!req.empty() && req[0] == '/') {
-        target = req;
-    } else {
-        char cwd[PATH_MAX];
-        if (!::getcwd(cwd, sizeof(cwd)))
-            return false;
-        target = cwd;
-        if (!target.empty() && target.back() != '/')
-            target += '/';
-        target += req;
-    }
-
-    target = normalizeSwitchFsPath(target.c_str());
-    if (target.empty() || pathHasParentTraversal(target))
-        return false;
-
-    struct stat existing = {};
-    if (::stat(target.c_str(), &existing) == 0 &&
-        S_ISREG(existing.st_mode) &&
-        existing.st_size == (off_t)meta.uncompressedSize) {
-        outPath = target;
-        return true;
-    }
-
-    if (!mkdirsForFile(target))
-        return false;
-
-    std::vector<unsigned char> data;
-    if (!pakReadEntryToMemory(pakPath, meta, data))
-        return false;
-
-    FILE* out = ::fopen(target.c_str(), "wb");
-    if (!out)
-        return false;
-
-    const size_t written = data.empty() ? 0 : ::fwrite(data.data(), 1, data.size(), out);
-    const int closeRc = ::fclose(out);
-    if (written != data.size() || closeRc != 0) {
-        ::unlink(target.c_str());
-        return false;
-    }
-
-    outPath = target;
-    compatLogFmt("PAK MATERIALIZE: %s <- %s size=%zu",
-                 target.c_str(), pakPath.c_str(), data.size());
-    return true;
 }
 
 // Level-local PAKs are mounted by CryPak at the level directory itself.
