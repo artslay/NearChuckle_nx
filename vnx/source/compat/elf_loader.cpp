@@ -1442,7 +1442,7 @@ static bool patchFarCryProfilePathTrapBranches(LoadedSo* so, uint8_t* stage_base
 
             // Case A: target lands in the small trap block immediately before
             // BRK. Removing that jump follows the normal fall-through path.
-            if (target >= brk_pc - 0x10 && target < brk_pc) {
+            if (target >= brk_pc - 0x10 && target <= brk_pc) {
                 *insn = 0xd503201fu;
                 armICacheInvalidate(insn, 4);
                 ++patched_to_trap;
