@@ -2325,7 +2325,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
-    const bool shaderCacheIo = shaderIo && isShaderCacheLookupPath(ioPath);
 
 
     if (path && ioPathStorage != path && !shaderIo)
@@ -3486,9 +3485,6 @@ static int w_SDL_GL_MakeCurrent(void* window, void* context) {
         // presentation path. This is the persistent A/B marker for the next
         // stage: INIT proves the current EGL context is active, while
         // subsequent SWAP lines prove that CryEngine actually presents frames.
-        // Start the post-main-loop GL trace here so any GL calls made
-        // during SDL/EGL initialization cannot consume the trace budget.
-        g_gl_call_trace_count = 0;
         frameDebugLogFmt(
             "FRAME DEBUG INIT: window=%p context=%p display=%p draw=%p read=%p",
             window, context,
