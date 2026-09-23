@@ -2422,7 +2422,7 @@ static bool pakFindLevelLocalEntry(const std::string& wanted,
 }
 
 static void pakTraceMissDetails(const std::string& wanted) {
-    const std::string basenamePos = wanted.find_last_of('/');
+    const std::string::size_type basenamePos = wanted.find_last_of('/');
     const std::string wantedBase =
         basenamePos == std::string::npos ? wanted : wanted.substr(basenamePos + 1);
 
