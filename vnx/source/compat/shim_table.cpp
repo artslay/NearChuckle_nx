@@ -32,6 +32,7 @@
 #include <setjmp.h>
 #include <semaphore.h>
 #include <unordered_map>
+#include <unordered_set>
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
@@ -194,7 +195,19 @@ static char* stub_strtok_r(char* s, const char* d, char** save) {
     (void)save;
     return strtok(s, d);
 }
-static long stub_ftello(FILE* f) { return ftell(f); }
+static bool vpakOwns(FILE* f);
+static size_t vpakRead(FILE* f, void* dst, size_t size, size_t count);
+static int vpakSeek(FILE* f, int64_t off, int whence);
+static long long vpakTell64(FILE* f);
+static int vpakGetc(FILE* f);
+static int vpakEof(FILE* f);
+static int vpakClose(FILE* f);
+
+static long stub_ftello(FILE* f) {
+    if (vpakOwns(f))
+        return (long)vpakTell64(f);
+    return ftell(f);
+}
 static int  sh_fseek(FILE* f, long o, int w);
 static int  stub_fseeko(FILE* f, long o, int w) { return sh_fseek(f, o, w); }
 static int  stub_setenv(const char*, const char*, int) { return 0; }
@@ -478,7 +491,11 @@ static int stub_fesetround(int r) { return fesetround(r); }
 static char* stub_strptime(const char*, const char*, struct tm*) { return nullptr; }
 // clearerr / fileno / stat ABI / fdopen
 static void  stub_clearerr(FILE* f)              { clearerr(f); }
-static int   stub_fileno(FILE* f)                { return f ? ::fileno(f) : -1; }
+static int stub_fileno(FILE* f) {
+    if (vpakOwns(f))
+        return -1;
+    return f ? ::fileno(f) : -1;
+}
 
 // Guest libraries are Android arm64 binaries, while this compatibility layer
 // is compiled against devkitA64/newlib. Their struct stat ABI is therefore not
@@ -1438,6 +1455,140 @@ struct PakIndex {
     std::unordered_map<std::string, PakEntryMeta> entries;
 };
 
+struct VirtualPakFile {
+    std::vector<unsigned char> data;
+    size_t pos = 0;
+};
+
+static Mutex g_vpak_lock;
+static std::unordered_set<FILE*> g_vpak_handles;
+
+static bool vpakOwns(FILE* f) {
+    if (!f)
+        return false;
+    mutexLock(&g_vpak_lock);
+    const bool found = g_vpak_handles.find(f) != g_vpak_handles.end();
+    mutexUnlock(&g_vpak_lock);
+    return found;
+}
+
+static VirtualPakFile* vpakLookupLocked(FILE* f) {
+    if (!f || g_vpak_handles.find(f) == g_vpak_handles.end())
+        return nullptr;
+    return reinterpret_cast<VirtualPakFile*>(f);
+}
+
+static FILE* vpakOpen(std::vector<unsigned char>&& data) {
+    VirtualPakFile* v = new VirtualPakFile();
+    if (!v)
+        return nullptr;
+    v->data = std::move(data);
+    FILE* handle = reinterpret_cast<FILE*>(v);
+    mutexLock(&g_vpak_lock);
+    g_vpak_handles.insert(handle);
+    mutexUnlock(&g_vpak_lock);
+    return handle;
+}
+
+static size_t vpakRead(FILE* f, void* dst, size_t size, size_t count) {
+    if (!dst || size == 0 || count == 0)
+        return 0;
+
+    mutexLock(&g_vpak_lock);
+    VirtualPakFile* v = vpakLookupLocked(f);
+    if (!v || v->pos >= v->data.size()) {
+        mutexUnlock(&g_vpak_lock);
+        return 0;
+    }
+
+    const size_t maxBytes = v->data.size() - v->pos;
+    const size_t requested =
+        (count > SIZE_MAX / size) ? SIZE_MAX : size * count;
+    const size_t bytes = requested < maxBytes ? requested : maxBytes;
+    const size_t whole = bytes - (bytes % size);
+
+    if (whole) {
+        memcpy(dst, v->data.data() + v->pos, whole);
+        v->pos += whole;
+    }
+
+    mutexUnlock(&g_vpak_lock);
+    return whole / size;
+}
+
+static int vpakSeek(FILE* f, int64_t off, int whence) {
+    mutexLock(&g_vpak_lock);
+    VirtualPakFile* v = vpakLookupLocked(f);
+    if (!v) {
+        mutexUnlock(&g_vpak_lock);
+        return -1;
+    }
+
+    int64_t base = 0;
+    if (whence == SEEK_SET)
+        base = 0;
+    else if (whence == SEEK_CUR)
+        base = (int64_t)v->pos;
+    else if (whence == SEEK_END)
+        base = (int64_t)v->data.size();
+    else {
+        mutexUnlock(&g_vpak_lock);
+        return -1;
+    }
+
+    const int64_t next = base + off;
+    if (next < 0 || (uint64_t)next > (uint64_t)v->data.size()) {
+        mutexUnlock(&g_vpak_lock);
+        return -1;
+    }
+
+    v->pos = (size_t)next;
+    mutexUnlock(&g_vpak_lock);
+    return 0;
+}
+
+static long long vpakTell64(FILE* f) {
+    mutexLock(&g_vpak_lock);
+    VirtualPakFile* v = vpakLookupLocked(f);
+    const long long pos = v ? (long long)v->pos : -1;
+    mutexUnlock(&g_vpak_lock);
+    return pos;
+}
+
+static int vpakGetc(FILE* f) {
+    mutexLock(&g_vpak_lock);
+    VirtualPakFile* v = vpakLookupLocked(f);
+    if (!v || v->pos >= v->data.size()) {
+        mutexUnlock(&g_vpak_lock);
+        return EOF;
+    }
+    const int c = v->data[v->pos++];
+    mutexUnlock(&g_vpak_lock);
+    return c;
+}
+
+static int vpakEof(FILE* f) {
+    mutexLock(&g_vpak_lock);
+    VirtualPakFile* v = vpakLookupLocked(f);
+    const int eof = !v || v->pos >= v->data.size();
+    mutexUnlock(&g_vpak_lock);
+    return eof ? 1 : 0;
+}
+
+static int vpakClose(FILE* f) {
+    mutexLock(&g_vpak_lock);
+    auto it = g_vpak_handles.find(f);
+    if (it == g_vpak_handles.end()) {
+        mutexUnlock(&g_vpak_lock);
+        return -1;
+    }
+    g_vpak_handles.erase(it);
+    VirtualPakFile* v = reinterpret_cast<VirtualPakFile*>(f);
+    mutexUnlock(&g_vpak_lock);
+    delete v;
+    return 0;
+}
+
 static Mutex g_pak_index_lock;
 static std::unordered_map<std::string, PakIndex> g_pak_indexes;
 
@@ -1560,6 +1711,63 @@ static bool pakFindEntryCached(const std::string& pakPath,
 
     mutexUnlock(&g_pak_index_lock);
     return found;
+}
+
+static bool pakReadEntryToMemory(const std::string& pakPath,
+                                   const PakEntryMeta& meta,
+                                   std::vector<unsigned char>& plain) {
+    if (!meta.compressedSize || !meta.uncompressedSize ||
+        meta.compressedSize > 128 * 1024 * 1024u ||
+        meta.uncompressedSize > 128 * 1024 * 1024u) {
+        return false;
+    }
+
+    FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak)
+        return false;
+
+    unsigned char local[30];
+    if (fseek(pak, (long)meta.localOffset, SEEK_SET) != 0 ||
+        !pakReadExact(pak, local, sizeof(local)) ||
+        pakRd32(local) != 0x04034b50u) {
+        fclose(pak);
+        return false;
+    }
+
+    const uint16_t localMethod = pakRd16(local + 8);
+    const uint16_t nameLen = pakRd16(local + 26);
+    const uint16_t extraLen = pakRd16(local + 28);
+    const long dataOffset =
+        (long)meta.localOffset + 30L + nameLen + extraLen;
+
+    if (meta.method != localMethod || dataOffset < 0 ||
+        fseek(pak, dataOffset, SEEK_SET) != 0) {
+        fclose(pak);
+        return false;
+    }
+
+    std::vector<unsigned char> compressed(meta.compressedSize);
+    plain.resize(meta.uncompressedSize);
+
+    const bool readOk =
+        pakReadExact(pak, compressed.data(), compressed.size());
+    fclose(pak);
+
+    if (!readOk)
+        return false;
+
+    if (meta.method == 0 &&
+        meta.compressedSize == meta.uncompressedSize) {
+        memcpy(plain.data(), compressed.data(), plain.size());
+        return true;
+    }
+
+    if (meta.method == 8) {
+        return pakInflateRaw(compressed.data(), compressed.size(),
+                             plain.data(), plain.size());
+    }
+
+    return false;
 }
 
 static bool pakExtractEntry(const std::string& pakPath, const std::string& wanted,
@@ -2110,27 +2318,6 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (wanted.empty())
         return nullptr;
 
-    // v3 intentionally bypasses caches produced by earlier PAK path/lookup implementations.
-    // All PAK assets still use the same resolver; this only prevents stale extracted
-    // files from hiding whether the current archive reader produced valid data.
-    const std::string cacheRoot = "_pakcache_v3";
-    std::string safeName = wanted;
-    for (char& c : safeName)
-        if (c == '/') c = '_';
-    const std::string outPath = cacheRoot + "/" + safeName;
-
-
-    struct stat cached = {};
-    if (::stat(outPath.c_str(), &cached) == 0 && S_ISREG(cached.st_mode)) {
-        FILE* f = fopen(outPath.c_str(), mode);
-        if (f) {
-            return f;
-        }
-    }
-
-    // All normal assets use the same PAK search path. There is no special case
-    // for scripts, textures, audio, etc.: normalize the guest path once and
-    // search the same PAK roots for the same relative entry name.
     const char* roots[] = {
         ".",
         "FCData",
@@ -2160,24 +2347,30 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
             if (c0 != '.' || c1 != 'p' || c2 != 'a' || c3 != 'k')
                 continue;
 
-            std::string pakPath = std::string(roots[r]);
+            std::string pakPath = roots[r];
             if (pakPath != ".")
                 pakPath += "/";
             pakPath += name;
 
-            struct stat st = {};
-            if (::stat(pakPath.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+            PakEntryMeta meta;
+            if (!pakFindEntryCached(pakPath, wanted, meta))
                 continue;
 
-            if (pakExtractEntry(pakPath, wanted, outPath)) {
-                if (wanted.rfind("objects/", 0) == 0)
-                    compatLogFmt("PAK EXACT: %s <- %s", wanted.c_str(), pakPath.c_str());
-                FILE* f = fopen(outPath.c_str(), mode);
-                if (f) {
-                    closedir(dir);
-                    return f;
-                }
+            std::vector<unsigned char> data;
+            if (!pakReadEntryToMemory(pakPath, meta, data)) {
+                compatLogFmt("PAK VIRTUAL READ FAILED: %s <- %s",
+                             wanted.c_str(), pakPath.c_str());
+                closedir(dir);
+                return nullptr;
             }
+
+            FILE* handle = vpakOpen(std::move(data));
+            if (handle) {
+                compatLogFmt("PAK VIRTUAL OPEN: %s <- %s",
+                             wanted.c_str(), pakPath.c_str());
+            }
+            closedir(dir);
+            return handle;
         }
 
         closedir(dir);
@@ -2518,7 +2711,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         compatLogPakOpenState(f, ioPath);
     }
 
-    if (!shaderIo)
+    if (!shaderIo && !vpakOwns(f))
         logShaderScriptDiagnostics(f, ioPath);
 
     if (videoIo)
@@ -2541,32 +2734,32 @@ static FILE* stub_fopen(const char* path, const char* mode) {
 // route a cached stream through compat/apkcache.h and leave every other file
 // exactly as it was.
 static size_t sh_fread(void* p, size_t sz, size_t n, FILE* f) {
-    size_t rc;
+    if (vpakOwns(f))
+        return vpakRead(f, p, sz, n);
     if (apkcache::owns(f))
-        rc = apkcache::read(f, p, sz, n);
-    else
-        rc = fread(p, sz, n, f);
-    return rc;
+        return apkcache::read(f, p, sz, n);
+    return fread(p, sz, n, f);
 }
 static int sh_fseek(FILE* f, long off, int whence) {
-    int rc;
+    if (vpakOwns(f))
+        return vpakSeek(f, (int64_t)off, whence);
     if (apkcache::owns(f))
-        rc = apkcache::seek(f, (int64_t)off, whence);
-    else
-        rc = fseek(f, off, whence);
-    return rc;
+        return apkcache::seek(f, (int64_t)off, whence);
+    return fseek(f, off, whence);
 }
 static long sh_ftell(FILE* f) {
-    if (apkcache::owns(f)) return (long)apkcache::tell(f);
+    if (vpakOwns(f))
+        return (long)vpakTell64(f);
+    if (apkcache::owns(f))
+        return (long)apkcache::tell(f);
     return ftell(f);
 }
 static int sh_fgetc(FILE* f) {
-    int rc;
+    if (vpakOwns(f))
+        return vpakGetc(f);
     if (apkcache::owns(f))
-        rc = apkcache::getc(f);
-    else
-        rc = fgetc(f);
-    return rc;
+        return apkcache::getc(f);
+    return fgetc(f);
 }
 
 // Keep fgets on the same stream abstraction as fread/fgetc. CryPak-backed
@@ -2623,18 +2816,26 @@ static char* sh_fgets(char* dst, int n, FILE* f) {
 }
 
 static int sh_feof(FILE* f) {
-    int rc;
+    if (vpakOwns(f))
+        return vpakEof(f);
     if (apkcache::owns(f))
-        rc = apkcache::eof(f);
-    else
-        rc = feof(f);
-    return rc;
+        return apkcache::eof(f);
+    return feof(f);
 }
 static void sh_rewind(FILE* f) {
-    if (apkcache::owns(f)) { apkcache::seek(f, 0, SEEK_SET); return; }
+    if (vpakOwns(f)) {
+        (void)vpakSeek(f, 0, SEEK_SET);
+        return;
+    }
+    if (apkcache::owns(f)) {
+        (void)apkcache::seek(f, 0, SEEK_SET);
+        return;
+    }
     rewind(f);
 }
 static int sh_fclose(FILE* f) {
+    if (vpakOwns(f))
+        return vpakClose(f);
     apkcache::close(f);   // no-op unless this stream was cached
     return fclose(f);
 }
@@ -6366,7 +6567,13 @@ static int sh_fprintf(FILE* f, const char* fmt, ...) {
     return r;
 }
 static int sh_fputs(const char* s, FILE* f) {
-    if (isFakeStdio(f)) { compatLogFmt("game stdio[tid=%p]: %s", (void*)threadGetSelf(), s ? s : ""); return 0; }
+    if (vpakOwns(f))
+        return EOF;
+    if (isFakeStdio(f)) {
+        compatLogFmt("game stdio[tid=%p]: %s",
+                     (void*)threadGetSelf(), s ? s : "");
+        return 0;
+    }
     return fputs(s, f);
 }
 static size_t sh_fwrite(const void* p, size_t sz, size_t n, FILE* f) {
@@ -6744,10 +6951,14 @@ static int shim_fdatasync(int fd) {
 }
 
 static int shim_fseeko64(FILE* f, long long off, int whence) {
+    if (vpakOwns(f))
+        return vpakSeek(f, (int64_t)off, whence);
     return f ? fseeko(f, (off_t)off, whence) : -1;
 }
 
 static long long shim_ftello64(FILE* f) {
+    if (vpakOwns(f))
+        return vpakTell64(f);
     return f ? (long long)ftello(f) : -1;
 }
 
