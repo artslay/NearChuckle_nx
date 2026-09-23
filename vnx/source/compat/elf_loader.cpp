@@ -1598,8 +1598,10 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
             compatLog("FARCRY DISPLAYINFO PATCH: not applied");
         if (!patchFarCryScriptSinkOnSetGlobal(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY SCRIPTSINK A/B: patch not applied");
-        if (!patchFarCrySystemUpdate(so, stage_base, min_vaddr, alloc_size))
-            compatLog("FARCRY SYSTEM UPDATE A/B: patch not applied");
+        // Keep the original CSystem::Update() intact: it pumps SDL events
+        // and calls CryInput::Update(), which is required for keyboard/mouse
+        // input to reach the game.
+        compatLog("FARCRY SYSTEM UPDATE A/B: disabled; using original CSystem::Update");
 
         // Continue into the GetFileSize BRK diagnostic/experiment below.
         // This used to return here, leaving the CBNZ->BRK bypass unreachable.
