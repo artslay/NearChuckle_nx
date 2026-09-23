@@ -107,6 +107,10 @@ static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
 static bool tryMaterializeUniquePakBasename(const char* targetPath);
 static bool tryMaterializePakPath(const char* targetPath, std::string& materialized);
+struct PakEntryMeta;
+static bool pakFindVirtualEntry(const char* requested,
+                                std::string& pakPath,
+                                PakEntryMeta& meta);
 static std::string pakNormalizeName(const char* name);
 static bool isShaderCacheLookupPath(const char* path);
 static bool isShaderPathForDiag(const char* path);
@@ -369,46 +373,40 @@ static char* stub_realpath(const char* p, char* out) {
         return writeCanonical(absolute);
     }
 
-    // CryPak may keep normal game assets exclusively inside FCData/*.pak.
-    // In that case a host-side stat() legitimately fails even though the guest
-    // asset exists. Materialize a unique PAK entry at the requested virtual
-    // path, then canonicalize it normally. This is particularly important for
-    // scripts/classregistry.lua: Lua's loader calls realpath() before entering
-    // the lexer, so returning failure leaves the parser with no valid source
-    // filename even though the script is present in Scripts.pak.
-    // Shader cache files are deliberately excluded from the PAK-backed
-    // realpath fallback. These .cgps/.cgvp/.cgasm files are generated/runtime
-    // cache artifacts and must stay unavailable here so CryEngine can take its
-    // embedded shader fallback path instead of feeding a cached Cg program into
-    // CCGPShader_GL::mfLoad on Switch.
+    // A PAK entry is a real CryPak file even though there is no loose file on
+    // the Switch filesystem. Android CryPak keeps this virtual path alive and
+    // only opens the ZIP entry when FOpen()/GetFileData() is requested. Return
+    // the canonical virtual path here instead of materializing the entry.
     if (!isShaderCacheLookupPath(p) &&
         (strchr(p, '/') || strchr(p, '\\'))) {
-        std::string materialized;
-        if (tryMaterializePakPath(p, materialized)) {
-            return writeCanonical(materialized);
-        }
-
-        // Keep the basename fallback for legacy content whose virtual path is
-        // known only by filename. This is deliberately second: exact virtual
-        // paths are authoritative and avoid collisions between PAKs.
-        if (tryMaterializeUniquePakBasename(p)) {
-            const std::string materializedOut = pakPreserveCasePath(p);
-            char cwd[PATH_MAX];
-            if (::getcwd(cwd, sizeof(cwd))) {
-                std::string absolute = materializedOut;
-                if (absolute.empty() || absolute[0] != '/') {
-                    absolute = cwd;
+        std::string virtualPakPath;
+        PakEntryMeta virtualMeta;
+        if (pakFindVirtualEntry(p, virtualPakPath, virtualMeta)) {
+            std::string virtualPath = pakPreserveCasePath(p);
+            if (virtualPath.empty() || virtualPath[0] != '/') {
+                char cwd[PATH_MAX];
+                if (::getcwd(cwd, sizeof(cwd))) {
+                    std::string absolute = cwd;
                     if (!absolute.empty() && absolute.back() != '/')
                         absolute += '/';
-                    absolute += materializedOut;
-                }
-                struct stat pakSt = {};
-                if (::stat(absolute.c_str(), &pakSt) == 0 && S_ISREG(pakSt.st_mode)) {
-                    compatLogFmt("realpath PAK BASENAME: %s -> %s", p, absolute.c_str());
-                    return writeCanonical(absolute);
+                    absolute += virtualPath;
+                    virtualPath.swap(absolute);
                 }
             }
+            compatLogFmt("realpath PAK VIRTUAL: %s <- %s",
+                         p, virtualPakPath.c_str());
+            return writeCanonical(virtualPath);
         }
+    }
+
+    // Keep the old extraction path available only as an explicit compatibility
+    // escape hatch. Normal PAK I/O on this branch must stay virtual.
+    if (std::getenv("NEARCHUCKLE_PAK_LEGACY_MATERIALIZE") &&
+        !isShaderCacheLookupPath(p) &&
+        (strchr(p, '/') || strchr(p, '\\'))) {
+        std::string materialized;
+        if (tryMaterializePakPath(p, materialized))
+            return writeCanonical(materialized);
     }
 
     if (!callerOwnsBuffer)
@@ -564,8 +562,27 @@ static int stub_stat(const char* p, struct stat* ignored) {
             rc = ::stat(resolved.c_str(), &nativeSt);
     }
 
-    if (rc != 0)
+    if (rc != 0) {
+        std::string pakPath;
+        PakEntryMeta meta;
+        if (pakFindVirtualEntry(ioPath, pakPath, meta)) {
+            nativeSt = {};
+            nativeSt.st_mode = S_IFREG | 0444;
+            nativeSt.st_nlink = 1;
+            nativeSt.st_uid = 0;
+            nativeSt.st_gid = 0;
+            nativeSt.st_size = (off_t)meta.uncompressedSize;
+            nativeSt.st_blksize = 4096;
+            nativeSt.st_blocks =
+                (blkcnt_t)(((uint64_t)meta.uncompressedSize + 511u) / 512u);
+            fillAndroidArm64Stat(nativeSt, ignored);
+            compatLogFmt("PAK VIRTUAL STAT: %s <- %s size=%u",
+                         ioPath, pakPath.c_str(),
+                         (unsigned)meta.uncompressedSize);
+            return 0;
+        }
         return rc;
+    }
 
     fillAndroidArm64Stat(nativeSt, ignored);
     return 0;
@@ -2310,13 +2327,18 @@ static std::string pakAssetRelativeName(const char* requested) {
     return wanted;
 }
 
-static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
-    if (!requested || !mode || mode[0] != 'r')
-        return nullptr;
+static bool pakFindVirtualEntry(const char* requested,
+                               std::string& pakPathOut,
+                               PakEntryMeta& metaOut) {
+    pakPathOut.clear();
+    metaOut = {};
+
+    if (!requested || !*requested)
+        return false;
 
     const std::string wanted = pakAssetRelativeName(requested);
     if (wanted.empty())
-        return nullptr;
+        return false;
 
     const char* roots[] = {
         ".",
@@ -2356,27 +2378,42 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
             if (!pakFindEntryCached(pakPath, wanted, meta))
                 continue;
 
-            std::vector<unsigned char> data;
-            if (!pakReadEntryToMemory(pakPath, meta, data)) {
-                compatLogFmt("PAK VIRTUAL READ FAILED: %s <- %s",
-                             wanted.c_str(), pakPath.c_str());
-                closedir(dir);
-                return nullptr;
-            }
-
-            FILE* handle = vpakOpen(std::move(data));
-            if (handle) {
-                compatLogFmt("PAK VIRTUAL OPEN: %s <- %s",
-                             wanted.c_str(), pakPath.c_str());
-            }
+            pakPathOut = std::move(pakPath);
+            metaOut = meta;
             closedir(dir);
-            return handle;
+            return true;
         }
 
         closedir(dir);
     }
 
-    return nullptr;
+    return false;
+}
+
+static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
+    if (!requested || !mode || mode[0] != 'r')
+        return nullptr;
+
+    std::string pakPath;
+    PakEntryMeta meta;
+    if (!pakFindVirtualEntry(requested, pakPath, meta))
+        return nullptr;
+
+    std::vector<unsigned char> data;
+    if (!pakReadEntryToMemory(pakPath, meta, data)) {
+        compatLogFmt("PAK VIRTUAL READ FAILED: %s <- %s",
+                     pakAssetRelativeName(requested).c_str(),
+                     pakPath.c_str());
+        return nullptr;
+    }
+
+    FILE* handle = vpakOpen(std::move(data));
+    if (handle) {
+        compatLogFmt("PAK VIRTUAL OPEN: %s <- %s",
+                     pakAssetRelativeName(requested).c_str(),
+                     pakPath.c_str());
+    }
+    return handle;
 }
 
 
