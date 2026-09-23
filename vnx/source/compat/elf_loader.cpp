@@ -1328,6 +1328,152 @@ static bool patchFarCrySystemUpdate(LoadedSo* so, uint8_t* stage_base,
     return true;
 }
 
+// Far Cry's Linux/Android CXGame::GetPlayerProfilePath() uses __builtin_trap()
+// for filesystem states that the original Android runtime considers impossible.
+// Those traps are valid diagnostics on Android, but they are not valid recovery
+// points on Switch. Do not NOP the BRK itself: the instructions after a BRK are
+// unreachable in the original control flow and executing them corrupts state.
+// Instead, redirect only the conditional branch that enters the trap block.
+//
+// We handle both compiler forms seen in AArch64 builds:
+//   1) conditional branch -> BRK
+//   2) conditional branch with BRK as its fall-through
+// In both cases only the branch is changed; the rest of the function remains
+// byte-for-byte intact.
+static bool patchFarCryProfilePathTrapBranches(LoadedSo* so, uint8_t* stage_base,
+                                                uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* path = so->path.c_str();
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (std::strcmp(base, "libCryGame.so") != 0)
+        return false;
+
+    constexpr const char* kSym = "_ZN6CXGame20GetPlayerProfilePathEv";
+    void* fn = so->findSym(kSym);
+    if (!fn) {
+        compatLogFmt("FARCRY PROFILE PATH: symbol not found: %s", kSym);
+        return false;
+    }
+
+    const uintptr_t image_base = reinterpret_cast<uintptr_t>(so->base);
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(fn);
+    if (addr < image_base || addr - image_base >= alloc_size) {
+        compatLogFmt("FARCRY PROFILE PATH: symbol outside image fn=%p base=%p size=0x%llx",
+                     fn, reinterpret_cast<void*>(image_base),
+                     (unsigned long long)alloc_size);
+        return false;
+    }
+
+    const uint64_t fn_off = static_cast<uint64_t>(addr - image_base);
+    uint8_t* code = stage_base + min_vaddr + fn_off;
+    constexpr size_t kScanBytes = 0x300;
+    const size_t scan_bytes = std::min(kScanBytes, alloc_size - fn_off);
+
+    auto signExtend = [](uint64_t value, unsigned bits) -> int64_t {
+        const uint64_t m = 1ULL << (bits - 1);
+        return static_cast<int64_t>((value ^ m) - m);
+    };
+
+    auto isCondBranch = [](uint32_t w) {
+        return (w & 0xff000010u) == 0x54000000u; // B.cond
+    };
+    auto isCompareBranch = [](uint32_t w) {
+        return (w & 0x7f000000u) == 0x34000000u; // CBZ/CBNZ
+    };
+    auto isTestBranch = [](uint32_t w) {
+        return (w & 0x7f000000u) == 0x36000000u; // TBZ/TBNZ
+    };
+
+    auto branchTarget = [&](uint32_t w, uintptr_t pc) -> uintptr_t {
+        if (isCondBranch(w) || isCompareBranch(w)) {
+            const int64_t imm = signExtend(
+                (static_cast<uint64_t>(w >> 5) & 0x7ffffULL) << 2, 21);
+            return static_cast<uintptr_t>(static_cast<int64_t>(pc) + imm);
+        }
+        if (isTestBranch(w)) {
+            const int64_t imm = signExtend(
+                (static_cast<uint64_t>(w >> 5) & 0x3fffULL) << 2, 16);
+            return static_cast<uintptr_t>(static_cast<int64_t>(pc) + imm);
+        }
+        return 0;
+    };
+
+    unsigned patched_to_trap = 0;
+    unsigned patched_fallthrough = 0;
+
+    for (size_t brk_off = 0; brk_off + 4 <= scan_bytes; brk_off += 4) {
+        const uint32_t brk = *reinterpret_cast<uint32_t*>(code + brk_off);
+        if (brk != 0xd4200020u)
+            continue;
+
+        const uintptr_t brk_pc = reinterpret_cast<uintptr_t>(code + brk_off);
+
+        // Search backwards for a conditional branch that targets this BRK.
+        // A failed "found_profiles" / "found_player" test normally compiles
+        // exactly into this form.
+        for (size_t dist = 4; dist <= 0x80 && dist <= brk_off; dist += 4) {
+            const size_t off = brk_off - dist;
+            uint32_t* insn = reinterpret_cast<uint32_t*>(code + off);
+            if (!isCondBranch(*insn) && !isCompareBranch(*insn) && !isTestBranch(*insn))
+                continue;
+
+            const uintptr_t pc = reinterpret_cast<uintptr_t>(code + off);
+            const uintptr_t target = branchTarget(*insn, pc);
+            if (target != brk_pc)
+                continue;
+
+            const uint32_t old = *insn;
+            // Remove the failure branch; execution continues through the normal
+            // path immediately after the condition instead of entering BRK.
+            *insn = 0xd503201fu;
+            armICacheInvalidate(insn, 4);
+            ++patched_to_trap;
+            compatLogFmt(
+                "FARCRY PROFILE PATH: bypass branch->BRK at +0x%zx old=%08x new=%08x brk=+0x%zx",
+                off, old, *insn, brk_off);
+            break;
+        }
+
+        // Some compilers put the conditional branch immediately before the BRK
+        // and use the branch-taken path as the successful continuation, making
+        // the BRK the fall-through block. Convert that one conditional branch
+        // to an unconditional B that keeps its original target.
+        if (brk_off >= 4) {
+            const size_t off = brk_off - 4;
+            uint32_t* insn = reinterpret_cast<uint32_t*>(code + off);
+            if (isCondBranch(*insn) || isCompareBranch(*insn) || isTestBranch(*insn)) {
+                const uintptr_t pc = reinterpret_cast<uintptr_t>(code + off);
+                const uintptr_t target = branchTarget(*insn, pc);
+                if (target != brk_pc) {
+                    const int64_t delta =
+                        static_cast<int64_t>(target) - static_cast<int64_t>(pc);
+                    if ((delta & 3) == 0) {
+                        const int64_t imm26 = delta >> 2;
+                        if (imm26 >= -(1LL << 25) && imm26 < (1LL << 25)) {
+                            const uint32_t old = *insn;
+                            *insn = 0x14000000u |
+                                    (static_cast<uint32_t>(imm26) & 0x03ffffffu);
+                            armICacheInvalidate(insn, 4);
+                            ++patched_fallthrough;
+                            compatLogFmt(
+                                "FARCRY PROFILE PATH: bypass BRK fall-through at +0x%zx old=%08x new=%08x brk=+0x%zx",
+                                off, old, *insn, brk_off);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    compatLogFmt(
+        "FARCRY PROFILE PATH: patched %u branch->BRK and %u BRK-fallthrough branches at +0x%llx",
+        patched_to_trap, patched_fallthrough, (unsigned long long)fn_off);
+    return (patched_to_trap + patched_fallthrough) != 0;
+}
+
 // Temporary A/B: bypass CXGame::LoadConfiguration(). The fault stack repeatedly
 // contained libCryGame.so +0xf9718, identified as LoadConfiguration +0x60.
 // Therefore the current function start is +0xf96b8 for this exact Android lib.
@@ -1613,6 +1759,9 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
                      (unsigned long long)alloc_size);
         if (!patchVideoPanelIsPlaying(so, stage_base, min_vaddr, alloc_size))
             compatLog("VIDEO PANEL PATCH: not applied");
+
+        if (!patchFarCryProfilePathTrapBranches(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY PROFILE PATH: no trap-entry branches patched");
 
         // Do not patch the CryInput/CryGame input callbacks. The Android
         // SDL input bridge in runtime.cpp now delivers real Switch HID events
