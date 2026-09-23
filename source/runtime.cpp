@@ -17,8 +17,6 @@ static bool g_log_initialized = false;
 static bool g_log_closed = false;
 static LoadedSo* g_game_so = nullptr;
 
-extern "C" void compatFrameDebugClose();
-
 static bool g_boot_console = false;
 static const devoptab_t* g_boot_stdout_dotab = nullptr;
 static unsigned g_boot_ui_pending_lines = 0;
@@ -110,6 +108,28 @@ static bool is_main_loop_marker(const char* msg) {
     return msg && std::strstr(msg, "CXGame::Run: entered main game loop") != nullptr;
 }
 
+static bool suppressSuccessfulPakDiag(const char* msg) {
+    if (!msg || !*msg)
+        return false;
+
+    std::string normalized(msg);
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+        else
+            c = (char)std::tolower((unsigned char)c);
+    }
+
+    // PAK discovery/index construction is normal successful work and is no
+    // longer useful in the runtime log. Keep only actual PAK failures/misses.
+    return normalized.find("pak index:") != std::string::npos ||
+           normalized.find("pak open diag:") != std::string::npos ||
+           normalized.find("pak virtual open:") != std::string::npos ||
+           normalized.find("pak exact match:") != std::string::npos ||
+           normalized.find("pak basename match:") != std::string::npos ||
+           normalized.find("pak dir ready:") != std::string::npos;
+}
+
 static bool suppressCompatShaderDiag(const char* msg) {
     if (!msg || !*msg)
         return false;
@@ -192,7 +212,8 @@ void compatLog(const char* msg) {
     // visible console stream.
     bootUiWrite(msg, main_loop);
 
-    if (!suppressCompatShaderDiag(msg))
+    if (!suppressSuccessfulPakDiag(msg) &&
+        !suppressCompatShaderDiag(msg))
         log_write(msg, main_loop);
 
     // Keep the file log open after the main-loop marker so we can capture
