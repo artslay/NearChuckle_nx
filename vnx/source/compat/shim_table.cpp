@@ -2142,15 +2142,39 @@ static bool pakFindVirtualEntry(const char* requested,
             pakPath += name;
 
             PakEntryMeta meta;
-            if (!pakFindEntryCached(pakPath, wanted, meta))
-                continue;
+
+            // PAKs located next to a level use the level directory as the
+            // archive mount point, but their internal entries are rooted at
+            // the archive itself. For example:
+            //   Levels/Training/LevelData.xml
+            //   Levels/Training/level.pak -> LevelData.xml
+            // Therefore try the path relative to the PAK directory first,
+            // while preserving the original full path for global FCData PAKs.
+            std::string lookup = wanted;
+            const std::string rootNorm = pakNormalizeName(root.c_str());
+            const std::string wantedNorm = pakNormalizeName(wanted.c_str());
+
+            if (rootNorm != "." && !rootNorm.empty()) {
+                const std::string prefix = rootNorm + "/";
+                if (wantedNorm.rfind(prefix, 0) == 0)
+                    lookup = wantedNorm.substr(prefix.size());
+            }
+
+            if (!pakFindEntryCached(pakPath, lookup, meta)) {
+                // Some archives keep the path with its directory prefix even
+                // when the archive itself is level-local. Retain the old exact
+                // lookup as a fallback.
+                if (lookup != wanted &&
+                    !pakFindEntryCached(pakPath, wanted, meta))
+                    continue;
+            }
 
             pakPathOut = pakPath;
             metaOut = meta;
             closedir(dir);
 
-            compatLogFmt("PAK VIRTUAL MATCH: %s <- %s",
-                         wanted.c_str(), pakPathOut.c_str());
+            compatLogFmt("PAK VIRTUAL MATCH: %s <- %s entry=%s",
+                         wanted.c_str(), pakPathOut.c_str(), lookup.c_str());
             return true;
         }
 
