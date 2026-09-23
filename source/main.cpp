@@ -552,6 +552,7 @@ static int run_farcry(LoadedSo* game_so) {
     char arg8[64];
     char arg9[64];
     char arg10[64];
+    char arg11[64];
 
     std::snprintf(arg1, sizeof(arg1), "\"r_Driver OpenGL\"");
     std::snprintf(arg2, sizeof(arg2), "\"r_Width %d\"", config.screen_width);
@@ -566,6 +567,10 @@ static int run_farcry(LoadedSo* game_so) {
     std::snprintf(arg8, sizeof(arg8), "\"GL_NV30_PS20 1\"");
     std::snprintf(arg9, sizeof(arg9), "\"r_UseHWShaders 1\"");
     std::snprintf(arg10, sizeof(arg10), "\"r_VSync 0\"");
+    // CXGame::Update() gates RenderBegin/Render/RenderEnd on the r_Render CVar.
+    // Force rendering on the Switch build so an existing game.cfg cannot leave
+    // the Android game loop alive while producing a permanently black frame.
+    std::snprintf(arg11, sizeof(arg11), "\"r_Render 1\"");
     // ui_BackGroundVideo is created later by CUISystem::CreateCVars(), so a
     // startup command cannot override its default value of 1 reliably.
     // It is intentionally not included in the early command-line argument list.
@@ -582,8 +587,9 @@ static int run_farcry(LoadedSo* game_so) {
     argv[8] = arg8;
     argv[9] = arg9;
     argv[10] = arg10;
+    argv[11] = arg11;
 
-    const int argc = 11;
+    const int argc = 12;
 
     // Keep shader compilation enabled, matching the working Android build.
     // Missing/experimental Switch shader caches must not turn the menu into a
@@ -593,6 +599,7 @@ static int run_farcry(LoadedSo* game_so) {
     compatLog("Far Cry: ui_BackGroundVideo left at Android default until UI CVar creation");
     compatLog("Far Cry: r_UseHWShaders 1 queued for shader script registration");
     compatLog("Far Cry: command-line CVars use quoted name + value commands");
+    compatLog("Far Cry: r_Render 1 forced to keep CXGame::Update render path enabled");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
     compatLog("Startup diagnostics complete; waiting for CXGame::Run main-loop marker");
