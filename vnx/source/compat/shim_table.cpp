@@ -3468,6 +3468,7 @@ static bool g_guest_input_callbacks_initialized = false;
 static PadState g_switch_pad = {};
 static bool g_switch_pad_initialized = false;
 static bool g_input_connection_logged = false;
+static bool g_input_event_logged = false;
 
 static bool g_w_down = false;
 static bool g_a_down = false;
@@ -3529,16 +3530,41 @@ static void updateMappedKey(bool desired, bool& current, int androidKeycode) {
         g_guest_key_up(nullptr, nullptr, androidKeycode);
 
     current = desired;
+
+    if (!g_input_event_logged) {
+        g_input_event_logged = true;
+        compatLogFmt("INPUT: mapped key event keycode=%d action=%s",
+                     androidKeycode, desired ? "DOWN" : "UP");
+    }
 }
 
 static void updateMappedMouseButton(bool desired, bool& current, int button) {
-    if (desired == current || !g_guest_mouse)
+    (void)button;
+    (void)desired;
+    (void)current;
+}
+
+static void sendMappedMouseState(bool zl, bool zr, bool& old_zl, bool& old_zr) {
+    if (!g_guest_mouse)
         return;
 
-    // Android MotionEvent actions: ACTION_DOWN=0, ACTION_UP=1.
-    g_guest_mouse(nullptr, nullptr, button, desired ? 0 : 1,
-                  0.0f, 0.0f, 0);
-    current = desired;
+    const int old_state = (old_zl ? 1 : 0) | (old_zr ? 2 : 0);
+    const int new_state = (zl ? 1 : 0) | (zr ? 2 : 0);
+
+    if (old_state == new_state)
+        return;
+
+    const int action = new_state > old_state ? 0 : 1;
+    g_guest_mouse(nullptr, nullptr, new_state, action, 0.0f, 0.0f, 0);
+
+    if (!g_input_event_logged) {
+        g_input_event_logged = true;
+        compatLogFmt("INPUT: mapped mouse state old=0x%x new=0x%x",
+                     old_state, new_state);
+    }
+
+    old_zl = zl;
+    old_zr = zr;
 }
 
 static void compatPollSwitchInput() {
@@ -3580,10 +3606,9 @@ static void compatPollSwitchInput() {
     updateMappedKey(ly >  kDeadzone, g_w_down, 51); // Android KEYCODE_W
     updateMappedKey(ly < -kDeadzone, g_s_down, 47); // Android KEYCODE_S
 
-    updateMappedMouseButton(
-        (held & HidNpadButton_ZL) != 0, g_zl_down, 1);
-    updateMappedMouseButton(
-        (held & HidNpadButton_ZR) != 0, g_zr_down, 2);
+    const bool zl = (held & HidNpadButton_ZL) != 0;
+    const bool zr = (held & HidNpadButton_ZR) != 0;
+    sendMappedMouseState(zl, zr, g_zl_down, g_zr_down);
 
     if (g_guest_mouse &&
         (std::fabs(rx) > kDeadzone || std::fabs(ry) > kDeadzone)) {
