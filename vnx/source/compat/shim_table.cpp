@@ -95,7 +95,6 @@ extern "C" {
 // high-frequency allocator and successful realpath chatter that can drown the
 // actual failure. Flip these back to true only for a focused memory investigation.
 static constexpr bool kVerboseAllocatorLogs = false;
-static constexpr bool kVerboseSuccessfulPathLogs = false;
 
 static std::string asciiLower(std::string value);
 static int stub_clock_gettime(int clock_id, struct timespec* ts);
@@ -189,12 +188,7 @@ extern "C" bool compatGuestActivateReadStream(void* self) {
                 // m_nFileSize is immediately after HANDLE, CCachedFileDataPtr,
                 // sector size: HANDLE+20 for both supported layouts.
                 *reinterpret_cast<uint32_t*>(base + handleOff + 20) =
-                    meta.uncompressedSize;
-
-                compatLogFmt("PAK STREAM ACTIVATE: %s <- %s size=%u handle=+0x%zx",
-                             name, pakPath.c_str(),
-                             (unsigned)meta.uncompressedSize, handleOff);
-                return true;
+                    meta.uncompressedSize;                return true;
             }
         }
     }
@@ -468,19 +462,14 @@ static char* stub_realpath(const char* p, char* out) {
                 free(out);
             return nullptr;
         }
-        memcpy(out, canonical.c_str(), canonical.size() + 1);
-        if (kVerboseSuccessfulPathLogs)
-            compatLogFmt("realpath RESULT: %s -> %s", p, out);
-        return out;
+        memcpy(out, canonical.c_str(), canonical.size() + 1);        return out;
     };
 
     if (strcmp(p, ".") == 0 || strcmp(p, "./") == 0) {
         char cwd[PATH_MAX];
         if (!::getcwd(cwd, sizeof(cwd))) {
             if (!callerOwnsBuffer)
-                free(out);
-            compatLogFmt("realpath RESULT: %s -> FAIL errno=%d", p, errno);
-            return nullptr;
+                free(out);            return nullptr;
         }
         return writeCanonical(cwd);
     }
@@ -543,19 +532,12 @@ static char* stub_realpath(const char* p, char* out) {
 
             if (!resolvedPattern.empty() && resolvedPattern.back() != '/')
                 resolvedPattern += '/';
-            resolvedPattern += tail;
-
-            compatLogFmt("realpath WILDCARD: %s -> %s",
-                         p, resolvedPattern.c_str());
-            return writeCanonical(resolvedPattern);
+            resolvedPattern += tail;            return writeCanonical(resolvedPattern);
         }
 
         if (!callerOwnsBuffer)
             free(out);
-        errno = ENOENT;
-        compatLogFmt("realpath WILDCARD FAIL: %s (parent=%s)",
-                     p, parent.c_str());
-        return nullptr;
+        errno = ENOENT;        return nullptr;
     }
 
     struct stat st = {};
@@ -604,9 +586,7 @@ static char* stub_realpath(const char* p, char* out) {
 
     if (!callerOwnsBuffer)
         free(out);
-    errno = ENOENT;
-    compatLogFmt("realpath RESULT: %s -> FAIL errno=%d", p, errno);
-    return nullptr;
+    errno = ENOENT;    return nullptr;
 }
 static int stub_readlink(const char*, char* buf, size_t sz) {
     if (sz > 0 && buf) buf[0] = '\0';
@@ -1037,10 +1017,7 @@ static void arenaGate(const char* who) {
     if (reported >= 3) return;
     char why[400];
     if (shimHeapCheckFast(why, sizeof(why))) return;
-    reported++;
-    compatLogFmt("ARENA: bad on entry to %s during %s ctor[%d] — %s",
-                 who, elfCurrentModule(), elfCurrentCtor(), why);
-}
+    reported++;}
 
 static void* sh_malloc(size_t n) {
     g_sh_malloc_calls++;
@@ -1261,14 +1238,7 @@ bool shimHeapCheck(char* why, size_t whysz) {
     const size_t top_size = top_chunk ? nlSize(top_chunk) : 0;
     static bool bounds_logged = false;
     if (!bounds_logged) {
-        bounds_logged = true;
-        compatLogFmt("HEAP WALK BOUNDS: base=%p end=%p top=%p top_size=%zu top_end=%p",
-                     (void*)(uintptr_t)__malloc_sbrk_base,
-                     (void*)arena_end,
-                     (void*)top_addr,
-                     top_size,
-                     (void*)(top_addr ? top_addr + top_size : 0));
-    }
+        bounds_logged = true;    }
 
     for (int i = 0; i < 400000; i++) {
         g_walk_steps = i;
@@ -1393,9 +1363,7 @@ static void sh_free(void* p) {
         if (warned < 20) {
             warned++;
             char where[256];
-            elfDescribePc((uint64_t)__builtin_return_address(0), where, sizeof(where));
-            compatLogFmt("free: SKIP non-heap ptr %p from %s", p, where);
-        }
+            elfDescribePc((uint64_t)__builtin_return_address(0), where, sizeof(where));        }
         return;
     }
 
@@ -1422,10 +1390,7 @@ static void* sh_realloc(void* p, size_t n) {
         if (kVerboseAllocatorLogs) {
             char where[256];
             elfDescribePc((uint64_t)__builtin_return_address(0),
-                          where, sizeof(where));
-            compatLogFmt("realloc: DIRECT heap ptr=%p size=%zu old_usable=%zu from %s",
-                         p, n, oldUsable, where);
-        }
+                          where, sizeof(where));        }
 
         void* r = realloc(p, n);
         g_last_allocator_phase = 2;
@@ -1438,11 +1403,7 @@ static void* sh_realloc(void* p, size_t n) {
     // so do not pass them to newlib realloc.
     char where[256];
     elfDescribePc((uint64_t)__builtin_return_address(0),
-                  where, sizeof(where));
-
-    compatLogFmt("realloc: SKIP non-heap ptr=%p size=%zu from %s",
-                 p, n, where);
-    void* r = malloc(n);
+                  where, sizeof(where));    void* r = malloc(n);
     g_last_allocator_phase = 2;
     g_last_allocator_ptr = (uint64_t)(uintptr_t)r;
     return r;
@@ -2116,10 +2077,7 @@ static bool buildPakIndexLocked(const std::string& pakPath, PakIndex& index) {
         pos += recordSize;
     }
 
-    index.valid = true;
-    compatLogFmt("PAK INDEX: %s entries=%zu cd=%u",
-                 pakPath.c_str(), index.entries.size(), (unsigned)cdSize);
-    return true;
+    index.valid = true;    return true;
 }
 
 static bool pakFindEntryCached(const std::string& pakPath,
@@ -2324,11 +2282,7 @@ static bool pakFindLevelLocalEntry(const std::string& wanted,
 
         pakPathOut = pakPath;
         metaOut = meta;
-        closedir(dir);
-
-        compatLogFmt("PAK LEVEL MATCH: %s <- %s entry=%s",
-                     wantedNorm.c_str(), pakPathOut.c_str(), lookup.c_str());
-        return true;
+        closedir(dir);        return true;
     }
 
     closedir(dir);
@@ -2458,12 +2412,7 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
     const std::string pathStorage = normalizeSwitchFsPath(requested);
     const char* path = pathStorage.c_str();
 
-    if (diag) {
-        compatLogFmt("FARCRY GETFILESIZE ENTRY: x0=%p x1=%p x2=0x%x path=%s abi=%s",
-                     a0, (const void*)a1, a2, requested,
-                     fromA0 ? "PATH_IN_X0" : "THIS_X0_PATH_X1");
-        compatLogFlush();
-    }
+    if (diag) {    }
 
     struct stat st = {};
     if (::stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size >= 0)
@@ -2480,11 +2429,7 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
     std::string pakPath;
     PakEntryMeta meta;
     if (pakFindVirtualEntry(path, pakPath, meta)) {
-        if (diag) {
-            compatLogFmt("FARCRY GETFILESIZE CALL: %s -> %u via %s",
-                         requested, (unsigned)meta.uncompressedSize,
-                         pakPath.c_str());
-            ++g_cafDiag;
+        if (diag) {            ++g_cafDiag;
         }
         return meta.uncompressedSize;
     }
@@ -2516,11 +2461,7 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     }
 
     FILE* handle = vpakOpen(std::move(data));
-    if (handle) {
-        compatLogFmt("PAK VIRTUAL OPEN: %s <- %s",
-                     pakAssetRelativeName(requested).c_str(),
-                     pakPath.c_str());
-    }
+    if (handle) {    }
     return handle;
 }
 
@@ -2738,8 +2679,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
 
 
     if (path && ioPathStorage != path && !shaderIo)
-        compatLogFmt("path NORMALIZE: fopen %s -> %s", path, ioPathStorage.c_str());
-
     if (std::string mapped = obbRemap(ioPath); !mapped.empty()) {
         FILE* mf = fopen(mapped.c_str(), mode);
         compatLogFmt("obb: fopen %s -> %s (%s)", ioPath ? ioPath : "?",
@@ -2755,9 +2694,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
                 if (videoIo) g_near_video_open_failed = 0;
-                if (!shaderIo)
-                    compatLogFmt("fopen CASEFIX: %s -> %s", ioPath, resolved.c_str());
-                f = rf;
+                if (!shaderIo)                f = rf;
             }
         }
     }
@@ -2770,9 +2707,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (resolvePathCaseInsensitive(virtualPath.c_str(), resolved)) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
-                if (!shaderIo)
-                    compatLogFmt("fopen FCDATA: %s -> %s", ioPath, resolved.c_str());
-                f = rf;
+                if (!shaderIo)                f = rf;
             }
         }
     }
@@ -2810,9 +2745,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
 
     if (apkcache::adopt(f, ioPath)) {
         setvbuf(f, nullptr, _IOFBF, 16 * 1024);
-        if (!shaderIo)
-            compatLogFmt("apkcache: caching reads from %s", ioPath ? ioPath : "?");
-        return f;
+        if (!shaderIo)        return f;
     }
     setvbuf(f, nullptr, _IOFBF, 64 * 1024);
     return f;
@@ -2940,8 +2873,6 @@ static int stub_open(const char* path, int flags, ...) {
                    shaderPathHasExt(ioPath, ".avi"));
 
     if (path && ioPathStorage != path)
-        compatLogFmt("path NORMALIZE: open %s -> %s", path, ioPathStorage.c_str());
-
     int vfd = devUrandomOpen(ioPath);
     if (vfd >= 0)
         return vfd;
@@ -4924,8 +4855,6 @@ static DIR* stub_opendir(const char* path) {
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
     if (path && ioPathStorage != path)
-        compatLogFmt("path NORMALIZE: opendir %s -> %s", path, ioPathStorage.c_str());
-
     // Shader directories are often present as empty loose mount points while
     // their real children live in FCData PAKs. Prefer the merged virtual view
     // for shader paths so the engine sees both sources, like Android CryPak.
