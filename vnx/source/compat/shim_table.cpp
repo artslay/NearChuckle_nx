@@ -4024,6 +4024,18 @@ static bool w_SDL_GL_SwapWindow(void* window) {
     return ok;
 }
 
+static void w_SDL_PumpEvents() {
+    using Fn = void (*)();
+    Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_PumpEvents"));
+    if (fn)
+        fn();
+
+    // Android's Java controller manager normally injects controller events
+    // between the platform event pump and SDL event consumers. On Switch there
+    // is no Java event source, so feed the libnx PadState at the same point.
+    switchInputPump();
+}
+
 static void* w_SDL_CreateWindow(const char* title, int w, int h, uint32_t flags) {
     using Fn = void* (*)(const char*, int, int, uint32_t);
     Fn fn = reinterpret_cast<Fn>(sdl3_sym("SDL_CreateWindow"));
@@ -7519,6 +7531,7 @@ static const ShimEntry g_shims[] = {
     {"SDL_CreateWindow",           (void*)w_SDL_CreateWindow},
     {"SDL_GL_CreateContext",       (void*)w_SDL_GL_CreateContext},
     {"SDL_GL_MakeCurrent",         (void*)w_SDL_GL_MakeCurrent},
+    {"SDL_PumpEvents",              (void*)w_SDL_PumpEvents},
     {"SDL_GL_SwapWindow",          (void*)w_SDL_GL_SwapWindow},
 
     // ── libandroid ───────────────────────────────────────────────────────────
