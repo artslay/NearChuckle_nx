@@ -336,7 +336,6 @@ static void pollSwitchInputInternal() {
         const bool old_zl = (g_switch_input_previous & HidNpadButton_ZL) != 0;
         const bool new_zl = (held & HidNpadButton_ZL) != 0;
 
-        const int old_mouse_state = (old_zr ? 1 : 0) | (old_zl ? 2 : 0);
         const int new_mouse_state = (new_zr ? 1 : 0) | (new_zl ? 2 : 0);
 
         if (old_zr != new_zr)
