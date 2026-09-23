@@ -2361,17 +2361,63 @@ static bool pakFindVirtualEntry(const char* requested,
 // Android source contains an unfinished __linux stub that returns 0 after
 // fopen(), which makes every PAK-backed .caf/.cgf look missing to the
 // animation/model loaders.
-extern "C" unsigned compatGuestGetFileSize(void* /*self*/, const char* requested, unsigned /*flags*/) {
+// The retail symbol is mangled as a member, but the observed ARM64 call site
+// can also reach the Linux implementation with x0 already holding the filename
+// (x1 then contains the flags, not a char*). Accept both forms:
+//   member ABI:   x0=this, x1=path, x2=flags
+//   direct/helper: x0=path, x1=flags
+static const char* compatGetFileSizePath(void* a0, const char* a1) {
+    auto readableString = [](const void* p) -> const char* {
+        if (!p)
+            return nullptr;
+        const uintptr_t addr = reinterpret_cast<uintptr_t>(p);
+        MemoryInfo mi = {};
+        u32 pi = 0;
+        if (R_FAILED(svcQueryMemory(&mi, &pi, addr)))
+            return nullptr;
+        if (!(mi.perm & Perm_R))
+            return nullptr;
+        const uintptr_t end = mi.addr + mi.size;
+        if (addr >= end)
+            return nullptr;
+        const size_t maxLen = std::min<size_t>(256, end - addr);
+        const char* str = reinterpret_cast<const char*>(p);
+        for (size_t i = 0; i < maxLen; ++i) {
+            const unsigned char c = (unsigned char)str[i];
+            if (c == 0)
+                return i ? str : nullptr;
+            if (c < 0x20 || c > 0x7e)
+                return nullptr;
+        }
+        return nullptr;
+    };
+
+    if (const char* p = readableString(a1))
+        return p;
+    return readableString(a0);
+}
+
+extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2) {
     static unsigned g_cafDiag = 0;
+
+    const char* requested = compatGetFileSizePath(a0, a1);
+    const bool fromA0 = requested && requested == reinterpret_cast<const char*>(a0);
     const bool diag = requested && *requested &&
                       std::strstr(requested, ".caf") != nullptr &&
-                      g_cafDiag < 96;
+                      g_cafDiag < 128;
 
     if (!requested || !*requested)
         return 0;
 
     const std::string pathStorage = normalizeSwitchFsPath(requested);
     const char* path = pathStorage.c_str();
+
+    if (diag) {
+        compatLogFmt("FARCRY GETFILESIZE ENTRY: x0=%p x1=%p x2=0x%x path=%s abi=%s",
+                     a0, (const void*)a1, a2, requested,
+                     fromA0 ? "PATH_IN_X0" : "THIS_X0_PATH_X1");
+        compatLogFlush();
+    }
 
     struct stat st = {};
     if (::stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size >= 0)
