@@ -1788,15 +1788,6 @@ static bool pakReadEntryToMemory(const std::string& pakPath,
 
 static bool pakExtractEntry(const std::string& pakPath, const std::string& wanted,
                             const std::string& outPath) {
-    // Virtual PAK I/O test: never materialize a PAK entry onto the SD card.
-    // All normal runtime reads must go through tryOpenFromPaks()/VirtualPakFile.
-    // Keep this legacy extraction helper present for call-site compatibility,
-    // but make every extraction attempt fail without touching the filesystem.
-    (void)pakPath;
-    (void)wanted;
-    (void)outPath;
-    return false;
-
     const std::string normalizedWanted = pakNormalizeName(wanted.c_str());
     PakEntryMeta meta;
     if (!pakFindEntryCached(pakPath, wanted, meta))
@@ -4531,117 +4522,57 @@ static bool pakExtractPrefix(const std::string& pakPath,
                              bool& extractedAny) {
     extractedAny = false;
 
-    FILE* pak = fopen(pakPath.c_str(), "rb");
-    if (!pak)
-        return false;
+    // Directory enumeration is the exceptional case where CryEngine expects
+    // real filesystem entries. Reuse the persistent in-memory PAK index instead
+    // of reparsing the central directory a second time.
+    mutexLock(&g_pak_index_lock);
 
-    if (fseek(pak, 0, SEEK_END) != 0) {
-        fclose(pak);
-        return false;
-    }
-
-    const long fileSize = ftell(pak);
-    if (fileSize < 22) {
-        fclose(pak);
-        return false;
-    }
-
-    const size_t tailSize = (size_t)((fileSize < 0x10016L) ? fileSize : 0x10016L);
-    std::vector<unsigned char> tail(tailSize);
-    if (fseek(pak, fileSize - (long)tailSize, SEEK_SET) != 0 ||
-        !pakReadExact(pak, tail.data(), tail.size())) {
-        fclose(pak);
-        return false;
-    }
-
-    size_t eocd = tail.size();
-    while (eocd >= 22) {
-        --eocd;
-        if (eocd + 4 <= tail.size() &&
-            pakRd32(tail.data() + eocd) == 0x06054b50u)
-            break;
-    }
-    if (eocd + 22 > tail.size()) {
-        fclose(pak);
-        return false;
-    }
-
-    const uint16_t entries = pakRd16(tail.data() + eocd + 10);
-    const uint32_t cdSize = pakRd32(tail.data() + eocd + 12);
-    const uint32_t cdOffset = pakRd32(tail.data() + eocd + 16);
-    if (!entries || !cdSize || cdSize > 128 * 1024 * 1024u) {
-        fclose(pak);
-        return false;
-    }
-
-    std::vector<unsigned char> cd(cdSize);
-    if (fseek(pak, (long)cdOffset, SEEK_SET) != 0 ||
-        !pakReadExact(pak, cd.data(), cd.size())) {
-        fclose(pak);
-        return false;
-    }
-
-    std::vector<std::string> names;
-    size_t pos = 0;
-    for (uint16_t i = 0; i < entries && pos + 46 <= cd.size(); ++i) {
-        const unsigned char* h = cd.data() + pos;
-        if (pakRd32(h) != 0x02014b50u)
-            break;
-
-        const uint16_t nameLen = pakRd16(h + 28);
-        const uint16_t extraLen = pakRd16(h + 30);
-        const uint16_t commentLen = pakRd16(h + 32);
-        const size_t recordSize = 46u + nameLen + extraLen + commentLen;
-        if (pos + recordSize > cd.size())
-            break;
-
-        std::string name((const char*)h + 46, nameLen);
-        const std::string normalized = pakNormalizeName(name.c_str());
-
-        std::string wantedPrefix = pakNormalizeName(prefix.c_str());
-        if (!wantedPrefix.empty() && wantedPrefix.back() != '/')
-            wantedPrefix.push_back('/');
-
-        if (normalized.size() > wantedPrefix.size() &&
-            normalized.compare(0, wantedPrefix.size(), wantedPrefix) == 0) {
-            names.push_back(name);
+    auto it = g_pak_indexes.find(pakPath);
+    if (it == g_pak_indexes.end()) {
+        PakIndex fresh;
+        const bool ok = buildPakIndexLocked(pakPath, fresh);
+        auto inserted = g_pak_indexes.emplace(pakPath, std::move(fresh));
+        it = inserted.first;
+        if (!ok || !it->second.valid) {
+            mutexUnlock(&g_pak_index_lock);
+            return false;
         }
-
-        pos += recordSize;
     }
 
-    fclose(pak);
+    const std::string wantedPrefix = [&]() {
+        std::string p = pakNormalizeName(prefix.c_str());
+        while (!p.empty() && p.back() == '/')
+            p.pop_back();
+        if (!p.empty())
+            p.push_back('/');
+        return p;
+    }();
 
-    for (const std::string& name : names) {
-        const std::string normalized = pakNormalizeName(name.c_str());
-        if (normalized.empty())
-            continue;
-
-        // CryPak::FindFirst() lowercases the directory path before calling
-        // the platform _findfirst64().  On the Switch's case-sensitive
-        // filesystem that means we need a real lowercase mirror of the PAK
-        // tree, while FOpen() can still use the archive's original spelling.
-        //
-        // Extract the lowercase path directly from the archive rather than
-        // copying the just-created file. This also handles archive entries that
-        // use '\\' as path separators, which must become real POSIX '/' paths
-        // on the Switch filesystem.
-        if (!pakExtractEntry(pakPath, normalized, name))
-            continue;
-
-        if (name != normalized &&
-            !pakExtractEntry(pakPath, normalized, normalized)) {
-            // The original spelling is still useful for FOpen(), but a missing
-            // lowercase mirror means CryPak's FindFirst() cannot recurse into it.
-            continue;
+    std::vector<std::string> matches;
+    matches.reserve(it->second.entries.size());
+    for (const auto& kv : it->second.entries) {
+        const std::string& normalized = kv.first;
+        if (wantedPrefix.empty() ||
+            (normalized.size() > wantedPrefix.size() &&
+             normalized.compare(0, wantedPrefix.size(), wantedPrefix) == 0)) {
+            matches.push_back(normalized);
         }
+    }
 
-        extractedAny = true;
+    mutexUnlock(&g_pak_index_lock);
+
+    for (const std::string& normalized : matches) {
+        if (normalized.empty() || normalized.back() == '/')
+            continue;
+
+        // Only materialize the file when enumeration actually needs it.
+        // Normal asset reads remain VirtualPakFile-backed.
+        if (pakExtractEntry(pakPath, normalized, normalized))
+            extractedAny = true;
     }
 
     return true;
 }
-
 
 static void countShaderScriptsRecursive(const std::string& directory,
                                         int& cslCount,
