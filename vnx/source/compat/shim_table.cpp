@@ -841,7 +841,13 @@ static void sh_exit(int code) {
     compatLogFmt("game called exit(%d)", code);
     logTermCaller("exit called", __builtin_return_address(0));
     logBacktrace(__builtin_frame_address(0));
-    exit(code);
+    compatLogFlush();
+
+    // The Android game expects exit() to terminate the process immediately.
+    // Running newlib/SDL atexit handlers on Switch tears down objects that are
+    // still referenced by the guest stack and can fault after "Quit-Yes".
+    svcExitProcess();
+    __builtin_unreachable();
 }
 static void sh_abort() {
     compatLog("game called abort()");
@@ -862,7 +868,11 @@ static void sh_stack_chk_fail(void) {
 static void sh_exit_raw(int code) {
     compatLogFmt("game called _exit(%d)", code);
     logTermCaller("_exit called", __builtin_return_address(0));
-    exit(code);
+    compatLogFlush();
+
+    // _exit() must bypass host-side atexit/SDL teardown as well.
+    svcExitProcess();
+    __builtin_unreachable();
 }
 
 // ─── Guarded free/realloc ─────────────────────────────────────────────────────
