@@ -251,9 +251,10 @@ static PadState g_switch_pad = {};
 static u64 g_switch_input_previous = 0;
 static float g_switch_touch_x = 0.0f;
 static float g_switch_touch_y = 0.0f;
-// CSDLMouse starts its virtual screen at 400x300 and moves it by mouseDelta*4.
-// Keep the same logical pointer position so a touchscreen coordinate can be
-// translated into the relative-motion path used by the Android mouse backend.
+// CSDLMouse starts its virtual screen at 400x300. Its GetDeltaX/Y() applies
+// mouse sensitivity 0.2, then Update() advances the virtual pointer by *4,
+// giving an effective virtual-screen scale of 0.8 per SDL relative pixel.
+static constexpr float kSwitchTouchVirtualPerRelative = 0.8f;
 static float g_switch_touch_virtual_x = 400.0f;
 static float g_switch_touch_virtual_y = 300.0f;
 static void* g_sdl_key_down = nullptr;
@@ -414,8 +415,10 @@ static void pollSwitchInputInternal() {
                 g_switch_touch_x = x;
                 g_switch_touch_y = y;
 
-                const float dx = (target_x - g_switch_touch_virtual_x) / 4.0f;
-                const float dy = (target_y - g_switch_touch_virtual_y) / 4.0f;
+                const float dx = (target_x - g_switch_touch_virtual_x) /
+                                 kSwitchTouchVirtualPerRelative;
+                const float dy = (target_y - g_switch_touch_virtual_y) /
+                                 kSwitchTouchVirtualPerRelative;
                 switchEmitTouchMouseMove(g_sdl_mouse, dx, dy);
                 g_switch_touch_virtual_x = target_x;
                 g_switch_touch_virtual_y = target_y;
@@ -424,8 +427,10 @@ static void pollSwitchInputInternal() {
                 compatLogFmt("SWITCH TOUCH: tap down x=%.0f y=%.0f -> virtual x=%.0f y=%.0f",
                              x, y, target_x, target_y);
             } else {
-                const float dx = (target_x - g_switch_touch_virtual_x) / 4.0f;
-                const float dy = (target_y - g_switch_touch_virtual_y) / 4.0f;
+                const float dx = (target_x - g_switch_touch_virtual_x) /
+                                 kSwitchTouchVirtualPerRelative;
+                const float dy = (target_y - g_switch_touch_virtual_y) /
+                                 kSwitchTouchVirtualPerRelative;
                 if (dx != 0.0f || dy != 0.0f)
                     switchEmitTouchMouseMove(g_sdl_mouse, dx, dy);
                 g_switch_touch_virtual_x = target_x;
