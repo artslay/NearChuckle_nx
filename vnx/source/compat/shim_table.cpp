@@ -3455,6 +3455,7 @@ static EGLBoolean w_eglMakeCurrent(EGLDisplay d, EGLSurface draw, EGLSurface rea
 // Switch HID state into the existing guest SDL input path instead of creating a
 // second event system.
 extern void* jniFindRegisteredNative(const char* name, int occurrence);
+extern void* jniFindRegisteredNativeExact(const char* name, const char* signature, int occurrence);
 
 namespace {
 using GuestKeyFn = void (*)(void*, void*, int);
@@ -3479,11 +3480,11 @@ static void initGuestInputCallbacks() {
         return;
 
     g_guest_key_down =
-        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNative("onNativeKeyDown", 0));
+        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNativeExact("onNativeKeyDown", "(I)V", 0));
     g_guest_key_up =
-        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNative("onNativeKeyUp", 0));
+        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNativeExact("onNativeKeyUp", "(I)V", 0));
     g_guest_mouse =
-        reinterpret_cast<GuestMouseFn>(jniFindRegisteredNative("onNativeMouse", 0));
+        reinterpret_cast<GuestMouseFn>(jniFindRegisteredNativeExact("onNativeMouse", "(IIFFZ)V", 0));
 
     if (!g_guest_key_down || !g_guest_key_up || !g_guest_mouse) {
         compatLogFmt("INPUT: SDL callbacks missing keydown=%p keyup=%p mouse=%p",
@@ -3498,14 +3499,19 @@ static void initGuestInputCallbacks() {
 }
 
 static bool initSwitchHid() {
-    if (g_hid_init_state != 0)
-        return g_hid_init_state > 0;
+    static PadState pad = {};
+    static bool configured = false;
 
-    g_hid_init_state = R_SUCCEEDED(hidInitialize()) ? 1 : -1;
-    if (g_hid_init_state < 0)
-        compatLog("INPUT: hidInitialize FAILED");
+    if (!configured) {
+        configured = true;
+        padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+        padInitializeDefault(&pad);
+        compatLog("INPUT: Switch PadState initialized");
+    }
 
-    return g_hid_init_state > 0;
+    // padUpdate() is handled below in compatPollSwitchInput() so the
+    // current PadState can be queried without using the removed legacy HID API.
+    return true;
 }
 
 static void updateMappedKey(bool desired, bool& current, int androidKeycode) {
@@ -3538,44 +3544,32 @@ static void compatPollSwitchInput() {
     if (!initSwitchHid())
         return;
 
-    static HidNpadCommonState state = {};
-    static HidNpadIdType controller_id = HidNpadIdType_No1;
-    static bool controller_id_ready = false;
+    static PadState pad = {};
+    static bool pad_ready = false;
 
-    // The installed libnx uses the post-refactor HID API. Read the current
-    // Npad state directly instead of the removed legacy polling helpers.
-    if (!controller_id_ready) {
-        controller_id_ready = true;
-        hidInitializeNpad();
-
-        const u32 no1_style = hidGetNpadStyleSet(HidNpadIdType_No1);
-        const u32 handheld_style =
-            hidGetNpadStyleSet(HidNpadIdType_Handheld);
-
-        controller_id = no1_style != 0
-            ? HidNpadIdType_No1
-            : (handheld_style != 0
-                ? HidNpadIdType_Handheld
-                : HidNpadIdType_No1);
+    if (!pad_ready) {
+        pad_ready = true;
+        padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+        padInitializeDefault(&pad);
+        compatLog("INPUT: Pad configured");
     }
 
-    size_t state_count = 0;
-    if (controller_id == HidNpadIdType_Handheld) {
-        state_count = hidGetNpadStatesHandheld(
-            controller_id,
-            reinterpret_cast<HidNpadHandheldState*>(&state), 1);
-    } else {
-        state_count = hidGetNpadStatesFullKey(
-            controller_id,
-            reinterpret_cast<HidNpadFullKeyState*>(&state), 1);
+    padUpdate(&pad);
+
+    const u64 held = padGetButtons(&pad);
+    const HidAnalogStickState left = padGetStickPos(&pad, 0);
+    const HidAnalogStickState right = padGetStickPos(&pad, 1);
+
+    static bool input_state_logged = false;
+    const bool connected = padIsConnected(&pad);
+    if (!input_state_logged) {
+        if (connected) {
+            input_state_logged = true;
+            compatLogFmt("INPUT: controller connected style=0x%x buttons=0x%llx",
+                         padGetStyleSet(&pad),
+                         static_cast<unsigned long long>(held));
+        }
     }
-
-    if (state_count == 0)
-        return;
-
-    const u64 held = state.buttons;
-    const HidAnalogStickState& left = state.analog_stick_l;
-    const HidAnalogStickState& right = state.analog_stick_r;
 
     constexpr float kStickMax = 32767.0f;
     constexpr float kDeadzone = 0.22f;
