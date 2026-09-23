@@ -1290,7 +1290,7 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
     return true;
 }
 
-static bool patchFarCrySystemUpdate(LoadedSo* so, uint8_t* stage_base,
+[[maybe_unused]] static bool patchFarCrySystemUpdate(LoadedSo* so, uint8_t* stage_base,
                                     uint64_t min_vaddr, size_t alloc_size) {
     if (!so || !stage_base || !alloc_size)
         return false;
@@ -1347,7 +1347,7 @@ static bool patchFarCrySystemUpdate(LoadedSo* so, uint8_t* stage_base,
 //   2) conditional branch with BRK as its fall-through
 // In both cases only the branch is changed; the rest of the function remains
 // byte-for-byte intact.
-static bool patchFarCryProfilePathTrapBranches(LoadedSo* so, uint8_t* stage_base,
+[[maybe_unused]] static bool patchFarCryProfilePathTrapBranches(LoadedSo* so, uint8_t* stage_base,
                                                 uint64_t min_vaddr, size_t alloc_size) {
     if (!so || !stage_base || !alloc_size)
         return false;
