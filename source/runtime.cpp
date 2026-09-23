@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cctype>
 #include <string>
+#include <algorithm>
 #include <sys/iosupport.h>
 #include <switch/services/hid.h>
 #include <switch/runtime/pad.h>
@@ -326,7 +327,7 @@ static void pollSwitchInputInternal() {
     if (!g_sdl_key_down && !g_sdl_key_up && !g_sdl_mouse)
         return;
 
-    if (!g_switch_pad_initialized && (g_sdl_key_down || g_sdl_key_up)) {
+    if (!g_switch_pad_initialized) {
         padConfigureInput(1, HidNpadStyleSet_NpadStandard);
         padInitializeDefault(&g_switch_pad);
         g_switch_pad_initialized = true;
