@@ -986,89 +986,11 @@ static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
     return true;
 }
 
-// Far Cry's startup Lua scripts bind a number of console commands through
-// CScriptObjectInput::BindCommandToKey(). The current Switch ABI path reaches
-// CXConsole::CreateKeyBind() and then faults in host code while constructing the
-// key-binding entry. Disable only this Lua-to-console bridge for the A/B test;
-// no renderer, filesystem, shader, or other input code is changed. The function
-// is a Lua C callback and returns the number of Lua return values, so zero is the
-// valid no-return result.
-static bool patchFarCryBindCommandToKey(LoadedSo* so, uint8_t* stage_base,
-                                        uint64_t min_vaddr, size_t alloc_size) {
-    if (!so || !stage_base || !alloc_size)
-        return false;
-
-    constexpr const char* kSym =
-        "_ZN18CScriptObjectInput16BindCommandToKeyEP16IFunctionHandler";
-    void* fn = so->findSym(kSym);
-    if (!fn) {
-        compatLogFmt("FARCRY INPUT A/B: symbol not found: %s", kSym);
-        return false;
-    }
-
-    const uintptr_t base = (uintptr_t)so->base;
-    const uintptr_t addr = (uintptr_t)fn;
-    if (addr < base || addr - base >= alloc_size) {
-        compatLogFmt("FARCRY INPUT A/B: symbol address out of image fn=%p base=%p size=0x%llx",
-                     fn, (void*)base, (unsigned long long)alloc_size);
-        return false;
-    }
-
-    const uint64_t off = (uint64_t)(addr - base);
-    uint32_t* insn = reinterpret_cast<uint32_t*>(stage_base + min_vaddr + off);
-    const uint32_t old0 = insn[0];
-    const uint32_t old1 = insn[1];
-
-    // MOV W0, WZR; RET — no-op the Lua callback and report zero results.
-    insn[0] = 0x2a1f03e0u;
-    insn[1] = 0xd65f03c0u;
-
-    compatLogFmt("FARCRY INPUT A/B: patched BindCommandToKey +0x%llx old=%08x %08x new=%08x %08x",
-                 (unsigned long long)off, old0, old1, insn[0], insn[1]);
-    return true;
-}
-
-// The next startup crash lands in the same CScriptObjectInput::FuncThunk
-// family, at a stable libCryGame image offset reported by the guest stack:
-//   libCryGame.so + 0x123fc0
-// This is intentionally a separate A/B patch from BindCommandToKey so the next
-// test tells us whether this exact callback is the offending Input:* method.
-static bool patchFarCryInputThunkCrashPath(LoadedSo* so, uint8_t* stage_base,
-                                           uint64_t min_vaddr, size_t alloc_size) {
-    if (!so || !stage_base)
-        return false;
-
-    constexpr uint64_t kFuncOffset = 0x123fc0;
-    if (kFuncOffset + 8 > alloc_size) {
-        compatLogFmt("FARCRY INPUT A/B2: offset 0x%llx outside libCryGame image size=0x%llx",
-                     (unsigned long long)kFuncOffset,
-                     (unsigned long long)alloc_size);
-        return false;
-    }
-
-    uint32_t* insn = reinterpret_cast<uint32_t*>(
-        stage_base + min_vaddr + kFuncOffset);
-
-    const uint32_t old0 = insn[0];
-    const uint32_t old1 = insn[1];
-
-    // Only patch an actual executable-looking instruction pair. This keeps the
-    // test from silently rewriting a changed binary if the Android library is
-    // updated and the old offset no longer points at the same thunk.
-    if (old0 == 0xd503201fu && old1 == 0xd65f03c0u) {
-        compatLogFmt("FARCRY INPUT A/B2: thunk at +0x%llx already NOP/RET",
-                     (unsigned long long)kFuncOffset);
-        return true;
-    }
-
-    insn[0] = 0x2a1f03e0u; // MOV W0, WZR
-    insn[1] = 0xd65f03c0u; // RET
-
-    compatLogFmt("FARCRY INPUT A/B2: patched libCryGame +0x%llx old=%08x %08x new=%08x %08x",
-                 (unsigned long long)kFuncOffset,
-                 old0, old1, insn[0], insn[1]);
-    return true;
-}
+// The previous input A/B experiments replaced BindCommandToKey() and a
+// suspected input thunk with MOV W0, WZR; RET to get past an early crash.
+// Those patches also disabled the actual Android/SDL input delivery path, so
+// they must stay out of the functional runtime. The crash investigation can
+// continue independently without silently swallowing Input:* callbacks.
 
 // A/B diagnostic: bypass CSystem::Update() entirely and return true.
 static bool patchFarCrySystemUpdate(LoadedSo* so, uint8_t* stage_base,
@@ -1398,13 +1320,9 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
         if (!patchVideoPanelIsPlaying(so, stage_base, min_vaddr, alloc_size))
             compatLog("VIDEO PANEL PATCH: not applied");
 
-        // A/B experiment: disable only Input:BindCommandToKey() until the
-        // CreateKeyBind host crash is understood. This patch is intentionally
-        // isolated from the rest of CryInput and SDL input handling.
-        if (!patchFarCryBindCommandToKey(so, stage_base, min_vaddr, alloc_size))
-            compatLog("FARCRY INPUT A/B: BindCommandToKey patch not applied");
-        if (!patchFarCryInputThunkCrashPath(so, stage_base, min_vaddr, alloc_size))
-            compatLog("FARCRY INPUT A/B2: crash-path thunk patch not applied");
+        // Do not patch the CryInput/CryGame input callbacks. The Android
+        // SDL input bridge in runtime.cpp now delivers real Switch HID events
+        // to SDL's registered onNativeKeyDown/Up/onNativeMouse callbacks.
         patchFarCrySkipLoadConfiguration(so, stage_base, min_vaddr, alloc_size);
         return;
     }
