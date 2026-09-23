@@ -3786,8 +3786,6 @@ static bool w_SDL_GL_SwapWindow(void* window) {
     // block in the Java/UI presentation path, which is not present on Switch.
     // CryEngine is already rendering into the active EGL surface, so direct
     // eglSwapBuffers is the correct native presentation operation here.
-    compatLogFmt("SDL: Swap[%u] ENTER window=%p", swap_count, window);
-
     const EGLDisplay display = eglGetCurrentDisplay();
     const EGLSurface surface = eglGetCurrentSurface(EGL_DRAW);
     const EGLBoolean egl_ok =
@@ -3797,14 +3795,17 @@ static bool w_SDL_GL_SwapWindow(void* window) {
     const bool ok = (egl_ok == EGL_TRUE);
     const bool egl_fallback = true;
 
-    compatLogFmt("SDL: Swap[%u] EGL result=%d display=%p surface=%p",
-                 swap_count, egl_ok == EGL_TRUE ? 1 : 0,
-                 display, surface);
+    // Swap runs once per rendered frame. Keep the regular log quiet;
+    // only emit a sparse heartbeat, plus every failure.
+    if (swap_count <= 3 || !ok || (swap_count % 600u) == 0u) {
+        compatLogFmt("SDL: Swap heartbeat[%u] result=%d window=%p",
+                     swap_count, ok ? 1 : 0, window);
+    }
 
     // Keep presentation diagnostics attached to the normal compatibility log.
     // runtime.cpp closes that log at the CXGame::Run main-loop marker; do not
     // close it early based on the number of swaps.
-    if (swap_count <= 8 || !ok) {
+    if (swap_count <= 3 || !ok) {
         GLint viewport[4] = {0, 0, 0, 0};
         GLint framebuffer = 0;
         GLint current_program = 0;
