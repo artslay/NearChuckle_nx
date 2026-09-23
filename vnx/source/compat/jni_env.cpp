@@ -46,10 +46,6 @@ static std::unordered_map<std::string, MethodEntry*> g_method_index;
 // jniSetUnityMode().
 static bool g_unity_mode = false;
 
-// SDL Android's joystick backend calls this Java method during joystick
-// subsystem initialization. There is no Java device manager on Switch, so
-// synthesize the Switch controller from libnx at exactly that point.
-extern "C" void compatSynthesizeSwitchController();
 
 static MethodEntry* lookupOrCreateMethod(const char* n, const char* sg) {
     std::string key = std::string(n ? n : "") + "|" + (sg ? sg : "");
@@ -728,10 +724,6 @@ static void s_CallStaticVoidMethodV(JNIEnv*, jclass, jmethodID mid, va_list args
     MethodEntry* e = methodEntry(mid);
     if (!e) { compatLog("JNI CallStaticVoidMethodV"); return; }
 
-    if (strcmp(e->name, "detectDevices") == 0) {
-        compatSynthesizeSwitchController();
-        return;
-    }
     if (strcmp(e->name, "setIntegerForKey") == 0) {
         const char* key = (const char*)va_arg(args, jstring);
         jint val        = va_arg(args, jint);
