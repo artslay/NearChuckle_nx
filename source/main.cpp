@@ -23,6 +23,7 @@ extern void androidTlsInstall();
 extern void vnxSetGameSo(LoadedSo* so);
 extern void compatUiInit();
 extern void compatUiShutdown();
+extern void* jniFindRegisteredNative(const char* name, int occurrence);
 
 struct SoFile {
     std::string path;
@@ -519,6 +520,52 @@ static bool prepare_guest_sdl() {
     return true;
 }
 
+static bool prepare_guest_sdl_surface() {
+    // Mirror the Android SDLActivity/SDLSurface lifecycle before SDL_main:
+    // surfaceCreated -> screen resolution -> resize -> surfaceChanged.
+    // The native callbacks are registered by libSDL3.so during JNI_OnLoad.
+    using VoidFn = void (*)();
+    using ScreenResolutionFn = void (*)(int, int, int, int, float, float);
+
+    void* surface_created_sym = jniFindRegisteredNative("onNativeSurfaceCreated", 0);
+    void* set_resolution_sym = jniFindRegisteredNative("nativeSetScreenResolution", 0);
+    void* native_resize_sym = jniFindRegisteredNative("onNativeResize", 0);
+    void* surface_changed_sym = jniFindRegisteredNative("onNativeSurfaceChanged", 0);
+
+    if (!surface_created_sym || !set_resolution_sym ||
+        !native_resize_sym || !surface_changed_sym) {
+        compatLogFmt(
+            "SDL: guest Surface lifecycle callbacks missing "
+            "created=%p resolution=%p resize=%p changed=%p",
+            surface_created_sym, set_resolution_sym,
+            native_resize_sym, surface_changed_sym);
+        return false;
+    }
+
+    reinterpret_cast<VoidFn>(surface_created_sym)();
+    compatLog("SDL: onNativeSurfaceCreated() called");
+
+    const float density = 1.0f;
+    const float refresh_rate = 60.0f;
+    reinterpret_cast<ScreenResolutionFn>(set_resolution_sym)(
+        config.screen_width,
+        config.screen_height,
+        config.screen_width,
+        config.screen_height,
+        density,
+        refresh_rate);
+    compatLogFmt("SDL: nativeSetScreenResolution(%dx%d) called",
+                 config.screen_width, config.screen_height);
+
+    reinterpret_cast<VoidFn>(native_resize_sym)();
+    compatLog("SDL: onNativeResize() called");
+
+    reinterpret_cast<VoidFn>(surface_changed_sym)();
+    compatLog("SDL: onNativeSurfaceChanged() called");
+
+    return true;
+}
+
 static int run_farcry(LoadedSo* game_so) {
     if (!game_so)
         return -1;
@@ -556,7 +603,7 @@ static int run_farcry(LoadedSo* game_so) {
     std::snprintf(arg1, sizeof(arg1), "\"r_Driver OpenGL\"");
     std::snprintf(arg2, sizeof(arg2), "\"r_Width %d\"", config.screen_width);
     std::snprintf(arg3, sizeof(arg3), "\"r_Height %d\"", config.screen_height);
-    std::snprintf(arg4, sizeof(arg4), "\"r_Fullscreen 0\"");
+    std::snprintf(arg4, sizeof(arg4), "\"r_Fullscreen 1\"");
     std::snprintf(arg5, sizeof(arg5), "\"game_fov %d\"", config.fov);
     std::snprintf(arg6, sizeof(arg6), "\"r_Quality_BumpMapping 3\"");
     std::snprintf(arg7, sizeof(arg7), "\"r_NoPS20 0\"");
@@ -691,6 +738,12 @@ int main(int, char**) {
     // window/video initialization until SDL_SetMainReady() is called.
     if (!prepare_guest_sdl()) {
         compatLog("ERROR: could not prepare guest SDL3 main state");
+        compatLogFlush();
+        return 1;
+    }
+
+    if (!prepare_guest_sdl_surface()) {
+        compatLog("ERROR: could not prepare guest SDL3 Surface state");
         compatLogFlush();
         return 1;
     }
