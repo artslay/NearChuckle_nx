@@ -3444,84 +3444,147 @@ static EGLBoolean w_eglMakeCurrent(EGLDisplay d, EGLSurface draw, EGLSurface rea
     return ok;
 }
 
-static FILE* g_frame_debug_log = nullptr;
-static unsigned int g_frame_debug_swaps = 0;
-static bool g_frame_debug_closed = false;
+// Basic Switch controller -> SDL Android input mapping.
+// Left stick: W/A/S/D
+// Right stick: relative mouse movement
+// ZL: left mouse button
+// ZR: right mouse button
+//
+// SDL's Android port already exposes these callbacks through JNI, so feed the
+// Switch HID state into the existing guest SDL input path instead of creating a
+// second event system.
+extern void* jniFindRegisteredNative(const char* name, int occurrence);
 
-static void frameDebugLogFmt(const char* fmt, ...) {
-    if (!fmt || g_frame_debug_closed)
+namespace {
+using GuestKeyFn = void (*)(void*, void*, int);
+using GuestMouseFn = void (*)(void*, void*, int, int, float, float, unsigned char);
+
+static GuestKeyFn g_guest_key_down = nullptr;
+static GuestKeyFn g_guest_key_up = nullptr;
+static GuestMouseFn g_guest_mouse = nullptr;
+static bool g_guest_input_callbacks_initialized = false;
+static bool g_guest_input_callbacks_failed = false;
+static int g_hid_init_state = 0;
+
+static bool g_w_down = false;
+static bool g_a_down = false;
+static bool g_s_down = false;
+static bool g_d_down = false;
+static bool g_zl_down = false;
+static bool g_zr_down = false;
+
+static void initGuestInputCallbacks() {
+    if (g_guest_input_callbacks_initialized || g_guest_input_callbacks_failed)
         return;
 
-    if (!g_frame_debug_log) {
-        g_frame_debug_log = fopen(
-            "/switch/NearChuckle_nx/frame_debug.log", "w");
-        if (!g_frame_debug_log)
-            return;
+    g_guest_key_down =
+        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNative("onNativeKeyDown", 0));
+    g_guest_key_up =
+        reinterpret_cast<GuestKeyFn>(jniFindRegisteredNative("onNativeKeyUp", 0));
+    g_guest_mouse =
+        reinterpret_cast<GuestMouseFn>(jniFindRegisteredNative("onNativeMouse", 0));
+
+    if (!g_guest_key_down || !g_guest_key_up || !g_guest_mouse) {
+        compatLogFmt("INPUT: SDL callbacks missing keydown=%p keyup=%p mouse=%p",
+                     reinterpret_cast<void*>(g_guest_key_down),
+                     reinterpret_cast<void*>(g_guest_key_up),
+                     reinterpret_cast<void*>(g_guest_mouse));
+        g_guest_input_callbacks_failed = true;
+        return;
     }
 
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-
-    fprintf(g_frame_debug_log, "%s\n", buf);
-    fflush(g_frame_debug_log);
+    g_guest_input_callbacks_initialized = true;
 }
 
-extern "C" void compatFrameDebugClose() {
-    if (g_frame_debug_closed)
-        return;
+static bool initSwitchHid() {
+    if (g_hid_init_state != 0)
+        return g_hid_init_state > 0;
 
-    g_frame_debug_closed = true;
-    if (!g_frame_debug_log)
-        return;
+    g_hid_init_state = R_SUCCEEDED(hidInitialize()) ? 1 : -1;
+    if (g_hid_init_state < 0)
+        compatLog("INPUT: hidInitialize FAILED");
 
-    fflush(g_frame_debug_log);
-    fclose(g_frame_debug_log);
-    g_frame_debug_log = nullptr;
+    return g_hid_init_state > 0;
 }
+
+static void updateMappedKey(bool desired, bool& current, int androidKeycode) {
+    if (desired == current || !g_guest_key_down || !g_guest_key_up)
+        return;
+
+    if (desired)
+        g_guest_key_down(nullptr, nullptr, androidKeycode);
+    else
+        g_guest_key_up(nullptr, nullptr, androidKeycode);
+
+    current = desired;
+}
+
+static void updateMappedMouseButton(bool desired, bool& current, int button) {
+    if (desired == current || !g_guest_mouse)
+        return;
+
+    // Android MotionEvent actions: ACTION_DOWN=0, ACTION_UP=1.
+    g_guest_mouse(nullptr, nullptr, button, desired ? 0 : 1,
+                  0.0f, 0.0f, 0);
+    current = desired;
+}
+
+static void compatPollSwitchInput() {
+    initGuestInputCallbacks();
+    if (!g_guest_input_callbacks_initialized)
+        return;
+
+    if (!initSwitchHid())
+        return;
+
+    hidScanInput();
+
+    const u64 held = hidKeysHeld(CONTROLLER_P1_AUTO);
+    const HidAnalogStickState left =
+        hidJoystickRead(CONTROLLER_P1_AUTO, JOYSTICK_LEFT);
+    const HidAnalogStickState right =
+        hidJoystickRead(CONTROLLER_P1_AUTO, JOYSTICK_RIGHT);
+
+    constexpr float kStickMax = 32767.0f;
+    constexpr float kDeadzone = 0.22f;
+    constexpr float kMouseSensitivity = 10.0f;
+
+    const float lx =
+        static_cast<float>(left.x) / kStickMax;
+    const float ly =
+        static_cast<float>(left.y) / kStickMax;
+    const float rx =
+        static_cast<float>(right.x) / kStickMax;
+    const float ry =
+        static_cast<float>(right.y) / kStickMax;
+
+    updateMappedKey(lx < -kDeadzone, g_a_down, 29); // Android KEYCODE_A
+    updateMappedKey(lx >  kDeadzone, g_d_down, 32); // Android KEYCODE_D
+    updateMappedKey(ly >  kDeadzone, g_w_down, 51); // Android KEYCODE_W
+    updateMappedKey(ly < -kDeadzone, g_s_down, 47); // Android KEYCODE_S
+
+    updateMappedMouseButton(
+        (held & HidNpadButton_ZL) != 0, g_zl_down, 1);
+    updateMappedMouseButton(
+        (held & HidNpadButton_ZR) != 0, g_zr_down, 2);
+
+    if (g_guest_mouse &&
+        (std::fabs(rx) > kDeadzone || std::fabs(ry) > kDeadzone)) {
+        g_guest_mouse(nullptr, nullptr, 0, 2,
+                      rx * kMouseSensitivity,
+                      -ry * kMouseSensitivity,
+                      1);
+    }
+}
+
+} // namespace
 
 static EGLBoolean w_eglSwapBuffers(EGLDisplay d, EGLSurface s) {
-    ++g_frame_debug_swaps;
+    compatPollSwitchInput();
 
-    EGLint surface_width = 0;
-    EGLint surface_height = 0;
-    if (d != EGL_NO_DISPLAY && s != EGL_NO_SURFACE) {
-        (void)eglQuerySurface(d, s, EGL_WIDTH, &surface_width);
-        (void)eglQuerySurface(d, s, EGL_HEIGHT, &surface_height);
-    }
-
-    GLint viewport[4] = {0, 0, 0, 0};
-    GLint framebuffer = 0;
-    GLint current_program = 0;
-    glGetIntegerv(GL_VIEWPORT, viewport);
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
-    glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
-
-    const EGLBoolean ok =
-        (d != EGL_NO_DISPLAY && s != EGL_NO_SURFACE)
-            ? eglSwapBuffers(d, s)
-            : EGL_FALSE;
-
-    const GLenum gl_error = glGetError();
-    frameDebugLogFmt(
-        "EGL swap[%u]: result=%d display=%p surface=%p size=%dx%d "
-        "viewport=%d,%d %dx%d fbo=%d program=%d glerr=0x%x eglerr=0x%x",
-        g_frame_debug_swaps,
-        ok == EGL_TRUE ? 1 : 0,
-        (void*)d, (void*)s,
-        surface_width, surface_height,
-        viewport[0], viewport[1], viewport[2], viewport[3],
-        framebuffer, current_program,
-        (unsigned)gl_error, (unsigned)eglGetError());
-
-    if (g_frame_debug_swaps >= 16) {
-        fclose(g_frame_debug_log);
-        g_frame_debug_log = nullptr;
-    }
-
-    return ok;
+    return (d != EGL_NO_DISPLAY && s != EGL_NO_SURFACE)
+        ? eglSwapBuffers(d, s)
+        : EGL_FALSE;
 }
 
 // XRenderOGL resolves a number of legacy/extension GL entry points at runtime.
