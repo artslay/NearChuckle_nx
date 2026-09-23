@@ -1789,6 +1789,14 @@ static bool pakReadEntryToMemory(const std::string& pakPath,
 
 static bool pakExtractEntry(const std::string& pakPath, const std::string& wanted,
                             const std::string& outPath) {
+    // Virtual PAK I/O test: never materialize a PAK entry onto the SD card.
+    // All normal runtime reads must go through tryOpenFromPaks()/VirtualPakFile.
+    // Keep this legacy extraction helper present for call-site compatibility,
+    // but make every extraction attempt fail without touching the filesystem.
+    compatLogFmt("PAK MATERIALIZE BLOCKED: %s <- %s -> %s",
+                 wanted.c_str(), pakPath.c_str(), outPath.c_str());
+    return false;
+
     const std::string normalizedWanted = pakNormalizeName(wanted.c_str());
     PakEntryMeta meta;
     if (!pakFindEntryCached(pakPath, wanted, meta))
