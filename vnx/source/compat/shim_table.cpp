@@ -2724,6 +2724,20 @@ static DIR* stub_opendir(const char* path) {
 
     rememberActiveLevelPak(ioPath);
 
+    // A PAK path is a regular file, never a directory. CryPak sometimes probes
+    // it with opendir() before opening the archive; do not run the expensive
+    // virtual-directory scan for that known-invalid operation.
+    if (ioPath) {
+        const size_t len = std::strlen(ioPath);
+        if (len >= 4 &&
+            std::tolower((unsigned char)ioPath[len - 4]) == '.' &&
+            std::tolower((unsigned char)ioPath[len - 3]) == 'p' &&
+            std::tolower((unsigned char)ioPath[len - 2]) == 'a' &&
+            std::tolower((unsigned char)ioPath[len - 1]) == 'k') {
+            return nullptr;
+        }
+    }
+
     if (path && ioPathStorage != path)
     // Shader directories are often present as empty loose mount points while
     // their real children live in FCData PAKs. Prefer the merged virtual view
