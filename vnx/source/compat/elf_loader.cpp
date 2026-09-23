@@ -16,6 +16,7 @@ extern void compatLogFmt(const char* fmt, ...);
 extern void compatLogFlush();
 extern void compatUiLog(const char* msg);
 extern void compatUiSetPct(int pct);
+extern "C" unsigned compatGuestGetFileSize(void* self, const char* path, unsigned flags);
 
 // ─── Shared crash recovery ────────────────────────────────────────────────────
 // libnx's default exception stack is 0x400 — one kilobyte. Our handler runs on
@@ -1791,6 +1792,71 @@ static bool patchFarCrySetGlobalTagHandlerInt(LoadedSo* so, uint8_t* stage_base,
 // helper entry point to return the real size from that layer. This also removes
 // the old BRK/CBNZ experiment that treated a valid virtual PAK fopen as a
 // failed file.
+
+/*
+ * CRefStreamEngine::GetFileSize() is a C++ member function:
+ *   x0 = this
+ *   x1 = const char* path
+ *   x2/w2 = unsigned flags
+ *
+ * The previous A/B hook used a helper with the wrong ABI and therefore treated
+ * x0 (the CRefStreamEngine object) as the filename. Keep the member ABI intact
+ * and forward x1 to the Switch virtual filesystem.
+ */
+static bool patchFarCryGetFileSize(LoadedSo* so, uint8_t* stage_base,
+                                   uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* base = std::strrchr(so->path.c_str(), '/');
+    base = base ? base + 1 : so->path.c_str();
+    if (std::strcmp(base, "libCrySystem.so") != 0)
+        return false;
+
+    constexpr const char* kSym =
+        "_ZN16CRefStreamEngine11GetFileSizeEPKcj";
+
+    void* fn = so->findSym(kSym);
+    if (!fn) {
+        compatLogFmt("FARCRY GETFILESIZE: symbol not found: %s", kSym);
+        return false;
+    }
+
+    const uintptr_t imageBase = reinterpret_cast<uintptr_t>(so->base);
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(fn);
+    if (addr < imageBase || addr - imageBase + 16 > alloc_size) {
+        compatLogFmt(
+            "FARCRY GETFILESIZE: symbol outside image fn=%p base=%p size=0x%llx",
+            fn, reinterpret_cast<void*>(imageBase),
+            (unsigned long long)alloc_size);
+        return false;
+    }
+
+    uint32_t* insn = reinterpret_cast<uint32_t*>(
+        stage_base + min_vaddr + (addr - imageBase));
+
+    const uint64_t helper =
+        reinterpret_cast<uint64_t>(&compatGuestGetFileSize);
+
+    // ldr x16, #+8
+    // br  x16
+    // .quad helper
+    //
+    // x0 (this) and x1 (path) pass through unchanged; the helper returns
+    // the file size in w0 exactly as the member function does.
+    insn[0] = 0x58000050u;
+    insn[1] = 0xd61f0200u;
+    std::memcpy(&insn[2], &helper, sizeof(helper));
+    armICacheInvalidate(insn, 16);
+
+    compatLogFmt(
+        "FARCRY GETFILESIZE: patched %s +0x%llx ABI(this,x1=path,w2=flags) -> %p",
+        kSym,
+        (unsigned long long)(addr - imageBase),
+        reinterpret_cast<void*>(helper));
+    return true;
+}
+
 // ─── Per-game binary quirk patches ─────────────────────────────────────────────
 // The actual fixups live in source/compat/games/ (one file per title), reached
 // through compat/games.h, so game-specific patches stay isolated from the shared
@@ -1835,6 +1901,9 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
         // input to reach the game.
         compatLog("FARCRY SYSTEM UPDATE A/B: disabled; using original CSystem::Update");
 
+        if (!patchFarCryGetFileSize(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY GETFILESIZE: patch not applied");
+        return;
     }
 
     if (std::strcmp(base, "libCryGame.so") == 0) {
