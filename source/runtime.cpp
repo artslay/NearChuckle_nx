@@ -17,6 +17,8 @@ static bool g_log_initialized = false;
 static bool g_log_closed = false;
 static LoadedSo* g_game_so = nullptr;
 
+extern "C" void compatFrameDebugClose();
+
 static bool g_boot_console = false;
 static const devoptab_t* g_boot_stdout_dotab = nullptr;
 
@@ -178,8 +180,10 @@ void compatLog(const char* msg) {
     if (!suppressCompatShaderDiag(msg))
         log_write(msg);
 
-    if (main_loop)
+    if (main_loop) {
         log_close_locked();
+        compatFrameDebugClose();
+    }
 
     mutexUnlock(&g_log_lock);
 
@@ -208,8 +212,10 @@ void compatLogRaw(const char* msg) {
     bootUiWrite(msg);
     log_write(msg);
 
-    if (main_loop)
+    if (main_loop) {
         log_close_locked();
+        compatFrameDebugClose();
+    }
 
     mutexUnlock(&g_log_lock);
 
