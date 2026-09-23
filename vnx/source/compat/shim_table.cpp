@@ -6203,6 +6203,7 @@ static const ShimEntry g_shims[] = {
     {"strcmp",      (void*)strcmp},
     {"strncmp",     (void*)strncmp},
     {"strcasecmp",  (void*)stub_strcasecmp},
+    {"__strcasecmp", (void*)stub_strcasecmp},
     {"strncasecmp", (void*)strncasecmp},
     {"strcpy",      (void*)strcpy},
     {"strncpy",     (void*)strncpy},
