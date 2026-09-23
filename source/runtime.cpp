@@ -296,7 +296,7 @@ static void switchInputResolveCallbacks() {
     }
 }
 
-void compatPollSwitchInput() {
+static void pollSwitchInputInternal() {
     switchInputResolveCallbacks();
     if (!g_sdl_key_down || !g_sdl_key_up)
         return;
@@ -342,6 +342,10 @@ void compatPollSwitchInput() {
 }
 
 } // namespace
+
+void compatPollSwitchInput() {
+    pollSwitchInputInternal();
+}
 
 void compatLog(const char* msg) {
     const bool main_loop = is_main_loop_marker(msg);
