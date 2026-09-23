@@ -4358,11 +4358,28 @@ static bool isShaderPathForDiag(const char* path) {
            p == "/shaders";
 }
 
+// Android/Bionic AArch64 struct dirent layout:
+// d_ino=0, d_off=8, d_reclen=16, d_type=18, d_name=19.
+// The Switch/newlib struct dirent has a different layout, so an Android
+// library reading d_name from the native object sees padding/empty bytes.
+struct AndroidDirentCompat {
+    uint64_t d_ino = 0;
+    int64_t d_off = 0;
+    uint16_t d_reclen = 0;
+    uint8_t d_type = 0;
+    char d_name[256] = {};
+};
+
+static_assert(offsetof(AndroidDirentCompat, d_name) == 19,
+              "Android dirent d_name offset must be 19");
+static_assert(sizeof(AndroidDirentCompat) == 280,
+              "Android dirent size must be 280");
+
 struct VirtualPakDir {
     std::string directory;
     std::vector<std::string> names;
     size_t pos = 0;
-    struct dirent current = {};
+    AndroidDirentCompat current = {};
 };
 
 static Mutex g_vpak_dir_lock;
@@ -4534,8 +4551,11 @@ static struct dirent* vpakDirRead(DIR* dir) {
     const size_t copy = name.size() < maxName ? name.size() : maxName;
     std::memcpy(state->current.d_name, name.c_str(), copy);
     state->current.d_name[copy] = '\0';
+    state->current.d_type = DT_REG;
+    state->current.d_reclen =
+        (uint16_t)((offsetof(AndroidDirentCompat, d_name) + copy + 1 + 7) & ~7u);
     mutexUnlock(&g_vpak_dir_lock);
-    return &state->current;
+    return reinterpret_cast<struct dirent*>(&state->current);
 }
 
 static int vpakDirClose(DIR* dir) {
@@ -4555,6 +4575,7 @@ static int vpakDirClose(DIR* dir) {
 
 static std::unordered_map<DIR*, std::string> g_readdirPaths;
 static std::unordered_map<DIR*, unsigned> g_readdirCounts;
+static std::unordered_map<DIR*, AndroidDirentCompat> g_readdirCompat;
 
 // Android's CXGame::GetPlayerProfilePath() checks dirent::d_type directly.
 // newlib on Switch can return DT_UNKNOWN for a valid filesystem entry, which
@@ -4600,8 +4621,23 @@ static struct dirent* stub_readdir(DIR* dir) {
     if (it != g_readdirPaths.end()) {
         fixDirentType(it->second, ent);
 
+        AndroidDirentCompat& compat = g_readdirCompat[dir];
+        std::memset(&compat, 0, sizeof(compat));
+        compat.d_ino = (uint64_t)ent->d_ino;
+        compat.d_off = (int64_t)ent->d_off;
+        compat.d_type = (uint8_t)ent->d_type;
+
+        const size_t srcLen = std::strlen(ent->d_name);
+        const size_t maxName = sizeof(compat.d_name) - 1;
+        const size_t copy = srcLen < maxName ? srcLen : maxName;
+        std::memcpy(compat.d_name, ent->d_name, copy);
+        compat.d_name[copy] = '\0';
+        compat.d_reclen =
+            (uint16_t)((offsetof(AndroidDirentCompat, d_name) + copy + 1 + 7) & ~7u);
+
         unsigned& count = g_readdirCounts[dir];
         ++count;
+        return reinterpret_cast<struct dirent*>(&compat);
     }
     return ent;
 }
@@ -4614,6 +4650,7 @@ static int stub_closedir(DIR* dir) {
 
     g_readdirPaths.erase(dir);
     g_readdirCounts.erase(dir);
+    g_readdirCompat.erase(dir);
     return ::closedir(dir);
 }
 
@@ -4636,8 +4673,23 @@ static struct dirent* stub_readdir64(DIR* dir) {
     if (it != g_readdirPaths.end()) {
         fixDirentType(it->second, ent);
 
+        AndroidDirentCompat& compat = g_readdirCompat[dir];
+        std::memset(&compat, 0, sizeof(compat));
+        compat.d_ino = (uint64_t)ent->d_ino;
+        compat.d_off = (int64_t)ent->d_off;
+        compat.d_type = (uint8_t)ent->d_type;
+
+        const size_t srcLen = std::strlen(ent->d_name);
+        const size_t maxName = sizeof(compat.d_name) - 1;
+        const size_t copy = srcLen < maxName ? srcLen : maxName;
+        std::memcpy(compat.d_name, ent->d_name, copy);
+        compat.d_name[copy] = '\0';
+        compat.d_reclen =
+            (uint16_t)((offsetof(AndroidDirentCompat, d_name) + copy + 1 + 7) & ~7u);
+
         unsigned& count = g_readdirCounts[dir];
         ++count;
+        return reinterpret_cast<struct dirent*>(&compat);
     }
     return ent;
 }
