@@ -1151,6 +1151,7 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
     Ref* selected_name = nullptr;
     Ref* selected_zero = nullptr;
     size_t candidate_count = 0;
+    size_t best_distance = SIZE_MAX;
     static Ref zero_holder;
 
     for (Ref& name_ref : names) {
@@ -1161,7 +1162,10 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
 
         // Inspect one small basic-block-sized window around the name reference.
         // CreateVariable(name, default, flags, help) receives name in x0 and
-        // default in x1. The compiler may schedule those loads in either order.
+        // default in x1. The release binary can contain several literal "0"
+        // references in the same function, so "exactly one" is not a safe
+        // requirement. Select the closest x1 -> "0" reference to the
+        // r_DisplayInfo name reference instead.
         const size_t begin = name_off > 0x80 ? name_off - 0x80 : 0;
         const size_t finish =
             name_off + 0x100 < alloc_size ? name_off + 0x100 : alloc_size - 8;
@@ -1181,17 +1185,23 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
                 continue;
 
             ++candidate_count;
-            zero_holder = zero_ref;
-            selected_name = &name_ref;
-            selected_zero = &zero_holder;
+            if (distance < best_distance) {
+                best_distance = distance;
+                zero_holder = zero_ref;
+                selected_name = &name_ref;
+                selected_zero = &zero_holder;
+            }
         }
     }
 
-    if (candidate_count != 1 || !selected_name || !selected_zero) {
-        compatLogFmt(
-            "FARCRY DISPLAYINFO PATCH: candidate xrefs names=%llu zero_x1=%llu",
-            (unsigned long long)names.size(),
-            (unsigned long long)candidate_count);
+    compatLogFmt(
+        "FARCRY DISPLAYINFO PATCH: candidate xrefs names=%llu zero_x1=%llu best_distance=0x%llx",
+        (unsigned long long)names.size(),
+        (unsigned long long)candidate_count,
+        (unsigned long long)(best_distance == SIZE_MAX ? 0 : best_distance));
+
+    if (!selected_name || !selected_zero) {
+        compatLog("FARCRY DISPLAYINFO PATCH: no usable x1 -> \"0\" reference found");
         return false;
     }
 
