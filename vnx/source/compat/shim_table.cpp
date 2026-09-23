@@ -100,8 +100,6 @@ static bool resolvePathCaseInsensitive(const char* input, std::string& resolved)
 
 static bool compatIsPakPath(const char* path);
 
-// Post-main-loop GL trace counter.
-static unsigned int g_gl_call_trace_count = 0;
 static bool materializeCommonSubroutinesScript();
 static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
@@ -3132,9 +3130,10 @@ static EGLBoolean w_eglMakeCurrent(EGLDisplay d, EGLSurface draw, EGLSurface rea
 
 static FILE* g_frame_debug_log = nullptr;
 static unsigned int g_frame_debug_swaps = 0;
+static bool g_frame_debug_closed = false;
 
 static void frameDebugLogFmt(const char* fmt, ...) {
-    if (!fmt)
+    if (!fmt || g_frame_debug_closed)
         return;
 
     if (!g_frame_debug_log) {
@@ -3155,6 +3154,10 @@ static void frameDebugLogFmt(const char* fmt, ...) {
 }
 
 extern "C" void compatFrameDebugClose() {
+    if (g_frame_debug_closed)
+        return;
+
+    g_frame_debug_closed = true;
     if (!g_frame_debug_log)
         return;
 
@@ -3814,93 +3817,6 @@ static int  stub_dl_iterate_phdr(void*, void*) { return 0; }
 static void frameDebugLogFmt(const char* fmt, ...);
 
 
-static bool shouldTraceGlCall() {
-    return g_gl_call_trace_count < 48;
-}
-
-#define TRACE_GL_CALL(fmt, ...) \
-    do { \
-        if (shouldTraceGlCall()) { \
-            ++g_gl_call_trace_count; \
-            frameDebugLogFmt("GL CALL[%u]: " fmt, g_gl_call_trace_count, ##__VA_ARGS__); \
-        } \
-    } while (0)
-
-static void w_glBegin(GLenum mode) {
-    TRACE_GL_CALL("glBegin mode=0x%x", (unsigned)mode);
-    glBegin(mode);
-}
-
-static void w_glEnd() {
-    TRACE_GL_CALL("glEnd");
-    glEnd();
-}
-
-static void w_glCallList(GLuint list) {
-    TRACE_GL_CALL("glCallList list=%u", (unsigned)list);
-    glCallList(list);
-}
-
-static void w_glMatrixMode(GLenum mode) {
-    TRACE_GL_CALL("glMatrixMode mode=0x%x", (unsigned)mode);
-    glMatrixMode(mode);
-}
-
-static void w_glLoadIdentity() {
-    TRACE_GL_CALL("glLoadIdentity");
-    glLoadIdentity();
-}
-
-static void w_glBindTexture(GLenum target, GLuint texture) {
-    TRACE_GL_CALL("glBindTexture target=0x%x texture=%u",
-                  (unsigned)target, (unsigned)texture);
-    glBindTexture(target, texture);
-}
-
-static void w_glEnable(GLenum cap) {
-    TRACE_GL_CALL("glEnable cap=0x%x", (unsigned)cap);
-    glEnable(cap);
-}
-
-static void w_glDisable(GLenum cap) {
-    TRACE_GL_CALL("glDisable cap=0x%x", (unsigned)cap);
-    glDisable(cap);
-}
-
-static void w_glBindBuffer(GLenum target, GLuint buffer) {
-    TRACE_GL_CALL("glBindBuffer target=0x%x buffer=%u",
-                  (unsigned)target, (unsigned)buffer);
-    glBindBuffer(target, buffer);
-}
-
-static void w_glEnableClientState(GLenum array) {
-    TRACE_GL_CALL("glEnableClientState array=0x%x", (unsigned)array);
-    glEnableClientState(array);
-}
-
-static void w_glDisableClientState(GLenum array) {
-    TRACE_GL_CALL("glDisableClientState array=0x%x", (unsigned)array);
-    glDisableClientState(array);
-}
-
-static void w_glVertexPointer(GLint size, GLenum type, GLsizei stride,
-                              const void* pointer) {
-    TRACE_GL_CALL("glVertexPointer size=%d type=0x%x stride=%d ptr=%p",
-                  size, (unsigned)type, stride, pointer);
-    glVertexPointer(size, type, stride, pointer);
-}
-
-static void w_glColor4f(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha) {
-    TRACE_GL_CALL("glColor4f %.3f %.3f %.3f %.3f",
-                  (double)red, (double)green, (double)blue, (double)alpha);
-    glColor4f(red, green, blue, alpha);
-}
-
-static void w_glTexCoord2f(GLfloat s, GLfloat t) {
-    TRACE_GL_CALL("glTexCoord2f %.3f %.3f", (double)s, (double)t);
-    glTexCoord2f(s, t);
-}
-
 static void w_glViewport(GLint x, GLint y, GLsizei w, GLsizei h) {
     const Presentation& p = orientGet();
     glViewport(x + p.content_x, y + p.content_y, w, h);
@@ -3934,78 +3850,24 @@ static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void
 
 static void w_glClear(GLbitfield mask) {
     static unsigned int clear_trace_count = 0;
-    if (clear_trace_count >= 8)
-        return glClear(mask);
-
-    const unsigned int trace = ++clear_trace_count;
-    frameDebugLogFmt("GL CLEAR ENTER[%u]: mask=0x%x",
-                     trace, (unsigned)mask);
+    if (clear_trace_count < 8) {
+        ++clear_trace_count;
+        frameDebugLogFmt("GL CLEAR[%u]: mask=0x%x", clear_trace_count, (unsigned)mask);
+    }
 
     const Presentation& p = orientGet();
-    frameDebugLogFmt(
-        "GL CLEAR ORIENT[%u]: pillarboxed=%d content=%d,%d %dx%d",
-        trace, p.pillarboxed ? 1 : 0,
-        p.content_x, p.content_y, p.content_w, p.content_h);
-
-    if (!p.pillarboxed) {
-        frameDebugLogFmt("GL CLEAR CALL[%u]: glClear mask=0x%x",
-                         trace, (unsigned)mask);
-
-        // Split the first clear into color/depth operations so the trace can
-        // identify whether Zink/NVK stalls on one particular buffer. The
-        // normal combined path remains for any other clear bits.
-        const GLbitfield split_mask =
-            mask & (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        const GLbitfield other_mask =
-            mask & ~(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        if (split_mask & GL_COLOR_BUFFER_BIT) {
-            frameDebugLogFmt("GL CLEAR COLOR BEFORE[%u]", trace);
-            glClear(GL_COLOR_BUFFER_BIT);
-            frameDebugLogFmt("GL CLEAR COLOR AFTER[%u] glerr=0x%x",
-                             trace, (unsigned)glGetError());
-        }
-
-        if (split_mask & GL_DEPTH_BUFFER_BIT) {
-            frameDebugLogFmt("GL CLEAR DEPTH BEFORE[%u]", trace);
-            glClear(GL_DEPTH_BUFFER_BIT);
-            frameDebugLogFmt("GL CLEAR DEPTH AFTER[%u] glerr=0x%x",
-                             trace, (unsigned)glGetError());
-        }
-
-        if (other_mask) {
-            frameDebugLogFmt("GL CLEAR OTHER BEFORE[%u]: mask=0x%x",
-                             trace, (unsigned)other_mask);
-            glClear(other_mask);
-            frameDebugLogFmt("GL CLEAR OTHER AFTER[%u] glerr=0x%x",
-                             trace, (unsigned)glGetError());
-        }
-
-        frameDebugLogFmt("GL CLEAR EXIT[%u]", trace);
-        return;
-    }
+    if (!p.pillarboxed) { glClear(mask); return; }
 
     // Confine the clear, then put the scissor box back exactly as the game left
     // it — it may be mid-frame and relying on it.
     GLboolean had = glIsEnabled(GL_SCISSOR_TEST);
-    GLint box[4];
+    GLint     box[4];
     glGetIntegerv(GL_SCISSOR_BOX, box);
-    frameDebugLogFmt(
-        "GL CLEAR SCISSOR[%u]: had=%d box=%d,%d %dx%d",
-        trace, had ? 1 : 0, box[0], box[1], box[2], box[3]);
-
     glEnable(GL_SCISSOR_TEST);
     glScissor(p.content_x, p.content_y, p.content_w, p.content_h);
-    frameDebugLogFmt("GL CLEAR PILLAR BEFORE[%u]: mask=0x%x",
-                     trace, (unsigned)mask);
     glClear(mask);
-    frameDebugLogFmt("GL CLEAR PILLAR AFTER[%u] glerr=0x%x",
-                     trace, (unsigned)glGetError());
-
     glScissor(box[0], box[1], box[2], box[3]);
     if (!had) glDisable(GL_SCISSOR_TEST);
-
-    frameDebugLogFmt("GL CLEAR EXIT[%u]", trace);
 }
 
 
@@ -7232,10 +7094,10 @@ static const ShimEntry g_shims[] = {
     {"glActiveTexture",     (void*)glActiveTexture},
     {"glAttachShader",      (void*)glAttachShader},
     {"glBindAttribLocation",(void*)glBindAttribLocation},
-    {"glBindBuffer",        (void*)w_glBindBuffer},
+    {"glBindBuffer",        (void*)glBindBuffer},
     {"glBindFramebuffer",   (void*)glBindFramebuffer},
     {"glBindRenderbuffer",  (void*)glBindRenderbuffer},
-    {"glBindTexture",       (void*)w_glBindTexture},
+    {"glBindTexture",       (void*)glBindTexture},
     {"glBlendColor",        (void*)glBlendColor},
     {"glBlendEquation",     (void*)glBlendEquation},
     {"glBlendEquationSeparate",(void*)glBlendEquationSeparate},
@@ -7267,11 +7129,11 @@ static const ShimEntry g_shims[] = {
     {"glDepthMask",         (void*)glDepthMask},
     {"glDepthRangef",       (void*)glDepthRangef},
     {"glDetachShader",      (void*)glDetachShader},
-    {"glDisable",           (void*)w_glDisable},
+    {"glDisable",           (void*)glDisable},
     {"glDisableVertexAttribArray",(void*)glDisableVertexAttribArray},
     {"glDrawArrays",        (void*)w_glDrawArrays},
     {"glDrawElements",      (void*)w_glDrawElements},
-    {"glEnable",            (void*)w_glEnable},
+    {"glEnable",            (void*)glEnable},
     {"glEnableVertexAttribArray",(void*)glEnableVertexAttribArray},
     {"glFinish",            (void*)glFinish},
     {"glFlush",             (void*)glFlush},
@@ -7850,7 +7712,7 @@ static const ShimEntry g_shims[] = {
     {"glActiveStencilFaceEXT", (void*)shim_glActiveStencilFaceEXT},
     {"glAlphaFunc", (void*)glAlphaFunc},
     {"glAreTexturesResident", (void*)glAreTexturesResident},
-    {"glBegin", (void*)w_glBegin},
+    {"glBegin", (void*)glBegin},
     {"glBindBufferARB", (void*)shim_glBindBufferARB},
     {"glBufferDataARB", (void*)shim_glBufferDataARB},
     {"glBufferSubDataARB", (void*)shim_glBufferSubDataARB},
@@ -7880,17 +7742,17 @@ static const ShimEntry g_shims[] = {
     {"glClipPlane", (void*)glClipPlane},
     {"glColor3f", (void*)glColor3f},
     {"glColor3fv", (void*)glColor3fv},
-    {"glColor4f", (void*)w_glColor4f},
+    {"glColor4f", (void*)glColor4f},
     {"glColor4fv", (void*)glColor4fv},
     {"glColorPointer", (void*)glColorPointer},
     {"glColorTableEXT", (void*)shim_glColorTableEXT},
     {"glCompressedTexImage2DARB", (void*)shim_glCompressedTexImage2DARB},
     {"glCompressedTexSubImage2DARB", (void*)shim_glCompressedTexSubImage2DARB},
     {"glDepthRange", (void*)glDepthRange},
-    {"glDisableClientState", (void*)w_glDisableClientState},
+    {"glDisableClientState", (void*)glDisableClientState},
     {"glDrawBuffer", (void*)glDrawBuffer},
-    {"glEnableClientState", (void*)w_glEnableClientState},
-    {"glEnd", (void*)w_glEnd},
+    {"glEnableClientState", (void*)glEnableClientState},
+    {"glEnd", (void*)glEnd},
     {"glFinishFenceNV", (void*)shim_glFinishFenceNV},
     {"glFogf", (void*)glFogf},
     {"glFogfv", (void*)glFogfv},
@@ -7905,11 +7767,11 @@ static const ShimEntry g_shims[] = {
     {"glLightModeli", (void*)glLightModeli},
     {"glLightf", (void*)glLightf},
     {"glLightfv", (void*)glLightfv},
-    {"glLoadIdentity", (void*)w_glLoadIdentity},
+    {"glLoadIdentity", (void*)glLoadIdentity},
     {"glLoadMatrixf", (void*)glLoadMatrixf},
     {"glMaterialf", (void*)glMaterialf},
     {"glMaterialfv", (void*)glMaterialfv},
-    {"glMatrixMode", (void*)w_glMatrixMode},
+    {"glMatrixMode", (void*)glMatrixMode},
     {"glMultMatrixf", (void*)glMultMatrixf},
     {"glNormalPointer", (void*)glNormalPointer},
     {"glOrtho", (void*)glOrtho},
@@ -7924,7 +7786,7 @@ static const ShimEntry g_shims[] = {
     {"glStencilFuncSeparateATI", (void*)shim_glStencilFuncSeparateATI},
     {"glStencilOpSeparateATI", (void*)shim_glStencilOpSeparateATI},
     {"glTestFenceNV", (void*)shim_glTestFenceNV},
-    {"glTexCoord2f", (void*)w_glTexCoord2f},
+    {"glTexCoord2f", (void*)glTexCoord2f},
     {"glTexCoord3f", (void*)glTexCoord3f},
     {"glTexCoordPointer", (void*)glTexCoordPointer},
     {"glTexEnvf", (void*)glTexEnvf},
@@ -7939,7 +7801,7 @@ static const ShimEntry g_shims[] = {
     {"glVertex2i", (void*)glVertex2i},
     {"glVertex3f", (void*)glVertex3f},
     {"glVertex3fv", (void*)glVertex3fv},
-    {"glVertexPointer", (void*)w_glVertexPointer},
+    {"glVertexPointer", (void*)glVertexPointer},
     {nullptr, nullptr}
 };
 
