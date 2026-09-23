@@ -5,6 +5,7 @@
 #include "compat/obb.h"
 #include "compat/apkcache.h"
 #include <switch.h>
+#include <switch/services/hid.h>
 #include <GLES2/gl2.h>
 #include <GLES3/gl3.h>
 #include <GL/gl.h>
