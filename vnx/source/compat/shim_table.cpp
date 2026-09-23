@@ -99,6 +99,9 @@ static std::string asciiLower(std::string value);
 static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
 
 static bool compatIsPakPath(const char* path);
+
+// Post-main-loop GL trace counter.
+static unsigned int g_gl_call_trace_count = 0;
 static bool materializeCommonSubroutinesScript();
 static bool patchCommonSubroutinesIntoShaderMacro(const char* macroPath,
                                                   const char* programPath);
@@ -3801,7 +3804,6 @@ static int  stub_dl_iterate_phdr(void*, void*) { return 0; }
 // the clear to the content rect is what actually keeps the bars black.
 static void frameDebugLogFmt(const char* fmt, ...);
 
-static unsigned int g_gl_call_trace_count = 0;
 
 static bool shouldTraceGlCall() {
     return g_gl_call_trace_count < 48;
