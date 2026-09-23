@@ -3746,10 +3746,6 @@ static bool w_SDL_GL_SwapWindow(void* window) {
     static unsigned int swap_count = 0;
     ++swap_count;
 
-    // frame_debug.log survives the startup-log shutdown, so record entry here
-    // before any compatibility logger path can be closed or blocked.
-    frameDebugLogFmt("SDL SWAP ENTER[%u]: window=%p", swap_count, window);
-
     // Do not call the guest Android SDL_GL_SwapWindow(). Its Android backend can
     // block in the Java/UI presentation path, which is not present on Switch.
     // CryEngine is already rendering into the active EGL surface, so direct
@@ -3861,16 +3857,6 @@ static int w_SDL_GL_MakeCurrent(void* window, void* context) {
                          reinterpret_cast<void*>(p));
         }
 
-        // frame_debug.log must exist even when the engine never reaches its
-        // presentation path. This is the persistent A/B marker for the next
-        // stage: INIT proves the current EGL context is active, while
-        // subsequent SWAP lines prove that CryEngine actually presents frames.
-        frameDebugLogFmt(
-            "FRAME DEBUG INIT: window=%p context=%p display=%p draw=%p read=%p",
-            window, context,
-            (void*)eglGetCurrentDisplay(),
-            (void*)eglGetCurrentSurface(EGL_DRAW),
-            (void*)eglGetCurrentSurface(EGL_READ));
     }
 
     return ok ? 1 : 0;
@@ -4190,9 +4176,6 @@ static int  stub_dl_iterate_phdr(void*, void*) { return 0; }
 // and would wipe the black bars with the game's background colour, which is
 // how a "letterboxed" game ends up with coloured bars that flicker. Scissoring
 // the clear to the content rect is what actually keeps the bars black.
-static void frameDebugLogFmt(const char* fmt, ...);
-
-
 static void w_glViewport(GLint x, GLint y, GLsizei w, GLsizei h) {
     const Presentation& p = orientGet();
     glViewport(x + p.content_x, y + p.content_y, w, h);
@@ -4204,32 +4187,14 @@ static void w_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
 }
 
 static void w_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
-    static unsigned int draw_arrays_trace_count = 0;
-    if (draw_arrays_trace_count < 8) {
-        ++draw_arrays_trace_count;
-        frameDebugLogFmt("GL DRAWARRAYS[%u]: mode=0x%x first=%d count=%d",
-                         draw_arrays_trace_count, (unsigned)mode, first, count);
-    }
     glDrawArrays(mode, first, count);
 }
 
 static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
-    static unsigned int draw_elements_trace_count = 0;
-    if (draw_elements_trace_count < 8) {
-        ++draw_elements_trace_count;
-        frameDebugLogFmt("GL DRAWELEMENTS[%u]: mode=0x%x count=%d type=0x%x indices=%p",
-                         draw_elements_trace_count, (unsigned)mode, count,
-                         (unsigned)type, indices);
-    }
     glDrawElements(mode, count, type, indices);
 }
 
 static void w_glClear(GLbitfield mask) {
-    static unsigned int clear_trace_count = 0;
-    if (clear_trace_count < 8) {
-        ++clear_trace_count;
-        frameDebugLogFmt("GL CLEAR[%u]: mask=0x%x", clear_trace_count, (unsigned)mask);
-    }
 
     const Presentation& p = orientGet();
     if (!p.pillarboxed) { glClear(mask); return; }
