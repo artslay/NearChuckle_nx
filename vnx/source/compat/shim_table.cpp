@@ -331,16 +331,6 @@ static char* stub_realpath(const char* p, char* out) {
         return writeCanonical(cwd);
     }
 
-    // Wildcards are deliberately not resolved. CryPak passes patterns such as
-    // "FCData/*.pak" here; returning failure makes AdjustFileName() construct
-    // the absolute wildcard path from realpath(".").
-    if (strpbrk(p, "*?[]") != nullptr) {
-        if (!callerOwnsBuffer)
-            free(out);
-        errno = ENOENT;
-        return nullptr;
-    }
-
     // Shader cache files must never be considered by realpath() in this
     // experiment, even when an older run already materialized one on disk.
     // The previous check lived only in the PAK fallback below, so stale
@@ -352,6 +342,45 @@ static char* stub_realpath(const char* p, char* out) {
             free(out);
         errno = ENOENT;
         // Shader cache misses are intentionally silent in the compatibility log.
+        return nullptr;
+    }
+
+    // Android CryPak passes wildcard paths through AdjustFileName() before
+    // OpenPacksCommon(). A wildcard itself is not a filesystem object, so only
+    // resolve the existing parent directory and preserve the wildcard tail.
+    // This also fixes case-sensitive Switch paths such as FCData/*.pak without
+    // renaming the directory on SD.
+    if (strpbrk(p, "*?[]") != nullptr) {
+        const std::string normalized = normalizeSwitchFsPath(p);
+        const size_t wildcardPos = normalized.find_first_of("*?[]");
+        const size_t slashPos = normalized.rfind('/', wildcardPos);
+
+        std::string parent = slashPos == std::string::npos
+            ? std::string(".")
+            : normalized.substr(0, slashPos);
+        const std::string tail = slashPos == std::string::npos
+            ? normalized
+            : normalized.substr(slashPos + 1);
+
+        if (parent.empty())
+            parent = ".";
+
+        std::string resolvedParent;
+        if (resolvePathCaseInsensitive(parent.c_str(), resolvedParent)) {
+            std::string resolvedPattern = resolvedParent;
+            if (!resolvedPattern.empty() && resolvedPattern.back() != '/')
+                resolvedPattern += '/';
+            resolvedPattern += tail;
+            compatLogFmt("realpath WILDCARD: %s -> %s",
+                         p, resolvedPattern.c_str());
+            return writeCanonical(resolvedPattern);
+        }
+
+        if (!callerOwnsBuffer)
+            free(out);
+        errno = ENOENT;
+        compatLogFmt("realpath WILDCARD FAIL: %s (parent=%s)",
+                     p, parent.c_str());
         return nullptr;
     }
 
@@ -1366,58 +1395,6 @@ static std::string obbRemap(const char* path) {
 // PAK that is not present on the Switch filesystem. Treat every missing PAK as
 // an empty, valid ZIP archive instead of allowing the exception to escape.
 // Only read-mode opens are handled here; existing PAK files are never changed.
-static bool isPakArchivePath(const char* path) {
-    if (!path || !*path)
-        return false;
-
-    const char* base = std::strrchr(path, '/');
-    base = base ? base + 1 : path;
-
-    const size_t len = std::strlen(base);
-    return len >= 4 &&
-           std::tolower((unsigned char)base[len - 4]) == '.' &&
-           std::tolower((unsigned char)base[len - 3]) == 'p' &&
-           std::tolower((unsigned char)base[len - 2]) == 'a' &&
-           std::tolower((unsigned char)base[len - 1]) == 'k';
-}
-
-static FILE* makeEmptyPak(const char* path, const char* mode) {
-    // Standard ZIP End Of Central Directory for an archive with zero entries.
-    // CryEngine's ZipDir reader accepts PAK files through this ZIP structure.
-    static const unsigned char empty_zip_eocd[] = {
-        0x50, 0x4B, 0x05, 0x06,
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00
-    };
-
-    if (!path || !mode)
-        return nullptr;
-
-    // tmpfile() is not reliable on the Switch/newlib runtime used by this
-    // project. Create the missing archive at the exact path the game requested,
-    // then reopen it normally so ZipDir sees an ordinary file with a stable
-    // pathname and descriptor.
-    FILE* out = fopen(path, "wb");
-    if (!out)
-        return nullptr;
-
-    const size_t written = fwrite(empty_zip_eocd, 1, sizeof(empty_zip_eocd), out);
-    const int close_rc = fclose(out);
-    if (written != sizeof(empty_zip_eocd) || close_rc != 0)
-        return nullptr;
-
-    FILE* f = fopen(path, mode);
-    if (!f)
-        return nullptr;
-
-    setvbuf(f, nullptr, _IOFBF, 16 * 1024);
-    compatLogFmt("fopen FALLBACK: %s -> created empty PAK", path);
-    return f;
-}
-
 static std::string pakNormalizeName(const char* name) {
     std::string out = name ? name : "";
     for (char& c : out) {
@@ -2423,57 +2400,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 return pakFile;
             }
         }
-
-        // Missing PAKs are not fatal packaging artifacts on Switch. Return
-        // a valid zero-entry ZIP so CryPak can register the archive and continue.
-        if (mode && mode[0] == 'r' && ioPath && isPakArchivePath(ioPath)) {
-            FILE* fallback = makeEmptyPak(ioPath, mode);
-            if (fallback)
-                return fallback;
-        }
-
-        // Android Far Cry's startup code can probe packaging artifacts that
-        // are not present in the shipped Switch FCData set. These are optional
-        // empty ZIP/PAK placeholders in the Android packaging path.
-        if (mode && mode[0] == 'r' && ioPath) {
-            const std::string normalizedPath = pakNormalizeName(ioPath);
-
-            const bool startupPak0 =
-                normalizedPath == "cdata/0.pak" ||
-                normalizedPath == "fcdata/0.pak" ||
-                (normalizedPath.size() >= 12 &&
-                 normalizedPath.compare(normalizedPath.size() - 12, 12,
-                                         "/cdata/0.pak") == 0) ||
-                (normalizedPath.size() >= 13 &&
-                 normalizedPath.compare(normalizedPath.size() - 13, 13,
-                                         "/fcdata/0.pak") == 0);
-
-            const bool startupPak517 =
-                normalizedPath == "cdata/517.pak" ||
-                normalizedPath == "fcdata/517.pak" ||
-                (normalizedPath.size() >= 14 &&
-                 normalizedPath.compare(normalizedPath.size() - 14, 14,
-                                         "/cdata/517.pak") == 0) ||
-                (normalizedPath.size() >= 15 &&
-                 normalizedPath.compare(normalizedPath.size() - 15, 15,
-                                         "/fcdata/517.pak") == 0);
-
-            if (startupPak0 || startupPak517) {
-                if (normalizedPath == "cdata/0.pak" ||
-                    normalizedPath == "cdata/517.pak") {
-                    mkdir("CData", 0755);
-                }
-
-                FILE* fallback = makeEmptyPak(ioPath, mode);
-                if (fallback) {
-                    compatLogFmt("fopen FALLBACK: %s -> empty ZIP for Android startup compatibility",
-                                 ioPath);
-                    return fallback;
-                }
-            }
-        }
-
-
 
         if (videoIo)
             g_near_video_open_failed = 1;
