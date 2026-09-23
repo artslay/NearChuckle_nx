@@ -203,16 +203,16 @@ CompatLayer* compatGet() {
 
 void compatLog(const char* msg) {
     const bool main_loop = is_main_loop_marker(msg);
+    const bool suppress_pak_success = suppressSuccessfulPakDiag(msg);
 
     mutexLock(&g_log_lock);
 
-    // The Switch startup console is intentionally the complete live log until
-    // CXGame::Run enters the main game loop. Shader diagnostics are still
-    // filtered from the file log below when appropriate, but never from the
-    // visible console stream.
-    bootUiWrite(msg, main_loop);
+    // Successful PAK initialization/index messages are omitted from both the
+    // startup console and file log. PAK misses/read/open failures remain visible.
+    if (!suppress_pak_success)
+        bootUiWrite(msg, main_loop);
 
-    if (!suppressSuccessfulPakDiag(msg) &&
+    if (!suppress_pak_success &&
         !suppressCompatShaderDiag(msg))
         log_write(msg, main_loop);
 
