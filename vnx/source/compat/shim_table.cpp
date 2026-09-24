@@ -2099,6 +2099,11 @@ static bool g_global_pak_paths_ready = false;
 static std::unordered_map<std::string, PakLookupCacheEntry> g_pak_lookup_cache;
 static std::unordered_set<std::string> g_pak_lookup_misses;
 
+// CRefStreamEngine may ask for the same CAF size repeatedly. Once a file has
+// been positively resolved from a PAK, keep its size independent of subsequent
+// lookup state so a later GetFileSize() can never regress to zero.
+static std::unordered_map<std::string, uint32_t> g_caf_size_cache;
+
 static void rememberActiveLevelPak(const char* path) {
     if (!path || !*path)
         return;
@@ -2154,6 +2159,7 @@ static void rememberActiveLevelPak(const char* path) {
         g_active_level_paks.emplace_back(candidate);
         g_pak_lookup_cache.clear();
         g_pak_lookup_misses.clear();
+        g_caf_size_cache.clear();
     }
     mutexUnlock(&g_pak_index_lock);
 }
@@ -2831,57 +2837,107 @@ static const char* compatGetFileSizePath(void* a0, const char* a1) {
             return nullptr;
         if (!(mi.perm & Perm_R))
             return nullptr;
-        const uintptr_t end = mi.addr + mi.size;
-        if (addr >= end)
+        const uintptr_t endAddr = mi.addr + mi.size;
+        if (addr >= endAddr)
             return nullptr;
-        const size_t maxLen = std::min<size_t>(256, end - addr);
+        const size_t maxLen = std::min<size_t>(256, endAddr - addr);
         const char* str = reinterpret_cast<const char*>(p);
         for (size_t i = 0; i < maxLen; ++i) {
-            const unsigned char c = (unsigned char)str[i];
-            if (c == 0)
+            const unsigned char ch = (unsigned char)str[i];
+            if (ch == 0)
                 return i ? str : nullptr;
-            if (c < 0x20 || c > 0x7e)
+            if (ch < 0x20 || ch > 0x7e)
                 return nullptr;
         }
         return nullptr;
     };
 
-    if (const char* p = readableString(a1))
-        return p;
-    return readableString(a0);
+    const char* p0 = readableString(a0);
+    const char* p1 = readableString(a1);
+
+    // Normal ABI: x0=this, x1=path. Compatibility/direct ABI: x0=path,
+    // x1=flags. Prefer a string that actually looks like a filesystem path;
+    // this prevents a coincidentally readable x1 value from being mistaken
+    // for the filename.
+    auto looksLikePath = [](const char* p) -> bool {
+        if (!p || !*p)
+            return false;
+        if (std::strchr(p, '/') || std::strchr(p, '\\'))
+            return true;
+        const char* dot = std::strrchr(p, '.');
+        return dot && dot != p && dot[1] != 0;
+    };
+
+    if (looksLikePath(p1))
+        return p1;
+    if (looksLikePath(p0))
+        return p0;
+    return p1 ? p1 : p0;
 }
 
 extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2) {
     static unsigned g_cafDiag = 0;
 
     const char* requested = compatGetFileSizePath(a0, a1);
-    const bool diag = requested && *requested &&
-                      std::strstr(requested, ".caf") != nullptr &&
-                      g_cafDiag < 128;
+    const bool isCaf = requested && *requested &&
+                       std::strstr(requested, ".caf") != nullptr;
 
     if (!requested || !*requested)
         return 0;
 
     const std::string pathStorage = normalizeSwitchFsPath(requested);
+    const std::string normalizedPath = pakNormalizeName(pathStorage.c_str());
     const char* path = pathStorage.c_str();
 
-    if (diag) {    }
+    if (isCaf) {
+        mutexLock(&g_pak_index_lock);
+        auto cached = g_caf_size_cache.find(normalizedPath);
+        if (cached != g_caf_size_cache.end()) {
+            const unsigned size = cached->second;
+            mutexUnlock(&g_pak_index_lock);
+            return size;
+        }
+        mutexUnlock(&g_pak_index_lock);
+    }
+
+    const bool diag = isCaf && g_cafDiag < 128;
 
     struct stat st = {};
-    if (::stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size >= 0)
-        return (unsigned)std::min<off_t>(st.st_size, (off_t)UINT_MAX);
+    if (::stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size >= 0) {
+        const unsigned size =
+            (unsigned)std::min<off_t>(st.st_size, (off_t)UINT_MAX);
+        if (isCaf) {
+            mutexLock(&g_pak_index_lock);
+            g_caf_size_cache[normalizedPath] = size;
+            mutexUnlock(&g_pak_index_lock);
+        }
+        return size;
+    }
 
     std::string resolved;
     if (resolvePathCaseInsensitive(path, resolved) && resolved != path) {
         st = {};
         if (::stat(resolved.c_str(), &st) == 0 &&
-            S_ISREG(st.st_mode) && st.st_size >= 0)
-            return (unsigned)std::min<off_t>(st.st_size, (off_t)UINT_MAX);
+            S_ISREG(st.st_mode) && st.st_size >= 0) {
+            const unsigned size =
+                (unsigned)std::min<off_t>(st.st_size, (off_t)UINT_MAX);
+            if (isCaf) {
+                mutexLock(&g_pak_index_lock);
+                g_caf_size_cache[normalizedPath] = size;
+                mutexUnlock(&g_pak_index_lock);
+            }
+            return size;
+        }
     }
 
     std::string pakPath;
     PakEntryMeta meta;
     if (pakFindVirtualEntry(path, pakPath, meta)) {
+        if (isCaf) {
+            mutexLock(&g_pak_index_lock);
+            g_caf_size_cache[normalizedPath] = meta.uncompressedSize;
+            mutexUnlock(&g_pak_index_lock);
+        }
         if (diag) {
             compatLogFmt("FARCRY GETFILESIZE HIT: %s size=%u pak=%s",
                          requested,
