@@ -6414,6 +6414,72 @@ static int stub_pthread_barrier_destroy(void*) { return 0; }
 // OpenGL extension entry points that are not declared by the Switch Mesa
 // compatibility headers. Map ABI-compatible variants to core functions and
 // keep unsupported NVIDIA/ATI fence operations harmless.
+// Legacy NVIDIA texture formats used by the Android Far Cry renderer.
+// Zink/NVK does not expose their old texture semantics, so translate the
+// floating-point DSDT uploads into ordinary core texture formats while keeping
+// the guest data layout intact.
+#ifndef GL_RG32F
+#define GL_RG32F 0x8230
+#endif
+#ifndef GL_RGB32F
+#define GL_RGB32F 0x8815
+#endif
+#ifndef GL_RG
+#define GL_RG 0x8227
+#endif
+
+static constexpr GLenum kNearGL_DSDT_NV     = 0x86F5;
+static constexpr GLenum kNearGL_DSDT_MAG_NV = 0x86F6;
+
+static inline bool isNearDsdtFormat(GLenum format) {
+    return format == kNearGL_DSDT_NV || format == kNearGL_DSDT_MAG_NV;
+}
+
+static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
+                              GLsizei width, GLsizei height, GLint border,
+                              GLenum format, GLenum type, const void* pixels) {
+    if (type == GL_FLOAT &&
+        (isNearDsdtFormat(format) || isNearDsdtFormat((GLenum)internalformat))) {
+        const bool mag = (format == kNearGL_DSDT_MAG_NV ||
+                          (GLenum)internalformat == kNearGL_DSDT_MAG_NV);
+        const GLenum mappedInternal = mag ? GL_RGB32F : GL_RG32F;
+        const GLenum mappedFormat = mag ? GL_RGB : GL_RG;
+
+        compatLogFmt("GL COMPAT: DSDT float texture %s %dx%d -> internal=0x%x format=0x%x",
+                     mag ? "MAG" : "DSDT", width, height,
+                     (unsigned)mappedInternal, (unsigned)mappedFormat);
+
+        glTexImage2D(target, level, (GLint)mappedInternal, width, height, border,
+                     mappedFormat, type, pixels);
+        return;
+    }
+
+    glTexImage2D(target, level, internalformat, width, height, border,
+                 format, type, pixels);
+}
+
+static void shim_glTexSubImage2D(GLenum target, GLint level,
+                                 GLint xoffset, GLint yoffset,
+                                 GLsizei width, GLsizei height,
+                                 GLenum format, GLenum type,
+                                 const void* pixels) {
+    if (type == GL_FLOAT && isNearDsdtFormat(format)) {
+        const bool mag = (format == kNearGL_DSDT_MAG_NV);
+        const GLenum mappedFormat = mag ? GL_RGB : GL_RG;
+
+        compatLogFmt("GL COMPAT: DSDT float subimage %s %dx%d -> format=0x%x",
+                     mag ? "MAG" : "DSDT", width, height,
+                     (unsigned)mappedFormat);
+
+        glTexSubImage2D(target, level, xoffset, yoffset, width, height,
+                        mappedFormat, type, pixels);
+        return;
+    }
+
+    glTexSubImage2D(target, level, xoffset, yoffset, width, height,
+                    format, type, pixels);
+}
+
 static void shim_glActiveStencilFaceEXT(GLenum) {}
 static void shim_glBindBufferARB(GLenum target, GLuint buffer) { glBindBuffer(target, buffer); }
 static void shim_glBufferDataARB(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
@@ -7676,12 +7742,12 @@ static const ShimEntry g_shims[] = {
     {"glStencilMaskSeparate",(void*)glStencilMaskSeparate},
     {"glStencilOp",         (void*)glStencilOp},
     {"glStencilOpSeparate", (void*)glStencilOpSeparate},
-    {"glTexImage2D",        (void*)glTexImage2D},
+    {"glTexImage2D",        (void*)shim_glTexImage2D},
     {"glTexParameterf",     (void*)glTexParameterf},
     {"glTexParameterfv",    (void*)glTexParameterfv},
     {"glTexParameteri",     (void*)glTexParameteri},
     {"glTexParameteriv",    (void*)glTexParameteriv},
-    {"glTexSubImage2D",     (void*)glTexSubImage2D},
+    {"glTexSubImage2D",     (void*)shim_glTexSubImage2D},
     {"glUniform1f",         (void*)glUniform1f},
     {"glUniform1fv",        (void*)glUniform1fv},
     {"glUniform1i",         (void*)glUniform1i},
