@@ -2525,9 +2525,22 @@ static bool pakReadEntryToMemory(const std::string& pakPath,
     }
 
     unsigned char local[30];
-    if (fseek(pak, (long)meta.localOffset, SEEK_SET) != 0 ||
-        !pakReadExact(pak, local, sizeof(local)) ||
-        pakRd32(local) != 0x04034b50u) {
+    if (fseek(pak, (long)meta.localOffset, SEEK_SET) != 0) {
+        compatPakLog("READ_FSEEK_LOCAL_FAIL: pak=%s local=%u",
+                     pakPath.c_str(), (unsigned)meta.localOffset);
+        fclose(pak);
+        return false;
+    }
+    if (!pakReadExact(pak, local, sizeof(local))) {
+        compatPakLog("READ_LOCAL_HEADER_FAIL: pak=%s local=%u",
+                     pakPath.c_str(), (unsigned)meta.localOffset);
+        fclose(pak);
+        return false;
+    }
+    if (pakRd32(local) != 0x04034b50u) {
+        compatPakLog("READ_LOCAL_MAGIC_FAIL: pak=%s local=%u magic=%08x",
+                     pakPath.c_str(), (unsigned)meta.localOffset,
+                     (unsigned)pakRd32(local));
         fclose(pak);
         return false;
     }
@@ -2538,8 +2551,17 @@ static bool pakReadEntryToMemory(const std::string& pakPath,
     const long dataOffset =
         (long)meta.localOffset + 30L + nameLen + extraLen;
 
-    if (meta.method != localMethod || dataOffset < 0 ||
+    if (meta.method != localMethod) {
+        compatPakLog("READ_METHOD_MISMATCH: pak=%s central=%u local=%u",
+                     pakPath.c_str(), (unsigned)meta.method,
+                     (unsigned)localMethod);
+        fclose(pak);
+        return false;
+    }
+    if (dataOffset < 0 ||
         fseek(pak, dataOffset, SEEK_SET) != 0) {
+        compatPakLog("READ_FSEEK_DATA_FAIL: pak=%s data_offset=%ld",
+                     pakPath.c_str(), dataOffset);
         fclose(pak);
         return false;
     }
@@ -2551,8 +2573,11 @@ static bool pakReadEntryToMemory(const std::string& pakPath,
         pakReadExact(pak, compressed.data(), compressed.size());
     fclose(pak);
 
-    if (!readOk)
+    if (!readOk) {
+        compatPakLog("READ_DATA_FAIL: pak=%s bytes=%u",
+                     pakPath.c_str(), (unsigned)meta.compressedSize);
         return false;
+    }
 
     if (meta.method == 0 &&
         meta.compressedSize == meta.uncompressedSize) {
@@ -3052,7 +3077,12 @@ static bool pakFindVirtualEntry(const char* requested,
     {
         std::vector<std::string> aliases;
         getAnimationAliasCandidates(wanted, aliases);
+        if (!aliases.empty())
+            compatPakLog("ALIAS_CANDIDATES: wanted=%s count=%zu",
+                         wanted.c_str(), aliases.size());
         for (const std::string& alias : aliases) {
+            compatPakLog("ALIAS_CANDIDATE: wanted=%s alias=%s",
+                         wanted.c_str(), alias.c_str());
             // Some canonical animation paths have already been resolved by
             // the normal preload pass. Reuse that positive lookup before
             // rebuilding the PAK index search for the alias candidate.
