@@ -2759,7 +2759,11 @@ static bool pakFindVirtualEntry(const char* requested,
             return true;
         }
 
-        if (g_pak_lookup_misses.find(wanted) != g_pak_lookup_misses.end()) {
+        const bool wantedIsCaf =
+            wanted.size() >= 4 &&
+            wanted.compare(wanted.size() - 4, 4, ".caf") == 0;
+        if (!wantedIsCaf &&
+            g_pak_lookup_misses.find(wanted) != g_pak_lookup_misses.end()) {
             mutexUnlock(&g_pak_index_lock);
             return false;
         }
@@ -2800,9 +2804,14 @@ static bool pakFindVirtualEntry(const char* requested,
         return true;
     }
 
-    mutexLock(&g_pak_index_lock);
-    g_pak_lookup_misses.emplace(wanted);
-    mutexUnlock(&g_pak_index_lock);
+    const bool wantedIsCaf =
+        wanted.size() >= 4 &&
+        wanted.compare(wanted.size() - 4, 4, ".caf") == 0;
+    if (!wantedIsCaf) {
+        mutexLock(&g_pak_index_lock);
+        g_pak_lookup_misses.emplace(wanted);
+        mutexUnlock(&g_pak_index_lock);
+    }
 
     if (wanted.size() >= 4 &&
         wanted.compare(wanted.size() - 4, 4, ".caf") == 0) {
@@ -2875,12 +2884,37 @@ static const char* compatGetFileSizePath(void* a0, const char* a1) {
     return p1 ? p1 : p0;
 }
 
+static bool isCriticalCafDiagPath(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string lower(path);
+    for (char& c : lower)
+        c = (char)std::tolower((unsigned char)c);
+
+    return lower.find("objects\\\\characters\\\\animations\\\\shared\\\\pidle_loop.caf") != std::string::npos ||
+           lower.find("objects/characters/animations/shared/pidle_loop.caf") != std::string::npos ||
+           lower.find("objects\\\\characters\\\\animations\\\\shared\\\\humvee_passenger5_sit_loop.caf") != std::string::npos ||
+           lower.find("objects/characters/animations/shared/humvee_passenger5_sit_loop.caf") != std::string::npos ||
+           lower.find("objects\\\\characters\\\\animations\\\\human_male\\\\heavy_runfwd_usaim_loop.bip.caf") != std::string::npos ||
+           lower.find("objects/characters/animations/human_male/heavy_runfwd_usaim_loop.bip.caf") != std::string::npos;
+}
+
 extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2) {
     static unsigned g_cafDiag = 0;
 
     const char* requested = compatGetFileSizePath(a0, a1);
-    const bool isCaf = requested && *requested &&
-                       std::strstr(requested, ".caf") != nullptr;
+    bool isCaf = false;
+    if (requested && *requested) {
+        const size_t n = std::strlen(requested);
+        if (n >= 4) {
+            const char c0 = (char)std::tolower((unsigned char)requested[n - 4]);
+            const char c1 = (char)std::tolower((unsigned char)requested[n - 3]);
+            const char c2 = (char)std::tolower((unsigned char)requested[n - 2]);
+            const char c3 = (char)std::tolower((unsigned char)requested[n - 1]);
+            isCaf = (c0 == '.' && c1 == 'c' && c2 == 'a' && c3 == 'f');
+        }
+    }
 
     if (!requested || !*requested)
         return 0;
@@ -2888,6 +2922,11 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
     const std::string pathStorage = normalizeSwitchFsPath(requested);
     const std::string normalizedPath = pakNormalizeName(pathStorage.c_str());
     const char* path = pathStorage.c_str();
+    const bool criticalCaf = isCaf && isCriticalCafDiagPath(requested);
+    if (criticalCaf) {
+        compatLogFmt("FARCRY CAF GS CALL: a0=%p a1=%p requested=%s normalized=%s",
+                     a0, (const void*)a1, requested, normalizedPath.c_str());
+    }
 
     if (isCaf) {
         mutexLock(&g_pak_index_lock);
@@ -2895,6 +2934,8 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
         if (cached != g_caf_size_cache.end()) {
             const unsigned size = cached->second;
             mutexUnlock(&g_pak_index_lock);
+            if (criticalCaf)
+                compatLogFmt("FARCRY CAF GS CACHE HIT: %s size=%u", requested, size);
             return size;
         }
         mutexUnlock(&g_pak_index_lock);
@@ -2911,6 +2952,8 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
             g_caf_size_cache[normalizedPath] = size;
             mutexUnlock(&g_pak_index_lock);
         }
+        if (criticalCaf)
+            compatLogFmt("FARCRY CAF GS LOOSE HIT: %s size=%u", requested, size);
         return size;
     }
 
@@ -2926,6 +2969,9 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
                 g_caf_size_cache[normalizedPath] = size;
                 mutexUnlock(&g_pak_index_lock);
             }
+            if (criticalCaf)
+                compatLogFmt("FARCRY CAF GS CASEFIX HIT: %s -> %s size=%u",
+                             requested, resolved.c_str(), size);
             return size;
         }
     }
@@ -2945,6 +2991,11 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
                          pakPath.c_str());
             ++g_cafDiag;
         }
+        if (criticalCaf) {
+            compatLogFmt("FARCRY CAF GS PAK HIT: %s size=%u pak=%s",
+                         requested, (unsigned)meta.uncompressedSize,
+                         pakPath.c_str());
+        }
         return meta.uncompressedSize;
     }
 
@@ -2953,6 +3004,9 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
                      requested, path);
         ++g_cafDiag;
     }
+    if (criticalCaf)
+        compatLogFmt("FARCRY CAF GS MISS: %s normalized=%s",
+                     requested, normalizedPath.c_str());
     return 0;
 }
 
