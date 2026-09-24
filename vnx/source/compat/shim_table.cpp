@@ -5171,6 +5171,8 @@ static void w_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
     glScissor(x + p.content_x, y + p.content_y, w, h);
 }
 
+static void nearLogWaterDrawState();
+
 static void w_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
     nearLogWaterDrawState();
     glDrawArrays(mode, first, count);
