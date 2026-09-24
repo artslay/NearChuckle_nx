@@ -34,9 +34,10 @@ static unsigned g_log_pending_lines = 0;
 static Mutex g_pak_diag_lock;
 static FILE* g_pak_diag = nullptr;
 static unsigned g_pak_diag_pending_lines = 0;
+static bool g_pak_diag_closed = false;
 
 static void pak_diag_open() {
-    if (g_pak_diag)
+    if (g_pak_diag || g_pak_diag_closed)
         return;
 
     // This is intentionally a dedicated diagnostic file. It is overwritten
@@ -44,7 +45,7 @@ static void pak_diag_open() {
     g_pak_diag = std::fopen("/switch/NearChuckle_nx/pak_lookup_diag.log", "w");
     if (g_pak_diag) {
         std::fprintf(g_pak_diag,
-                     "=== NearChuckle_nx PAK LOOKUP DIAGNOSTICS ===\\n");
+                     "=== NearChuckle_nx PAK LOOKUP DIAGNOSTICS ===\n");
         std::fflush(g_pak_diag);
     }
 }
@@ -62,7 +63,7 @@ void compatPakLog(const char* fmt, ...) {
     mutexLock(&g_pak_diag_lock);
     pak_diag_open();
     if (g_pak_diag) {
-        std::fprintf(g_pak_diag, "%s\\n", buf);
+        std::fprintf(g_pak_diag, "%s\n", buf);
         if (++g_pak_diag_pending_lines >= 64) {
             std::fflush(g_pak_diag);
             g_pak_diag_pending_lines = 0;
@@ -71,14 +72,6 @@ void compatPakLog(const char* fmt, ...) {
     mutexUnlock(&g_pak_diag_lock);
 }
 
-static void compatPakLogFlush() {
-    mutexLock(&g_pak_diag_lock);
-    if (g_pak_diag) {
-        std::fflush(g_pak_diag);
-        g_pak_diag_pending_lines = 0;
-    }
-    mutexUnlock(&g_pak_diag_lock);
-}
 
 static void compatPakLogClose() {
     mutexLock(&g_pak_diag_lock);
@@ -88,6 +81,7 @@ static void compatPakLogClose() {
         g_pak_diag = nullptr;
     }
     g_pak_diag_pending_lines = 0;
+    g_pak_diag_closed = true;
     mutexUnlock(&g_pak_diag_lock);
 }
 
