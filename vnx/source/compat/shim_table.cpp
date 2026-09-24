@@ -1563,36 +1563,47 @@ static std::string pakNormalizeName(const char* name) {
             c = (char)std::tolower((unsigned char)c);
     }
 
-    std::string normalized;
-    normalized.reserve(out.size());
+    // Canonicalize path components, including "..". The old byte-wise
+    // implementation treated the second dot in "../" as a standalone "."
+    // component, turning "../BumpDiffuse.csi" into "./BumpDiffuse.csi".
+    // That broke the shader preprocessor's relative includes and made valid
+    // files in Shaders.pak appear to be missing.
+    std::vector<std::string> components;
+    components.reserve(16);
 
     size_t i = 0;
     while (i < out.size()) {
-        // Collapse repeated separators.
-        if (out[i] == '/') {
-            if (normalized.empty() || normalized.back() != '/')
-                normalized.push_back('/');
+        while (i < out.size() && out[i] == '/')
             ++i;
+        if (i >= out.size())
+            break;
+
+        const size_t begin = i;
+        while (i < out.size() && out[i] != '/')
+            ++i;
+
+        const std::string part = out.substr(begin, i - begin);
+        if (part.empty() || part == ".")
+            continue;
+
+        if (part == "..") {
+            if (!components.empty() && components.back() != "..")
+                components.pop_back();
+            else if (out.empty() || out[0] != '/')
+                components.push_back(part);
             continue;
         }
 
-        // Remove a "." path component: "foo/./bar" -> "foo/bar".
-        if (out[i] == '.' &&
-            (i + 1 == out.size() ||
-             (i + 1 < out.size() && out[i + 1] == '/'))) {
-            ++i;
-            if (i < out.size() && out[i] == '/')
-                ++i;
-            continue;
-        }
-
-        normalized.push_back(out[i]);
-        ++i;
+        components.push_back(part);
     }
 
-    while (normalized.size() >= 2 &&
-           normalized[0] == '.' && normalized[1] == '/')
-        normalized.erase(0, 2);
+    std::string normalized;
+    normalized.reserve(out.size());
+    for (size_t n = 0; n < components.size(); ++n) {
+        if (n)
+            normalized.push_back('/');
+        normalized += components[n];
+    }
 
     // Do not leave a leading slash for ordinary relative PAK entries.
     while (normalized.size() > 1 && normalized[0] == '/' &&
