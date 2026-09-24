@@ -6818,6 +6818,23 @@ struct NearLegacyTexFormat {
 // 16-bit). This also covers the Android renderer's HILO_NV + GL_BYTE path.
 static bool nearMapLegacyHiloFormat(GLenum internalformat, GLenum format,
                                     GLenum type, NearLegacyTexFormat& out) {
+    const bool signedRgb =
+        internalformat == kNearGL_SIGNED_RGB8_NV ||
+        format == kNearGL_SIGNED_RGB8_NV;
+
+    if (signedRgb) {
+        // Android's texture-format helpers may use the legacy
+        // GL_SIGNED_RGB8_NV token in either the internalformat or format slot.
+        // Both forms describe a 3-component signed normalized texture.
+        if (type != GL_BYTE && type != GL_UNSIGNED_BYTE)
+            return false;
+        out.internalformat = GL_RGB8_SNORM;
+        out.format = GL_RGB;
+        out.type = type;
+        out.label = "SIGNED_RGB8";
+        return true;
+    }
+
     if (!isNearLegacyHiloFormat(internalformat) ||
         format != kNearGL_HILO_NV)
         return false;
@@ -6825,20 +6842,6 @@ static bool nearMapLegacyHiloFormat(GLenum internalformat, GLenum format,
     const bool signedFormat =
         internalformat == kNearGL_SIGNED_HILO_NV ||
         internalformat == kNearGL_SIGNED_HILO16_NV;
-    const bool signedRgb =
-        internalformat == kNearGL_SIGNED_RGB8_NV;
-
-    if (signedRgb) {
-        // The legacy SIGNED_RGB8 format is a 3-component normalized [-1,1]
-        // texture. Map it directly to RGB8_SNORM.
-        if (type != GL_BYTE)
-            return false;
-        out.internalformat = GL_RGB8_SNORM;
-        out.format = GL_RGB;
-        out.type = GL_BYTE;
-        out.label = "SIGNED_RGB8";
-        return true;
-    }
 
     if (type == GL_BYTE) {
         out.internalformat = signedFormat ? GL_RG8_SNORM : GL_RG8;
