@@ -35,6 +35,7 @@
 #include <unordered_set>
 
 extern void compatPollSwitchInput();
+extern void compatPakLog(const char* fmt, ...);
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
@@ -811,7 +812,6 @@ static FILE* stub_tmpfile()                      { return tmpfile(); }
 extern void compatLog(const char* msg);
 extern void compatLogFmt(const char* fmt, ...);
 extern void compatLogFlush();
-extern void compatPakLog(const char* fmt, ...);
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 
 // Game-initiated termination is otherwise invisible (process just returns to
@@ -2723,7 +2723,7 @@ static bool pakFindLevelLocalEntry(const std::string& wanted,
     return false;
 }
 
-static void pakTraceMissDetails(const std::string& wanted) {
+[[maybe_unused]] static void pakTraceMissDetails(const std::string& wanted) {
     const std::string::size_type basenamePos = wanted.find_last_of('/');
     const std::string wantedBase =
         basenamePos == std::string::npos ? wanted : wanted.substr(basenamePos + 1);
