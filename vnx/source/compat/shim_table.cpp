@@ -4217,9 +4217,29 @@ static EGLBoolean w_eglSwapBuffers(EGLDisplay d, EGLSurface s) {
 // symbol that we already provide through the ELF shim table. Fall back to the
 // same shim resolver before returning NULL, otherwise the renderer can cache a
 // null function pointer and later jump to PC=0 during pipeline setup/shutdown.
+// Forward declarations for legacy texture shims defined later in this file.
+static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
+                              GLsizei width, GLsizei height, GLint border,
+                              GLenum format, GLenum type, const void* pixels);
+static void shim_glTexSubImage2D(GLenum target, GLint level,
+                                 GLint xoffset, GLint yoffset,
+                                 GLsizei width, GLsizei height,
+                                 GLenum format, GLenum type, const void* pixels);
+
 static void* w_eglGetProcAddress(const char* name) {
     if (!name || !*name)
         return nullptr;
+    // XRenderOGL may resolve these core texture entry points dynamically.
+    // Force them through the Switch compatibility shim so legacy Android
+    // texture formats (notably NVIDIA DSDT) cannot bypass our translation.
+    if (strcmp(name, "glTexImage2D") == 0) {
+        compatLog("EGL: eglGetProcAddress(glTexImage2D) -> Switch texture shim");
+        return reinterpret_cast<void*>(shim_glTexImage2D);
+    }
+    if (strcmp(name, "glTexSubImage2D") == 0) {
+        compatLog("EGL: eglGetProcAddress(glTexSubImage2D) -> Switch texture shim");
+        return reinterpret_cast<void*>(shim_glTexSubImage2D);
+    }
 
     if (strcmp(name, "eglSwapBuffers") == 0) {
         void* shim = shimResolve(name);
