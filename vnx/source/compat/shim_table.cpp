@@ -6734,27 +6734,38 @@ static thread_local GLint g_glUnpackSkipPixels = 0;
 static thread_local GLint g_glUnpackSkipRows = 0;
 
 static void shim_glPixelStorei(GLenum pname, GLint param) {
+    const char* label = nullptr;
+
     switch (pname) {
     case GL_UNPACK_ALIGNMENT:
         g_glUnpackAlignment = param;
+        label = "UNPACK_ALIGNMENT";
         break;
 #if defined(GL_UNPACK_ROW_LENGTH)
     case GL_UNPACK_ROW_LENGTH:
         g_glUnpackRowLength = param;
+        label = "UNPACK_ROW_LENGTH";
         break;
 #endif
 #if defined(GL_UNPACK_SKIP_PIXELS)
     case GL_UNPACK_SKIP_PIXELS:
         g_glUnpackSkipPixels = param;
+        label = "UNPACK_SKIP_PIXELS";
         break;
 #endif
 #if defined(GL_UNPACK_SKIP_ROWS)
     case GL_UNPACK_SKIP_ROWS:
         g_glUnpackSkipRows = param;
+        label = "UNPACK_SKIP_ROWS";
         break;
 #endif
     default:
         break;
+    }
+
+    if (label) {
+        compatPakLog("GL PIXELSTORE %s: pname=0x%x param=%d",
+                     label, (unsigned)pname, (int)param);
     }
 
     glPixelStorei(pname, param);
