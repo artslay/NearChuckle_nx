@@ -7145,6 +7145,28 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
     }
 }
 
+static void shim_glTexSubImage2D(GLenum target, GLint level,
+                                 GLint xoffset, GLint yoffset,
+                                 GLsizei width, GLsizei height,
+                                 GLenum format, GLenum type,
+                                 const void* pixels) {
+    if (type == GL_FLOAT && isNearDsdtFormat(format)) {
+        const bool mag = (format == kNearGL_DSDT_MAG_NV);
+        const GLenum mappedFormat = mag ? GL_RGB : GL_RG;
+
+        compatLogFmt("GL COMPAT: DSDT float subimage %s %dx%d -> format=0x%x",
+                     mag ? "MAG" : "DSDT", width, height,
+                     (unsigned)mappedFormat);
+
+        glTexSubImage2D(target, level, xoffset, yoffset, width, height,
+                        mappedFormat, type, pixels);
+        return;
+    }
+
+    glTexSubImage2D(target, level, xoffset, yoffset, width, height,
+                    format, type, pixels);
+}
+
 static void shim_glActiveStencilFaceEXT(GLenum) {}
 static void shim_glBindBufferARB(GLenum target, GLuint buffer) { glBindBuffer(target, buffer); }
 static void shim_glBufferDataARB(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
