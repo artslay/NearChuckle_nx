@@ -7961,6 +7961,38 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                               uploadError);
 }
 
+static bool nearMapLegacySubImageFormat(GLenum format, GLenum type,
+                                          GLenum& mappedFormat, GLenum& mappedType) {
+    mappedFormat = format;
+    mappedType = type;
+
+    // The Android CryEngine source has a few historical call sites that pass
+    // the texture *internal format* in the format argument of glTexSubImage2D,
+    // e.g. GL_RGBA8. Desktop OpenGL rejects GL_RGBA8 there; the corresponding
+    // client pixel format is GL_RGBA.
+    if (type == GL_UNSIGNED_BYTE) {
+        if (format == GL_RGBA8) {
+            mappedFormat = GL_RGBA;
+            return true;
+        }
+        if (format == GL_RGB8) {
+            mappedFormat = GL_RGB;
+            return true;
+        }
+    }
+
+    // Dynamic DSDT textures on Android use the legacy internal-format token as
+    // the client format too, but their uploaded bytes are ordinary 8-bit RGB/RG
+    // data rather than floats.
+    if ((type == GL_UNSIGNED_BYTE || type == GL_BYTE) &&
+        isNearDsdtFormat(format)) {
+        mappedFormat = (format == kNearGL_DSDT_MAG_NV) ? GL_RGB : GL_RG;
+        return true;
+    }
+
+    return false;
+}
+
 static void shim_glTexSubImage2D(GLenum target, GLint level,
                                  GLint xoffset, GLint yoffset,
                                  GLsizei width, GLsizei height,
@@ -7988,16 +8020,17 @@ static void shim_glTexSubImage2D(GLenum target, GLint level,
         }
     }
 
-    if (type == GL_FLOAT && isNearDsdtFormat(format)) {
-        const bool mag = (format == kNearGL_DSDT_MAG_NV);
-        const GLenum mappedFormat = mag ? GL_RGB : GL_RG;
-
-        compatLogFmt("GL COMPAT: DSDT float subimage %s %dx%d -> format=0x%x",
-                     mag ? "MAG" : "DSDT", width, height,
-                     (unsigned)mappedFormat);
-
+    GLenum mappedLegacyFormat = format;
+    GLenum mappedLegacyType = type;
+    if (nearMapLegacySubImageFormat(
+            format, type, mappedLegacyFormat, mappedLegacyType)) {
+        compatLogFmt(
+            "GL COMPAT: legacy subimage format 0x%x/0x%x -> 0x%x/0x%x size=%dx%d",
+            (unsigned)format, (unsigned)type,
+            (unsigned)mappedLegacyFormat, (unsigned)mappedLegacyType,
+            width, height);
         glTexSubImage2D(target, level, xoffset, yoffset, width, height,
-                        mappedFormat, type, pixels);
+                        mappedLegacyFormat, mappedLegacyType, pixels);
         return;
     }
 
