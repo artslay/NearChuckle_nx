@@ -186,7 +186,7 @@ extern "C" bool compatGuestActivateReadStream(void* self) {
             else if (h30_32 == 0xffffffffu || h30_64 == UINT64_MAX)
                 handleOff = 0x30;
             else {
-                compatLogFmt("PAK STREAM ACTIVATE: invalid HANDLE slot for %s (h28=%08x/%p h30=%08x/%p)",
+                compatPakLog("PAK STREAM ACTIVATE: invalid HANDLE slot for %s (h28=%08x/%p h30=%08x/%p)",
                              name, h28_32, (void*)h28_64, h30_32, (void*)h30_64);
             }
 
@@ -762,7 +762,7 @@ static int stub_stat(const char* p, struct stat* ignored) {
             nativeSt.st_blocks =
                 (blkcnt_t)(((uint64_t)meta.uncompressedSize + 511u) / 512u);
             fillAndroidArm64Stat(nativeSt, ignored);
-            compatLogFmt("PAK VIRTUAL STAT: %s <- %s size=%u",
+            compatPakLog("PAK VIRTUAL STAT: %s <- %s size=%u",
                          ioPath, pakPath.c_str(),
                          (unsigned)meta.uncompressedSize);
             return 0;
@@ -811,6 +811,7 @@ static FILE* stub_tmpfile()                      { return tmpfile(); }
 extern void compatLog(const char* msg);
 extern void compatLogFmt(const char* fmt, ...);
 extern void compatLogFlush();
+extern void compatPakLog(const char* fmt, ...);
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 
 // Game-initiated termination is otherwise invisible (process just returns to
@@ -1763,18 +1764,32 @@ static bool pakGetMemory(
     std::shared_ptr<std::vector<unsigned char>>& data,
     bool& cacheHit) {
     cacheHit = pakGetCachedMemory(pakPath, meta, data);
+    compatPakLog("MEMORY_LOOKUP: pak=%s local=%u c=%u u=%u cache=%d",
+                 pakPath.c_str(), (unsigned)meta.localOffset,
+                 (unsigned)meta.compressedSize,
+                 (unsigned)meta.uncompressedSize,
+                 cacheHit ? 1 : 0);
     if (cacheHit)
         return true;
 
     std::vector<unsigned char> plain;
-    if (!pakReadEntryToMemory(pakPath, meta, plain))
+    if (!pakReadEntryToMemory(pakPath, meta, plain)) {
+        compatPakLog("MEMORY_READ_FAIL: pak=%s local=%u c=%u u=%u method=%u",
+                     pakPath.c_str(), (unsigned)meta.localOffset,
+                     (unsigned)meta.compressedSize,
+                     (unsigned)meta.uncompressedSize,
+                     (unsigned)meta.method);
         return false;
+    }
 
     data = std::make_shared<std::vector<unsigned char>>(std::move(plain));
     if (!data)
         return false;
 
     pakRememberMemory(pakPath, meta, data);
+    compatPakLog("MEMORY_READY: pak=%s bytes=%zu cacheable=%d",
+                 pakPath.c_str(), data->size(),
+                 data->size() <= kPakMemoryCacheMaxEntryBytes ? 1 : 0);
     return true;
 }
 
@@ -1829,7 +1844,7 @@ static size_t vpakRead(FILE* f, void* dst, size_t size, size_t count) {
 
     if (whole) {
         if (v->trace && v->traceReads < 8) {
-            compatLogFmt("PAK MEM TRACE READ: %s src=%p dst=%p pos=%zu bytes=%zu size=%zu",
+            compatPakLog("PAK MEM TRACE READ: %s src=%p dst=%p pos=%zu bytes=%zu size=%zu",
                          v->name.c_str(),
                          (void*)(v->data->data() + v->pos),
                          dst, v->pos, whole, v->data->size());
@@ -1958,14 +1973,14 @@ static int vpakFdOpen(const char* requested, int flags) {
     PakEntryMeta meta;
     if (!pakFindVirtualEntry(requested, pakPath, meta)) {
         if (trace) {
-            compatLogFmt("PAK MEM TRACE FD_MISS: requested=%s wanted=%s",
+            compatPakLog("PAK MEM TRACE FD_MISS: requested=%s wanted=%s",
                          requested, wantedTrace.c_str());
         }
         return -1;
     }
 
     if (trace) {
-        compatLogFmt("PAK MEM TRACE FD_FIND: requested=%s wanted=%s pak=%s c=%u u=%u method=%u local=%u",
+        compatPakLog("PAK MEM TRACE FD_FIND: requested=%s wanted=%s pak=%s c=%u u=%u method=%u local=%u",
                      requested, wantedTrace.c_str(), pakPath.c_str(),
                      meta.compressedSize, meta.uncompressedSize,
                      (unsigned)meta.method, meta.localOffset);
@@ -1975,10 +1990,10 @@ static int vpakFdOpen(const char* requested, int flags) {
     bool cacheHit = false;
     if (!pakGetMemory(pakPath, meta, data, cacheHit)) {
         if (trace) {
-            compatLogFmt("PAK MEM TRACE FD_READ_FAILED: %s <- %s",
+            compatPakLog("PAK MEM TRACE FD_READ_FAILED: %s <- %s",
                          wantedTrace.c_str(), pakPath.c_str());
         } else {
-            compatLogFmt("PAK VIRTUAL FD READ FAILED: %s <- %s",
+            compatPakLog("PAK VIRTUAL FD READ FAILED: %s <- %s",
                          wantedTrace.c_str(),
                          pakPath.c_str());
         }
@@ -1986,7 +2001,7 @@ static int vpakFdOpen(const char* requested, int flags) {
     }
 
     if (trace) {
-        compatLogFmt("PAK MEM TRACE FD_%s: %s plain=%p plain_size=%zu pak=%s",
+        compatPakLog("PAK MEM TRACE FD_%s: %s plain=%p plain_size=%zu pak=%s",
                      cacheHit ? "CACHE" : "DECOMP",
                      wantedTrace.c_str(), (void*)data->data(), data->size(),
                      pakPath.c_str());
@@ -2024,7 +2039,7 @@ static int vpakFdOpen(const char* requested, int flags) {
         return -1;
     }
 
-    compatLogFmt("PAK VIRTUAL FD OPEN: %s <- %s fd=%d size=%zu",
+    compatPakLog("PAK VIRTUAL FD OPEN: %s <- %s fd=%d size=%zu",
                  pakAssetRelativeName(requested).c_str(),
                  pakPath.c_str(), chosen, v->data->size());
     return chosen;
@@ -2054,7 +2069,7 @@ static ssize_t vpakFdRead(int fd, void* dst, size_t count) {
     const size_t bytes = count < available ? count : available;
     if (bytes) {
         if (v->trace && v->traceReads < 8) {
-            compatLogFmt("PAK MEM TRACE FDREAD: %s fd=%d src=%p dst=%p pos=%lld bytes=%zu size=%zu",
+            compatPakLog("PAK MEM TRACE FDREAD: %s fd=%d src=%p dst=%p pos=%lld bytes=%zu size=%zu",
                          v->name.c_str(), fd,
                          (void*)(v->data->data() + v->pos),
                          dst, (long long)v->pos, bytes, v->data->size());
@@ -2126,7 +2141,7 @@ static ssize_t vpakFdPread(int fd, void* dst, size_t count, off_t offset) {
     const size_t bytes = count < available ? count : available;
     if (bytes) {
         if (v->trace && v->traceReads < 8) {
-            compatLogFmt("PAK MEM TRACE FDPREAD: %s fd=%d src=%p dst=%p pos=%lld bytes=%zu size=%zu",
+            compatPakLog("PAK MEM TRACE FDPREAD: %s fd=%d src=%p dst=%p pos=%lld bytes=%zu size=%zu",
                          v->name.c_str(), fd,
                          (void*)(v->data->data() + offset),
                          dst, (long long)offset, bytes, v->data->size());
@@ -2231,7 +2246,7 @@ static void rememberActiveLevelPak(const char* path) {
         candidate = resolved;
     }
 
-    compatLogFmt("PAK LEVEL REGISTER: requested=%s actual=%s",
+    compatPakLog("PAK LEVEL REGISTER: requested=%s actual=%s",
                  path, candidate.c_str());
 
     if (!candidate.empty() && candidate[0] != '/') {
@@ -2339,8 +2354,10 @@ static std::vector<std::string> getGlobalPakPathsSnapshot() {
     if (!g_global_pak_paths_ready) {
         g_global_pak_paths = std::move(discovered);
         g_global_pak_paths_ready = true;
-        compatLogFmt("PAK PATHS: cached %zu unique global archives",
+        compatPakLog("PAK PATHS: cached %zu unique global archives",
                      g_global_pak_paths.size());
+        for (const std::string& pakPath : g_global_pak_paths)
+            compatPakLog("GLOBAL_PAK_PATH: %s", pakPath.c_str());
     }
     std::vector<std::string> snapshot = g_global_pak_paths;
     mutexUnlock(&g_pak_index_lock);
@@ -2440,13 +2457,19 @@ static bool pakFindEntryCached(const std::string& pakPath,
                                const std::string& wanted,
                                PakEntryMeta& meta) {
     const std::string normalizedWanted = pakNormalizeName(wanted.c_str());
+    compatPakLog("INDEX_QUERY: pak=%s wanted=%s normalized=%s",
+                 pakPath.c_str(), wanted.c_str(), normalizedWanted.c_str());
 
     mutexLock(&g_pak_index_lock);
 
     auto it = g_pak_indexes.find(pakPath);
     if (it == g_pak_indexes.end()) {
         PakIndex fresh;
+        compatPakLog("INDEX_BUILD_START: pak=%s", pakPath.c_str());
         const bool ok = buildPakIndexLocked(pakPath, fresh);
+        compatPakLog("INDEX_BUILD_RESULT: pak=%s ok=%d valid=%d entries=%zu",
+                     pakPath.c_str(), ok ? 1 : 0, fresh.valid ? 1 : 0,
+                     fresh.entries.size());
         auto inserted = g_pak_indexes.emplace(pakPath, std::move(fresh));
         it = inserted.first;
         if (!ok) {
@@ -2458,8 +2481,20 @@ static bool pakFindEntryCached(const std::string& pakPath,
     const bool found = it->second.valid &&
                        it->second.entries.find(normalizedWanted) !=
                            it->second.entries.end();
-    if (found)
+    if (found) {
         meta = it->second.entries.find(normalizedWanted)->second;
+        compatPakLog("INDEX_ENTRY_HIT: pak=%s wanted=%s c=%u u=%u method=%u local=%u crc=%08x",
+                     pakPath.c_str(), normalizedWanted.c_str(),
+                     (unsigned)meta.compressedSize,
+                     (unsigned)meta.uncompressedSize,
+                     (unsigned)meta.method,
+                     (unsigned)meta.localOffset,
+                     (unsigned)meta.expectedCrc);
+    } else {
+        compatPakLog("INDEX_ENTRY_MISS: pak=%s wanted=%s valid=%d entries=%zu",
+                     pakPath.c_str(), normalizedWanted.c_str(),
+                     it->second.valid ? 1 : 0, it->second.entries.size());
+    }
 
     mutexUnlock(&g_pak_index_lock);
     return found;
@@ -2468,15 +2503,26 @@ static bool pakFindEntryCached(const std::string& pakPath,
 static bool pakReadEntryToMemory(const std::string& pakPath,
                                    const PakEntryMeta& meta,
                                    std::vector<unsigned char>& plain) {
+    compatPakLog("READ_START: pak=%s local=%u c=%u u=%u method=%u",
+                 pakPath.c_str(), (unsigned)meta.localOffset,
+                 (unsigned)meta.compressedSize,
+                 (unsigned)meta.uncompressedSize,
+                 (unsigned)meta.method);
+
     if (!meta.compressedSize || !meta.uncompressedSize ||
         meta.compressedSize > 128 * 1024 * 1024u ||
         meta.uncompressedSize > 128 * 1024 * 1024u) {
+        compatPakLog("READ_REJECT_SIZE: pak=%s c=%u u=%u",
+                     pakPath.c_str(), (unsigned)meta.compressedSize,
+                     (unsigned)meta.uncompressedSize);
         return false;
     }
 
     FILE* pak = fopen(pakPath.c_str(), "rb");
-    if (!pak)
+    if (!pak) {
+        compatPakLog("READ_OPEN_FAIL: pak=%s", pakPath.c_str());
         return false;
+    }
 
     unsigned char local[30];
     if (fseek(pak, (long)meta.localOffset, SEEK_SET) != 0 ||
@@ -2511,14 +2557,21 @@ static bool pakReadEntryToMemory(const std::string& pakPath,
     if (meta.method == 0 &&
         meta.compressedSize == meta.uncompressedSize) {
         memcpy(plain.data(), compressed.data(), plain.size());
+        compatPakLog("READ_DONE: pak=%s method=STORE bytes=%zu",
+                     pakPath.c_str(), plain.size());
         return true;
     }
 
     if (meta.method == 8) {
-        return pakInflateRaw(compressed.data(), compressed.size(),
-                             plain.data(), plain.size());
+        const bool ok = pakInflateRaw(compressed.data(), compressed.size(),
+                                      plain.data(), plain.size());
+        compatPakLog("READ_DONE: pak=%s method=DEFLATE ok=%d bytes=%zu",
+                     pakPath.c_str(), ok ? 1 : 0, plain.size());
+        return ok;
     }
 
+    compatPakLog("READ_REJECT_METHOD: pak=%s method=%u",
+                 pakPath.c_str(), (unsigned)meta.method);
     return false;
 }
 
@@ -2687,7 +2740,7 @@ static void pakTraceMissDetails(const std::string& wanted) {
             it = inserted.first;
             if (!ok) {
                 mutexUnlock(&g_pak_index_lock);
-                compatLogFmt("PAK MEM TRACE INDEX: pak=%s build=FAIL",
+                compatPakLog("PAK MEM TRACE INDEX: pak=%s build=FAIL",
                              pakPath.c_str());
                 return;
             }
@@ -2724,11 +2777,11 @@ static void pakTraceMissDetails(const std::string& wanted) {
         mutexUnlock(&g_pak_index_lock);
 
         if (baseMatches) {
-            compatLogFmt("PAK MEM TRACE INDEX: pak=%s valid=%d entries=%zu basename_matches=%zu first=%s",
+            compatPakLog("PAK MEM TRACE INDEX: pak=%s valid=%d entries=%zu basename_matches=%zu first=%s",
                          pakPath.c_str(), valid ? 1 : 0, entryCount,
                          baseMatches, firstMatch.c_str());
         } else {
-            compatLogFmt("PAK MEM TRACE INDEX: pak=%s valid=%d entries=%zu basename_matches=0",
+            compatPakLog("PAK MEM TRACE INDEX: pak=%s valid=%d entries=%zu basename_matches=0",
                          pakPath.c_str(), valid ? 1 : 0, entryCount);
         }
     };
@@ -2791,11 +2844,11 @@ static void pakTraceMissDetails(const std::string& wanted) {
 
     if (!lodBaseWanted.empty()) {
         if (lodBaseMatches) {
-            compatLogFmt("PAK MEM TRACE LODBASE: wanted=%s matches=%zu first_pak=%s first=%s",
+            compatPakLog("PAK MEM TRACE LODBASE: wanted=%s matches=%zu first_pak=%s first=%s",
                          lodBaseWanted.c_str(), lodBaseMatches,
                          firstLodBasePak.c_str(), firstLodBaseEntry.c_str());
         } else {
-            compatLogFmt("PAK MEM TRACE LODBASE: wanted=%s matches=0",
+            compatPakLog("PAK MEM TRACE LODBASE: wanted=%s matches=0",
                          lodBaseWanted.c_str());
         }
     }
@@ -2847,8 +2900,14 @@ static bool pakFindVirtualEntry(const char* requested,
         return false;
 
     const std::string wanted = pakAssetRelativeName(requested);
-    if (wanted.empty())
+    if (wanted.empty()) {
+        compatPakLog("QUERY INVALID: requested=%s normalized=<empty>",
+                     requested ? requested : "<null>");
         return false;
+    }
+
+    compatPakLog("QUERY: requested=%s normalized=%s",
+                 requested, wanted.c_str());
 
     // Check the positive lookup cache before touching the filesystem or
     // rescanning level-local PAKs. rememberActiveLevelPak() clears this cache
@@ -2861,10 +2920,17 @@ static bool pakFindVirtualEntry(const char* requested,
         if (hit != g_pak_lookup_cache.end()) {
             pakPathOut = hit->second.pakPath;
             metaOut = hit->second.meta;
+            compatPakLog("QUERY CACHE_HIT: wanted=%s pak=%s c=%u u=%u method=%u local=%u",
+                         wanted.c_str(), pakPathOut.c_str(),
+                         (unsigned)metaOut.compressedSize,
+                         (unsigned)metaOut.uncompressedSize,
+                         (unsigned)metaOut.method,
+                         (unsigned)metaOut.localOffset);
             mutexUnlock(&g_pak_index_lock);
             return true;
         }
         mutexUnlock(&g_pak_index_lock);
+        compatPakLog("QUERY CACHE_MISS: wanted=%s", wanted.c_str());
     }
 
     std::vector<std::string> activeLevelPaks;
@@ -2874,9 +2940,19 @@ static bool pakFindVirtualEntry(const char* requested,
         mutexUnlock(&g_pak_index_lock);
     }
 
+    compatPakLog("LEVEL_PAK_SNAPSHOT: wanted=%s count=%zu",
+                 wanted.c_str(), activeLevelPaks.size());
     for (const std::string& levelPak : activeLevelPaks) {
+        compatPakLog("LEVEL_PAK_CHECK: wanted=%s pak=%s",
+                     wanted.c_str(), levelPak.c_str());
         if (pakFindEntryCached(levelPak, wanted, metaOut)) {
             pakPathOut = levelPak;
+            compatPakLog("LEVEL_PAK_HIT: wanted=%s pak=%s c=%u u=%u method=%u local=%u",
+                         wanted.c_str(), pakPathOut.c_str(),
+                         (unsigned)metaOut.compressedSize,
+                         (unsigned)metaOut.uncompressedSize,
+                         (unsigned)metaOut.method,
+                         (unsigned)metaOut.localOffset);
             mutexLock(&g_pak_index_lock);
             g_pak_lookup_cache[wanted] =
                 PakLookupCacheEntry{pakPathOut, metaOut};
@@ -2884,9 +2960,18 @@ static bool pakFindVirtualEntry(const char* requested,
             mutexUnlock(&g_pak_index_lock);
             return true;
         }
+        compatPakLog("LEVEL_PAK_MISS: wanted=%s pak=%s",
+                     wanted.c_str(), levelPak.c_str());
     }
 
+    compatPakLog("LEVEL_LOCAL_LOOKUP: wanted=%s", wanted.c_str());
     if (pakFindLevelLocalEntry(wanted, pakPathOut, metaOut)) {
+        compatPakLog("LEVEL_LOCAL_HIT: wanted=%s pak=%s c=%u u=%u method=%u local=%u",
+                     wanted.c_str(), pakPathOut.c_str(),
+                     (unsigned)metaOut.compressedSize,
+                     (unsigned)metaOut.uncompressedSize,
+                     (unsigned)metaOut.method,
+                     (unsigned)metaOut.localOffset);
         mutexLock(&g_pak_index_lock);
         g_pak_lookup_cache[wanted] =
             PakLookupCacheEntry{pakPathOut, metaOut};
@@ -2894,6 +2979,7 @@ static bool pakFindVirtualEntry(const char* requested,
         mutexUnlock(&g_pak_index_lock);
         return true;
     }
+    compatPakLog("LEVEL_LOCAL_MISS: wanted=%s", wanted.c_str());
 
     {
         mutexLock(&g_pak_index_lock);
@@ -2902,6 +2988,7 @@ static bool pakFindVirtualEntry(const char* requested,
             wanted.compare(wanted.size() - 4, 4, ".caf") == 0;
         if (!wantedIsCaf &&
             g_pak_lookup_misses.find(wanted) != g_pak_lookup_misses.end()) {
+            compatPakLog("QUERY NEGATIVE_CACHE_HIT: wanted=%s", wanted.c_str());
             mutexUnlock(&g_pak_index_lock);
             return false;
         }
@@ -2911,13 +2998,28 @@ static bool pakFindVirtualEntry(const char* requested,
     const std::vector<std::string> globalPaks =
         getGlobalPakPathsSnapshot();
 
+    compatPakLog("GLOBAL_PAK_SNAPSHOT: wanted=%s count=%zu",
+                 wanted.c_str(), globalPaks.size());
+
     // CryPak loads PAKs alphabetically and later PAKs override earlier ones.
     // Search in reverse order to preserve that priority.
     for (auto it = globalPaks.rbegin(); it != globalPaks.rend(); ++it) {
         const std::string& pakPath = *it;
         PakEntryMeta meta;
-        if (!pakFindEntryCached(pakPath, wanted, meta))
+        compatPakLog("GLOBAL_PAK_CHECK: wanted=%s pak=%s",
+                     wanted.c_str(), pakPath.c_str());
+        if (!pakFindEntryCached(pakPath, wanted, meta)) {
+            compatPakLog("GLOBAL_PAK_MISS: wanted=%s pak=%s",
+                         wanted.c_str(), pakPath.c_str());
             continue;
+        }
+
+        compatPakLog("GLOBAL_PAK_HIT: wanted=%s pak=%s c=%u u=%u method=%u local=%u",
+                     wanted.c_str(), pakPath.c_str(),
+                     (unsigned)meta.compressedSize,
+                     (unsigned)meta.uncompressedSize,
+                     (unsigned)meta.method,
+                     (unsigned)meta.localOffset);
 
         pakPathOut = pakPath;
         metaOut = meta;
@@ -2933,7 +3035,7 @@ static bool pakFindVirtualEntry(const char* requested,
             const unsigned n =
                 g_cafLookupDiagEvents.fetch_add(1);
             if (n < 64) {
-                compatLogFmt("PAK CAF HIT: %s <- %s size=%u method=%u",
+                compatPakLog("PAK CAF HIT: %s <- %s size=%u method=%u",
                              wanted.c_str(), pakPathOut.c_str(),
                              (unsigned)metaOut.uncompressedSize,
                              (unsigned)metaOut.method);
@@ -2961,7 +3063,7 @@ static bool pakFindVirtualEntry(const char* requested,
                     pakPathOut = cachedAlias->second.pakPath;
                     metaOut = cachedAlias->second.meta;
                     mutexUnlock(&g_pak_index_lock);
-                    compatLogFmt("PAK ANIM ALIAS CACHE HIT: %s -> %s <- %s size=%u",
+                    compatPakLog("PAK ANIM ALIAS CACHE HIT: %s -> %s <- %s size=%u",
                                  wanted.c_str(), alias.c_str(), pakPathOut.c_str(),
                                  (unsigned)metaOut.uncompressedSize);
                     return true;
@@ -2976,7 +3078,7 @@ static bool pakFindVirtualEntry(const char* requested,
                     g_pak_lookup_cache[wanted] =
                         PakLookupCacheEntry{pakPathOut, metaOut};
                     mutexUnlock(&g_pak_index_lock);
-                    compatLogFmt("PAK ANIM ALIAS HIT: %s -> %s <- %s size=%u",
+                    compatPakLog("PAK ANIM ALIAS HIT: %s -> %s <- %s size=%u",
                                  wanted.c_str(), alias.c_str(), pakPathOut.c_str(),
                                  (unsigned)metaOut.uncompressedSize);
                     return true;
@@ -2994,7 +3096,7 @@ static bool pakFindVirtualEntry(const char* requested,
                 g_pak_lookup_cache[wanted] =
                     PakLookupCacheEntry{pakPathOut, metaOut};
                 mutexUnlock(&g_pak_index_lock);
-                compatLogFmt("PAK ANIM ALIAS HIT: %s -> %s <- %s size=%u",
+                compatPakLog("PAK ANIM ALIAS HIT: %s -> %s <- %s size=%u",
                              wanted.c_str(), alias.c_str(), pakPathOut.c_str(),
                              (unsigned)metaOut.uncompressedSize);
                 return true;
@@ -3016,10 +3118,12 @@ static bool pakFindVirtualEntry(const char* requested,
         const unsigned n =
             g_cafLookupDiagEvents.fetch_add(1);
         if (n < 64) {
-            compatLogFmt("PAK CAF MISS: %s", wanted.c_str());
+            compatPakLog("PAK CAF MISS: %s", wanted.c_str());
         }
     }
 
+    compatPakLog("QUERY FINAL_MISS: requested=%s normalized=%s",
+                 requested, wanted.c_str());
     return false;
 }
 
@@ -3225,13 +3329,13 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     PakEntryMeta meta;
     if (!pakFindVirtualEntry(requested, pakPath, meta)) {
         if (trace) {
-            compatLogFmt("PAK MEM TRACE MISS: requested=%s wanted=%s",
+            compatPakLog("PAK MEM TRACE MISS: requested=%s wanted=%s",
                          requested, wantedTrace.c_str());
         }
         return nullptr;
     }
     if (trace) {
-        compatLogFmt("PAK MEM TRACE FIND: requested=%s wanted=%s pak=%s c=%u u=%u method=%u local=%u",
+        compatPakLog("PAK MEM TRACE FIND: requested=%s wanted=%s pak=%s c=%u u=%u method=%u local=%u",
                      requested,
                      wantedTrace.c_str(),
                      pakPath.c_str(),
@@ -3245,10 +3349,10 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     bool cacheHit = false;
     if (!pakGetMemory(pakPath, meta, data, cacheHit)) {
         if (trace) {
-            compatLogFmt("PAK MEM TRACE READ_FAILED: %s <- %s",
+            compatPakLog("PAK MEM TRACE READ_FAILED: %s <- %s",
                          wantedTrace.c_str(), pakPath.c_str());
         } else {
-            compatLogFmt("PAK VIRTUAL READ FAILED: %s <- %s",
+            compatPakLog("PAK VIRTUAL READ FAILED: %s <- %s",
                          wantedTrace.c_str(),
                          pakPath.c_str());
         }
@@ -3256,7 +3360,7 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     }
 
     if (trace) {
-        compatLogFmt("PAK MEM TRACE %s: %s plain=%p plain_size=%zu pak=%s",
+        compatPakLog("PAK MEM TRACE %s: %s plain=%p plain_size=%zu pak=%s",
                      cacheHit ? "CACHE" : "DECOMP",
                      wantedTrace.c_str(),
                      (void*)data->data(),
@@ -3267,7 +3371,7 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     FILE* handle = vpakOpen(std::move(data), requested, trace);
     if (trace && handle) {
         VirtualPakFile* v = reinterpret_cast<VirtualPakFile*>(handle);
-        compatLogFmt("PAK MEM TRACE VFILE[%s]: %s handle=%p src=%p size=%zu",
+        compatPakLog("PAK MEM TRACE VFILE[%s]: %s handle=%p src=%p size=%zu",
                      cacheHit ? "CACHE" : "DECOMP",
                      wantedTrace.c_str(),
                      (void*)handle,
