@@ -7310,6 +7310,20 @@ static void shim_glTexParameterfv(GLenum target, GLenum pname, const GLfloat* pa
     }
 }
 
+static void shim_glEnableCompat(GLenum cap) {
+    glEnable(cap);
+    if (cap == 0x8620 || cap == 0x8804)
+        compatPakLog("GL ARB PROG: event=enable cap=0x%x(%s)",
+                     (unsigned)cap, nearArbProgramTargetName(cap));
+}
+
+static void shim_glDisableCompat(GLenum cap) {
+    glDisable(cap);
+    if (cap == 0x8620 || cap == 0x8804)
+        compatPakLog("GL ARB PROG: event=disable cap=0x%x(%s)",
+                     (unsigned)cap, nearArbProgramTargetName(cap));
+}
+
 static std::atomic<unsigned> g_waterDrawDiagCalls{0};
 
 static void nearLogWaterDrawState() {
@@ -7682,9 +7696,61 @@ using PFN_glGetProgramEnvParameterdvARB = void (*)(GLenum, GLuint, GLdouble*);
 using PFN_glGetProgramLocalParameterfvARB = void (*)(GLenum, GLuint, GLfloat*);
 using PFN_glGetProgramLocalParameterdvARB = void (*)(GLenum, GLuint, GLdouble*);
 
+static std::atomic<unsigned> g_arbProgramDiagCalls{0};
+
+static const char* nearArbProgramTargetName(GLenum target) {
+    if (target == 0x8620) return "VERTEX_PROGRAM_ARB";
+    if (target == 0x8804) return "FRAGMENT_PROGRAM_ARB";
+    return "OTHER";
+}
+
+static GLenum nearArbProgramBindingEnum(GLenum target) {
+    if (target == 0x8620) return 0x864A; // GL_VERTEX_PROGRAM_BINDING_ARB
+    if (target == 0x8804) return 0x8873; // GL_FRAGMENT_PROGRAM_BINDING_ARB
+    return 0;
+}
+
+static void nearLogArbProgramState(const char* event, GLenum target, GLuint requested) {
+    const unsigned n = g_arbProgramDiagCalls.fetch_add(1, std::memory_order_relaxed);
+    if (n >= 512)
+        return;
+
+    GLint binding = -1;
+    const GLenum bindingEnum = nearArbProgramBindingEnum(target);
+    if (bindingEnum)
+        glGetIntegerv(bindingEnum, &binding);
+
+    GLint length = -1;
+    GLint errorPos = -2;
+    if (binding > 0) {
+        static PFN_glGetProgramivARB getProgramiv =
+            resolveGLProc<PFN_glGetProgramivARB>("glGetProgramivARB");
+        if (getProgramiv) {
+            getProgramiv(target, 0x8627, &length); // GL_PROGRAM_LENGTH_ARB
+            glGetIntegerv(0x864B, &errorPos);      // GL_PROGRAM_ERROR_POSITION_ARB
+        }
+    }
+
+    GLboolean isProgram = GL_FALSE;
+    if (requested) {
+        static PFN_glIsProgramARB isProgramFn =
+            resolveGLProc<PFN_glIsProgramARB>("glIsProgramARB");
+        if (isProgramFn)
+            isProgram = isProgramFn(requested);
+    }
+
+    compatPakLog(
+        "GL ARB PROG: event=%s target=0x%x(%s) requested=%u binding=%d "
+        "is_program=%d length=%d error_pos=%d",
+        event, (unsigned)target, nearArbProgramTargetName(target),
+        (unsigned)requested, binding, isProgram ? 1 : 0, length, errorPos);
+}
+
 static void shim_glBindProgramARB(GLenum target, GLuint program) {
     static PFN_glBindProgramARB fn = resolveGLProc<PFN_glBindProgramARB>("glBindProgramARB");
     if (fn) fn(target, program);
+    if (target == 0x8620 || target == 0x8804)
+        nearLogArbProgramState("bind", target, program);
 }
 static void shim_glDeleteProgramsARB(GLsizei n, const GLuint* programs) {
     static PFN_glDeleteProgramsARB fn = resolveGLProc<PFN_glDeleteProgramsARB>("glDeleteProgramsARB");
@@ -7694,6 +7760,14 @@ static void shim_glGenProgramsARB(GLsizei n, GLuint* programs) {
     static PFN_glGenProgramsARB fn = resolveGLProc<PFN_glGenProgramsARB>("glGenProgramsARB");
     if (fn) fn(n, programs);
     else if (programs && n > 0) memset(programs, 0, sizeof(GLuint) * (size_t)n);
+
+    if (programs && n > 0 && g_arbProgramDiagCalls.load(std::memory_order_relaxed) < 512) {
+        const unsigned lim = std::min<unsigned>((unsigned)n, 16);
+        for (unsigned i = 0; i < lim; ++i)
+            compatPakLog("GL ARB PROG: event=gen program=%u is_program=%d",
+                         (unsigned)programs[i],
+                         programs[i] ? 1 : 0);
+    }
 }
 static GLboolean shim_glIsProgramARB(GLuint program) {
     static PFN_glIsProgramARB fn = resolveGLProc<PFN_glIsProgramARB>("glIsProgramARB");
@@ -7703,6 +7777,26 @@ static void shim_glProgramStringARB(GLenum target, GLenum format,
                                     GLsizei len, const void* string) {
     static PFN_glProgramStringARB fn = resolveGLProc<PFN_glProgramStringARB>("glProgramStringARB");
     if (fn) fn(target, format, len, string);
+
+    if ((target == 0x8620 || target == 0x8804) &&
+        g_arbProgramDiagCalls.load(std::memory_order_relaxed) < 512) {
+        GLint binding = -1;
+        GLint length = -1;
+        GLint errorPos = -2;
+        glGetIntegerv(nearArbProgramBindingEnum(target), &binding);
+        glGetIntegerv(0x864B, &errorPos); // GL_PROGRAM_ERROR_POSITION_ARB
+        if (binding > 0) {
+            static PFN_glGetProgramivARB getProgramiv =
+                resolveGLProc<PFN_glGetProgramivARB>("glGetProgramivARB");
+            if (getProgramiv)
+                getProgramiv(target, 0x8627, &length); // GL_PROGRAM_LENGTH_ARB
+        }
+        compatPakLog(
+            "GL ARB PROG: event=string target=0x%x(%s) binding=%d "
+            "input_len=%d stored_len=%d error_pos=%d",
+            (unsigned)target, nearArbProgramTargetName(target),
+            binding, len, length, errorPos);
+    }
 }
 static void shim_glProgramEnvParameter4fARB(GLenum target, GLuint index,
                                             GLfloat x, GLfloat y,
@@ -8799,11 +8893,11 @@ static const ShimEntry g_shims[] = {
     {"glDepthMask",         (void*)glDepthMask},
     {"glDepthRangef",       (void*)glDepthRangef},
     {"glDetachShader",      (void*)glDetachShader},
-    {"glDisable",           (void*)glDisable},
+    {"glDisable",           (void*)shim_glDisableCompat},
     {"glDisableVertexAttribArray",(void*)glDisableVertexAttribArray},
     {"glDrawArrays",        (void*)w_glDrawArrays},
     {"glDrawElements",      (void*)w_glDrawElements},
-    {"glEnable",            (void*)glEnable},
+    {"glEnable",            (void*)shim_glEnableCompat},
     {"glEnableVertexAttribArray",(void*)glEnableVertexAttribArray},
     {"glFinish",            (void*)glFinish},
     {"glFlush",             (void*)glFlush},
