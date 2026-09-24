@@ -7313,8 +7313,7 @@ static void shim_glTexParameterfv(GLenum target, GLenum pname, const GLfloat* pa
 static std::atomic<unsigned> g_waterDrawDiagCalls{0};
 
 static void nearLogWaterDrawState() {
-    unsigned trace = g_waterDrawDiagCalls.fetch_add(1, std::memory_order_relaxed);
-    if (trace >= 256)
+    if (g_waterDrawDiagCalls.load(std::memory_order_relaxed) >= 256)
         return;
 
     GLint maxUnits = 0;
@@ -7343,6 +7342,8 @@ static void nearLogWaterDrawState() {
 
     if (!foundWater || !program)
         return;
+
+    g_waterDrawDiagCalls.fetch_add(1, std::memory_order_relaxed);
 
     GLint uniformCount = 0;
     glGetProgramiv((GLuint)program, GL_ACTIVE_UNIFORMS, &uniformCount);
