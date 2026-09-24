@@ -6885,22 +6885,11 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                      (unsigned)type, (unsigned)before);
         nearLogTextureBytes(traceName, width, height, format, type);
 
-        // Only inspect client memory when no pixel-unpack buffer is active.
-        // In that case 'pixels' is a real CPU pointer. Keep this to 16 bytes
-        // so the diagnostic remains cheap and does not alter the upload.
-        char first16[64];
-        first16[0] = '\0';
-        if (pixels) {
-            const unsigned char* p = static_cast<const unsigned char*>(pixels);
-            const size_t n = 16;
-            size_t pos = 0;
-            for (size_t i = 0; i < n && pos + 4 < sizeof(first16); ++i)
-                pos += (size_t)snprintf(first16 + pos, sizeof(first16) - pos,
-                                        "%02x%s", (unsigned)p[i], i + 1 == n ? "" : " ");
-        }
-        compatPakLog("GL TEX PTR[%u]: name=%s pixels=%p first16=%s",
-                     traceIndex, traceName.c_str(), pixels,
-                     first16[0] ? first16 : "<null>");
+        // Do not dereference 'pixels' here: with a pixel-unpack buffer bound,
+        // this argument is an offset rather than a CPU pointer. The pointer value
+        // is still useful for correlating the upload without risking a crash.
+        compatPakLog("GL TEX PTR[%u]: name=%s pixels=%p",
+                     traceIndex, traceName.c_str(), pixels);
     }
     if (type == GL_FLOAT &&
         (isNearDsdtFormat(format) || isNearDsdtFormat((GLenum)internalformat))) {
