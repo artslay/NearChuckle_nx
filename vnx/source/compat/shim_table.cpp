@@ -125,6 +125,11 @@ static int vpakFdFstat(int fd, struct stat* st);
 static bool pakReadEntryToMemory(const std::string& pakPath,
                                  const PakEntryMeta& meta,
                                  std::vector<unsigned char>& plain);
+static bool pakGetMemory(
+    const std::string& pakPath,
+    const PakEntryMeta& meta,
+    std::shared_ptr<std::vector<unsigned char>>& data,
+    bool& cacheHit);
 static bool pakVirtualDirectoryExists(const char* directory);
 static bool isShaderCacheLookupPath(const char* path);
 static bool isShaderPathForDiag(const char* path);
