@@ -7310,6 +7310,8 @@ static void shim_glTexParameterfv(GLenum target, GLenum pname, const GLfloat* pa
     }
 }
 
+static const char* nearArbProgramTargetName(GLenum target);
+
 static void shim_glEnableCompat(GLenum cap) {
     glEnable(cap);
     if (cap == 0x8620 || cap == 0x8804)
@@ -7764,9 +7766,8 @@ static void shim_glGenProgramsARB(GLsizei n, GLuint* programs) {
     if (programs && n > 0 && g_arbProgramDiagCalls.load(std::memory_order_relaxed) < 512) {
         const unsigned lim = std::min<unsigned>((unsigned)n, 16);
         for (unsigned i = 0; i < lim; ++i)
-            compatPakLog("GL ARB PROG: event=gen program=%u is_program=%d",
-                         (unsigned)programs[i],
-                         programs[i] ? 1 : 0);
+            compatPakLog("GL ARB PROG: event=gen program=%u",
+                         (unsigned)programs[i]);
     }
 }
 static GLboolean shim_glIsProgramARB(GLuint program) {
