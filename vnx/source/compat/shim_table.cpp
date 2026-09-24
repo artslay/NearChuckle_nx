@@ -85,6 +85,7 @@ extern "C" {
 #include <cstdint>
 #include <cstddef>
 #include <vector>
+#include <memory>
 #include <string>
 #include <algorithm>
 #include <functional>
@@ -269,8 +270,9 @@ extern "C" uint32_t compatGuestCallReadFileEx(void* proxy) {
         return 0;
     }
 
-    std::vector<unsigned char> data;
-    if (!pakReadEntryToMemory(pakPath, meta, data)) {
+    std::shared_ptr<std::vector<unsigned char>> data;
+    bool cacheHit = false;
+    if (!pakGetMemory(pakPath, meta, data, cacheHit)) {
         complete(proxy, 0xF000000Cu, 0);
         return 0;
     }
@@ -1677,7 +1679,7 @@ static bool pakMemoryTraceBudget(const char* path) {
 }
 
 struct VirtualPakFile {
-    std::vector<unsigned char> data;
+    std::shared_ptr<std::vector<unsigned char>> data;
     size_t pos = 0;
     std::string name;
     unsigned traceReads = 0;
@@ -1686,6 +1688,89 @@ struct VirtualPakFile {
 
 static Mutex g_vpak_lock;
 static std::unordered_set<FILE*> g_vpak_handles;
+
+struct PakMemoryCacheEntry {
+    std::shared_ptr<std::vector<unsigned char>> data;
+    size_t bytes = 0;
+};
+
+static Mutex g_pak_memory_cache_lock;
+static std::unordered_map<std::string, PakMemoryCacheEntry> g_pak_memory_cache;
+static size_t g_pak_memory_cache_bytes = 0;
+static constexpr size_t kPakMemoryCacheMaxBytes = 192u * 1024u * 1024u;
+static constexpr size_t kPakMemoryCacheMaxEntryBytes = 16u * 1024u * 1024u;
+
+static std::string pakMemoryCacheKey(const std::string& pakPath,
+                                     const PakEntryMeta& meta) {
+    char key[160];
+    std::snprintf(key, sizeof(key), "%s|%u|%u|%u|%u",
+                  pakPath.c_str(),
+                  (unsigned)meta.localOffset,
+                  (unsigned)meta.compressedSize,
+                  (unsigned)meta.uncompressedSize,
+                  (unsigned)meta.method);
+    return std::string(key);
+}
+
+static bool pakGetCachedMemory(
+    const std::string& pakPath,
+    const PakEntryMeta& meta,
+    std::shared_ptr<std::vector<unsigned char>>& data) {
+    const std::string key = pakMemoryCacheKey(pakPath, meta);
+    mutexLock(&g_pak_memory_cache_lock);
+    auto it = g_pak_memory_cache.find(key);
+    if (it == g_pak_memory_cache.end()) {
+        mutexUnlock(&g_pak_memory_cache_lock);
+        return false;
+    }
+    data = it->second.data;
+    mutexUnlock(&g_pak_memory_cache_lock);
+    return (bool)data;
+}
+
+static void pakRememberMemory(
+    const std::string& pakPath,
+    const PakEntryMeta& meta,
+    const std::shared_ptr<std::vector<unsigned char>>& data) {
+    if (!data || data->empty() ||
+        data->size() > kPakMemoryCacheMaxEntryBytes)
+        return;
+
+    const size_t bytes = data->size();
+    const std::string key = pakMemoryCacheKey(pakPath, meta);
+
+    mutexLock(&g_pak_memory_cache_lock);
+    if (g_pak_memory_cache.find(key) != g_pak_memory_cache.end() ||
+        g_pak_memory_cache_bytes + bytes > kPakMemoryCacheMaxBytes) {
+        mutexUnlock(&g_pak_memory_cache_lock);
+        return;
+    }
+
+    g_pak_memory_cache.emplace(key, PakMemoryCacheEntry{data, bytes});
+    g_pak_memory_cache_bytes += bytes;
+    mutexUnlock(&g_pak_memory_cache_lock);
+}
+
+static bool pakGetMemory(
+    const std::string& pakPath,
+    const PakEntryMeta& meta,
+    std::shared_ptr<std::vector<unsigned char>>& data,
+    bool& cacheHit) {
+    cacheHit = pakGetCachedMemory(pakPath, meta, data);
+    if (cacheHit)
+        return true;
+
+    std::vector<unsigned char> plain;
+    if (!pakReadEntryToMemory(pakPath, meta, plain))
+        return false;
+
+    data = std::make_shared<std::vector<unsigned char>>(std::move(plain));
+    if (!data)
+        return false;
+
+    pakRememberMemory(pakPath, meta, data);
+    return true;
+}
 
 static bool vpakOwns(FILE* f) {
     if (!f)
@@ -1702,11 +1787,11 @@ static VirtualPakFile* vpakLookupLocked(FILE* f) {
     return reinterpret_cast<VirtualPakFile*>(f);
 }
 
-static FILE* vpakOpen(std::vector<unsigned char>&& data,
+static FILE* vpakOpen(std::shared_ptr<std::vector<unsigned char>> data,
                            const char* requested,
                            bool trace) {
     VirtualPakFile* v = new VirtualPakFile();
-    if (!v)
+    if (!v || !data)
         return nullptr;
     v->data = std::move(data);
     if (requested)
@@ -1725,12 +1810,12 @@ static size_t vpakRead(FILE* f, void* dst, size_t size, size_t count) {
 
     mutexLock(&g_vpak_lock);
     VirtualPakFile* v = vpakLookupLocked(f);
-    if (!v || v->pos >= v->data.size()) {
+    if (!v || v->pos >= v->data->size()) {
         mutexUnlock(&g_vpak_lock);
         return 0;
     }
 
-    const size_t maxBytes = v->data.size() - v->pos;
+    const size_t maxBytes = v->data->size() - v->pos;
     const size_t requested =
         (count > SIZE_MAX / size) ? SIZE_MAX : size * count;
     const size_t bytes = requested < maxBytes ? requested : maxBytes;
@@ -1740,11 +1825,11 @@ static size_t vpakRead(FILE* f, void* dst, size_t size, size_t count) {
         if (v->trace && v->traceReads < 8) {
             compatLogFmt("PAK MEM TRACE READ: %s src=%p dst=%p pos=%zu bytes=%zu size=%zu",
                          v->name.c_str(),
-                         (void*)(v->data.data() + v->pos),
-                         dst, v->pos, whole, v->data.size());
+                         (void*)(v->data->data() + v->pos),
+                         dst, v->pos, whole, v->data->size());
             ++v->traceReads;
         }
-        memcpy(dst, v->data.data() + v->pos, whole);
+        memcpy(dst, v->data->data() + v->pos, whole);
         v->pos += whole;
     }
 
@@ -1766,14 +1851,14 @@ static int vpakSeek(FILE* f, int64_t off, int whence) {
     else if (whence == SEEK_CUR)
         base = (int64_t)v->pos;
     else if (whence == SEEK_END)
-        base = (int64_t)v->data.size();
+        base = (int64_t)v->data->size();
     else {
         mutexUnlock(&g_vpak_lock);
         return -1;
     }
 
     const int64_t next = base + off;
-    if (next < 0 || (uint64_t)next > (uint64_t)v->data.size()) {
+    if (next < 0 || (uint64_t)next > (uint64_t)v->data->size()) {
         mutexUnlock(&g_vpak_lock);
         return -1;
     }
@@ -1794,11 +1879,11 @@ static long long vpakTell64(FILE* f) {
 static int vpakGetc(FILE* f) {
     mutexLock(&g_vpak_lock);
     VirtualPakFile* v = vpakLookupLocked(f);
-    if (!v || v->pos >= v->data.size()) {
+    if (!v || v->pos >= v->data->size()) {
         mutexUnlock(&g_vpak_lock);
         return EOF;
     }
-    const int c = v->data[v->pos++];
+    const int c = (*v->data)[v->pos++];
     mutexUnlock(&g_vpak_lock);
     return c;
 }
@@ -1806,7 +1891,7 @@ static int vpakGetc(FILE* f) {
 static int vpakEof(FILE* f) {
     mutexLock(&g_vpak_lock);
     VirtualPakFile* v = vpakLookupLocked(f);
-    const int eof = !v || v->pos >= v->data.size();
+    const int eof = !v || v->pos >= v->data->size();
     mutexUnlock(&g_vpak_lock);
     return eof ? 1 : 0;
 }
@@ -1830,7 +1915,7 @@ static int vpakClose(FILE* f) {
 // stdio and uses open/read/lseek directly. Keep those handles entirely in
 // memory too; never create a loose copy of the PAK entry.
 struct VirtualPakFd {
-    std::vector<unsigned char> data;
+    std::shared_ptr<std::vector<unsigned char>> data;
     off_t pos = 0;
     std::string name;
     unsigned traceReads = 0;
@@ -1880,8 +1965,9 @@ static int vpakFdOpen(const char* requested, int flags) {
                      (unsigned)meta.method, meta.localOffset);
     }
 
-    std::vector<unsigned char> data;
-    if (!pakReadEntryToMemory(pakPath, meta, data)) {
+    std::shared_ptr<std::vector<unsigned char>> data;
+    bool cacheHit = false;
+    if (!pakGetMemory(pakPath, meta, data, cacheHit)) {
         if (trace) {
             compatLogFmt("PAK MEM TRACE FD_READ_FAILED: %s <- %s",
                          wantedTrace.c_str(), pakPath.c_str());
@@ -1894,8 +1980,9 @@ static int vpakFdOpen(const char* requested, int flags) {
     }
 
     if (trace) {
-        compatLogFmt("PAK MEM TRACE FD_DECOMP: %s plain=%p plain_size=%zu pak=%s",
-                     wantedTrace.c_str(), (void*)data.data(), data.size(),
+        compatLogFmt("PAK MEM TRACE FD_%s: %s plain=%p plain_size=%zu pak=%s",
+                     cacheHit ? "CACHE" : "DECOMP",
+                     wantedTrace.c_str(), (void*)data->data(), data->size(),
                      pakPath.c_str());
     }
 
@@ -1933,7 +2020,7 @@ static int vpakFdOpen(const char* requested, int flags) {
 
     compatLogFmt("PAK VIRTUAL FD OPEN: %s <- %s fd=%d size=%zu",
                  pakAssetRelativeName(requested).c_str(),
-                 pakPath.c_str(), chosen, v->data.size());
+                 pakPath.c_str(), chosen, v->data->size());
     return chosen;
 }
 
@@ -1952,22 +2039,22 @@ static ssize_t vpakFdRead(int fd, void* dst, size_t count) {
     }
 
     VirtualPakFd* v = it->second;
-    if (v->pos >= (off_t)v->data.size()) {
+    if (v->pos >= (off_t)v->data->size()) {
         mutexUnlock(&g_vpak_fd_lock);
         return 0;
     }
 
-    const size_t available = v->data.size() - (size_t)v->pos;
+    const size_t available = v->data->size() - (size_t)v->pos;
     const size_t bytes = count < available ? count : available;
     if (bytes) {
         if (v->trace && v->traceReads < 8) {
             compatLogFmt("PAK MEM TRACE FDREAD: %s fd=%d src=%p dst=%p pos=%lld bytes=%zu size=%zu",
                          v->name.c_str(), fd,
-                         (void*)(v->data.data() + v->pos),
-                         dst, (long long)v->pos, bytes, v->data.size());
+                         (void*)(v->data->data() + v->pos),
+                         dst, (long long)v->pos, bytes, v->data->size());
             ++v->traceReads;
         }
-        memcpy(dst, v->data.data() + v->pos, bytes);
+        memcpy(dst, v->data->data() + v->pos, bytes);
     }
     v->pos += (off_t)bytes;
     mutexUnlock(&g_vpak_fd_lock);
@@ -1990,7 +2077,7 @@ static off_t vpakFdSeek(int fd, off_t off, int whence) {
     else if (whence == SEEK_CUR)
         base = v->pos;
     else if (whence == SEEK_END)
-        base = (off_t)v->data.size();
+        base = (off_t)v->data->size();
     else {
         mutexUnlock(&g_vpak_fd_lock);
         errno = EINVAL;
@@ -1998,7 +2085,7 @@ static off_t vpakFdSeek(int fd, off_t off, int whence) {
     }
 
     const off_t next = base + off;
-    if (next < 0 || next > (off_t)v->data.size()) {
+    if (next < 0 || next > (off_t)v->data->size()) {
         mutexUnlock(&g_vpak_fd_lock);
         errno = EINVAL;
         return (off_t)-1;
@@ -2024,22 +2111,22 @@ static ssize_t vpakFdPread(int fd, void* dst, size_t count, off_t offset) {
     }
 
     VirtualPakFd* v = it->second;
-    if (offset < 0 || offset >= (off_t)v->data.size()) {
+    if (offset < 0 || offset >= (off_t)v->data->size()) {
         mutexUnlock(&g_vpak_fd_lock);
         return 0;
     }
 
-    const size_t available = v->data.size() - (size_t)offset;
+    const size_t available = v->data->size() - (size_t)offset;
     const size_t bytes = count < available ? count : available;
     if (bytes) {
         if (v->trace && v->traceReads < 8) {
             compatLogFmt("PAK MEM TRACE FDPREAD: %s fd=%d src=%p dst=%p pos=%lld bytes=%zu size=%zu",
                          v->name.c_str(), fd,
-                         (void*)(v->data.data() + offset),
-                         dst, (long long)offset, bytes, v->data.size());
+                         (void*)(v->data->data() + offset),
+                         dst, (long long)offset, bytes, v->data->size());
             ++v->traceReads;
         }
-        memcpy(dst, v->data.data() + offset, bytes);
+        memcpy(dst, v->data->data() + offset, bytes);
     }
     mutexUnlock(&g_vpak_fd_lock);
     return (ssize_t)bytes;
@@ -2078,9 +2165,9 @@ static int vpakFdFstat(int fd, struct stat* st) {
     std::memset(st, 0, sizeof(*st));
     st->st_mode = S_IFREG | 0444;
     st->st_nlink = 1;
-    st->st_size = (off_t)it->second->data.size();
+    st->st_size = (off_t)it->second->data->size();
     st->st_blksize = 4096;
-    st->st_blocks = (blkcnt_t)((it->second->data.size() + 511u) / 512u);
+    st->st_blocks = (blkcnt_t)((it->second->data->size() + 511u) / 512u);
     mutexUnlock(&g_vpak_fd_lock);
     return 0;
 }
@@ -3153,21 +3240,23 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     }
 
     if (trace) {
-        compatLogFmt("PAK MEM TRACE DECOMP: %s plain=%p plain_size=%zu pak=%s",
+        compatLogFmt("PAK MEM TRACE %s: %s plain=%p plain_size=%zu pak=%s",
+                     cacheHit ? "CACHE" : "DECOMP",
                      wantedTrace.c_str(),
-                     (void*)data.data(),
-                     data.size(),
+                     (void*)data->data(),
+                     data->size(),
                      pakPath.c_str());
     }
 
     FILE* handle = vpakOpen(std::move(data), requested, trace);
     if (trace && handle) {
         VirtualPakFile* v = reinterpret_cast<VirtualPakFile*>(handle);
-        compatLogFmt("PAK MEM TRACE VFILE: %s handle=%p src=%p size=%zu",
+        compatLogFmt("PAK MEM TRACE VFILE[%s]: %s handle=%p src=%p size=%zu",
+                     cacheHit ? "CACHE" : "DECOMP",
                      wantedTrace.c_str(),
                      (void*)handle,
-                     (void*)v->data.data(),
-                     v->data.size());
+                     (void*)v->data->data(),
+                     v->data->size());
     }
     return handle;
 }
