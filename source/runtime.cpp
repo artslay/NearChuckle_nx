@@ -50,6 +50,35 @@ static void pak_diag_open() {
     }
 }
 
+static bool isTargetPakTextureDiagLine(const char* msg) {
+    if (!msg || !*msg)
+        return false;
+
+    std::string s(msg);
+    for (char& c : s)
+        c = (char)std::tolower((unsigned char)c);
+
+    // Keep the dedicated PAK log focused on the texture families involved in
+    // the current Training-level rendering problem. Everything else still
+    // goes through the normal filesystem/PAK path, but does not pollute this
+    // diagnostic file.
+    static const char* const needles[] = {
+        "causq",
+        "water_",
+        "w01blue03",
+        "fresnel14",
+        "cylinderbump_ddp",
+        "_ddn",
+        "_ddp"
+    };
+
+    for (const char* needle : needles) {
+        if (s.find(needle) != std::string::npos)
+            return true;
+    }
+    return false;
+}
+
 void compatPakLog(const char* fmt, ...) {
     if (!fmt)
         return;
@@ -59,6 +88,9 @@ void compatPakLog(const char* fmt, ...) {
     va_start(args, fmt);
     std::vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
+
+    if (!isTargetPakTextureDiagLine(buf))
+        return;
 
     mutexLock(&g_pak_diag_lock);
     pak_diag_open();
