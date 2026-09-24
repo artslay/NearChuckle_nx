@@ -2708,6 +2708,24 @@ static void pakTraceMissDetails(const std::string& wanted) {
     }
 }
 
+static void getAnimationAliasCandidates(const std::string& wanted,
+                                               std::vector<std::string>& candidates) {
+    candidates.clear();
+
+    if (wanted == "objects/characters/animations/shared/pidle_loop.caf") {
+        candidates.emplace_back("objects/characters/animations/human_male/pidle_loop.caf");
+    } else if (wanted == "objects/characters/animations/shared/humvee_passenger2_out.caf") {
+        candidates.emplace_back("objects/characters/animations/vehicles/humvee_passenger2_out.caf");
+    } else if (wanted == "objects/characters/animations/shared/humvee_passenger3_sit_loop.caf") {
+        candidates.emplace_back("objects/characters/animations/vehicles/humvee_passenger3_sit_loop.caf");
+    } else if (wanted == "objects/characters/animations/human_male/awalkback_loop.caf") {
+        // The standard Far Cry animation list uses xwalkback_loop.caf for
+        // the awalkback animation. Keep the alias at the PAK layer so the
+        // animation record itself remains untouched.
+        candidates.emplace_back("objects/characters/animations/human_male/xwalkback_loop.caf");
+    }
+}
+
 static bool pakFindVirtualEntry(const char* requested,
                                std::string& pakPathOut,
                                PakEntryMeta& metaOut) {
@@ -2802,6 +2820,48 @@ static bool pakFindVirtualEntry(const char* requested,
             }
         }
         return true;
+    }
+
+    // Some Android Far Cry data builds contain stale/relocated
+    // animation filenames in the .cal tables. The canonical CAF is still
+    // present in Objects.pak, but under its original animation directory.
+    // Resolve only the four verified compatibility aliases instead of doing
+    // a broad basename/fuzzy search.
+    {
+        std::vector<std::string> aliases;
+        getAnimationAliasCandidates(wanted, aliases);
+        for (const std::string& alias : aliases) {
+            for (const std::string& levelPak : activeLevelPaks) {
+                if (pakFindEntryCached(levelPak, alias, metaOut)) {
+                    pakPathOut = levelPak;
+                    mutexLock(&g_pak_index_lock);
+                    g_pak_lookup_cache[wanted] =
+                        PakLookupCacheEntry{pakPathOut, metaOut};
+                    mutexUnlock(&g_pak_index_lock);
+                    compatLogFmt("PAK ANIM ALIAS HIT: %s -> %s <- %s size=%u",
+                                 wanted.c_str(), alias.c_str(), pakPathOut.c_str(),
+                                 (unsigned)metaOut.uncompressedSize);
+                    return true;
+                }
+            }
+
+            const std::vector<std::string> globalPaks =
+                getGlobalPakPathsSnapshot();
+            for (auto it = globalPaks.rbegin(); it != globalPaks.rend(); ++it) {
+                if (!pakFindEntryCached(*it, alias, metaOut))
+                    continue;
+
+                pakPathOut = *it;
+                mutexLock(&g_pak_index_lock);
+                g_pak_lookup_cache[wanted] =
+                    PakLookupCacheEntry{pakPathOut, metaOut};
+                mutexUnlock(&g_pak_index_lock);
+                compatLogFmt("PAK ANIM ALIAS HIT: %s -> %s <- %s size=%u",
+                             wanted.c_str(), alias.c_str(), pakPathOut.c_str(),
+                             (unsigned)metaOut.uncompressedSize);
+                return true;
+            }
+        }
     }
 
     const bool wantedIsCaf =
