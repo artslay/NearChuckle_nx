@@ -7322,7 +7322,6 @@ static void nearLogWaterDrawState() {
     GLint currentTexture = 0;
     GLint vertexProgram = 0;
     GLint fragmentProgram = 0;
-    GLint textureEnvMode = 0;
 
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &maxUnits);
     glGetIntegerv(GL_CURRENT_PROGRAM, &program);
@@ -7330,12 +7329,11 @@ static void nearLogWaterDrawState() {
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &currentTexture);
 
     // Legacy ARB program state used by Far Cry's OpenGL renderer.
-    // Numeric enums keep this diagnostic independent of header exposure.
     glGetIntegerv(0x864A, &vertexProgram);   // GL_VERTEX_PROGRAM_BINDING_ARB
-    glGetIntegerv(0x8677, &fragmentProgram); // GL_FRAGMENT_PROGRAM_BINDING_ARB
+    glGetIntegerv(0x8873, &fragmentProgram); // GL_FRAGMENT_PROGRAM_BINDING_ARB
 
-    if (glIsEnabled(GL_TEXTURE_2D))
-        glGetTexEnviv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, &textureEnvMode);
+    const GLboolean fragmentEnabled = glIsEnabled(0x8804); // GL_FRAGMENT_PROGRAM_ARB
+    const GLboolean vertexEnabled = glIsEnabled(0x8620);  // GL_VERTEX_PROGRAM_ARB
 
     const GLint units = std::max(0, std::min(maxUnits, 32));
     bool foundWater = false;
@@ -7350,23 +7348,38 @@ static void nearLogWaterDrawState() {
         if (name.empty())
             continue;
 
+        // Query state belonging to the same texture unit. The active unit at
+        // draw time may legitimately be a different unit.
+        const GLenum savedActive = (GLenum)activeTexture;
+        const GLenum unitEnum = GL_TEXTURE0 + (GLenum)unit;
+        GLint enabled = 0;
+        GLint envMode = 0;
+        glActiveTexture(unitEnum);
+        enabled = glIsEnabled(GL_TEXTURE_2D) ? 1 : 0;
+        if (enabled)
+            glGetTexEnviv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, &envMode);
+        glActiveTexture(savedActive);
+
         foundWater = true;
         compatPakLog(
             "GL TEX DRAW: program=%d unit=%d texture=%d name=%s "
-            "active=0x%x current_texture=%d tex2d=%d texenv=0x%x "
-            "vertex_program=%d fragment_program=%d fragment_enabled=%d",
+            "active=0x%x current_texture=%d unit_tex2d=%d unit_texenv=0x%x "
+            "vertex_program=%d vertex_enabled=%d fragment_program=%d fragment_enabled=%d",
             program, unit, texture, name.c_str(),
             (unsigned)activeTexture, currentTexture,
-            glIsEnabled(GL_TEXTURE_2D) ? 1 : 0,
-            (unsigned)textureEnvMode,
-            vertexProgram, fragmentProgram,
-            glIsEnabled(0x8804) ? 1 : 0);
+            enabled, (unsigned)envMode,
+            vertexProgram, vertexEnabled ? 1 : 0,
+            fragmentProgram, fragmentEnabled ? 1 : 0);
     }
 
-    if (!foundWater || !program)
+    if (!foundWater) 
         return;
 
     g_waterDrawDiagCalls.fetch_add(1, std::memory_order_relaxed);
+
+    // Sampler uniforms are only meaningful for a core/GLSL program.
+    if (!program)
+        return;
 
     GLint uniformCount = 0;
     glGetProgramiv((GLuint)program, GL_ACTIVE_UNIFORMS, &uniformCount);
@@ -7382,7 +7395,7 @@ static void nearLogWaterDrawState() {
         if (type != GL_SAMPLER_2D)
             continue;
 
-        uname[std::min<int>(nameLen, (int)sizeof(uname) - 1)] = '\\0';
+        uname[std::min<int>(nameLen, (int)sizeof(uname) - 1)] = '\0';
         const GLint location = glGetUniformLocation((GLuint)program, uname);
         if (location < 0)
             continue;
