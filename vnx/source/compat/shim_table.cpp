@@ -6968,6 +6968,183 @@ static void nearLogTextureBytes(const std::string& name,
         skipOffset, requiredBytes, (int)width, (int)height);
 }
 
+static bool nearIsWaterTextureDiagName(const std::string& name) {
+    std::string s(name);
+    for (char& c : s)
+        c = (char)std::tolower((unsigned char)c);
+
+    return s.find("caust") != std::string::npos ||
+           s.find("causq") != std::string::npos ||
+           s.find("water_") != std::string::npos;
+}
+
+static uint64_t nearFnv1a64(const unsigned char* data, size_t size) {
+    uint64_t h = 1469598103934665603ULL;
+    for (size_t i = 0; i < size; ++i) {
+        h ^= (uint64_t)data[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static bool nearHashSourceAsRgba(const void* pixels,
+                                 GLsizei width, GLsizei height,
+                                 GLenum format, GLenum type,
+                                 uint64_t& hash,
+                                 unsigned char first[16]) {
+    if (!pixels || width <= 0 || height <= 0 || type != GL_UNSIGNED_BYTE)
+        return false;
+
+    const unsigned components = nearGlFormatComponents(format);
+    if (components < 3 || components > 4)
+        return false;
+    if (format != GL_RGB && format != GL_RGBA &&
+        format != GL_BGR && format != GL_BGRA)
+        return false;
+
+    const uint64_t rowPixels = g_glUnpackRowLength > 0
+        ? (uint64_t)g_glUnpackRowLength
+        : (uint64_t)width;
+    const uint64_t tightRow = rowPixels * (uint64_t)components;
+    const unsigned alignment =
+        g_glUnpackAlignment > 0 ? (unsigned)g_glUnpackAlignment : 1u;
+    const uint64_t paddedRow =
+        ((tightRow + alignment - 1u) / alignment) * alignment;
+    const uint64_t skipOffset =
+        (uint64_t)std::max<GLint>(g_glUnpackSkipRows, 0) * paddedRow +
+        (uint64_t)std::max<GLint>(g_glUnpackSkipPixels, 0) * components;
+    const uint64_t sourceSpan =
+        height > 0
+            ? skipOffset +
+              (uint64_t)(height - 1) * paddedRow +
+              (uint64_t)width * components
+            : skipOffset;
+
+    // Diagnostic only: never scan arbitrarily large guest buffers.
+    if (sourceSpan > 4ULL * 1024ULL * 1024ULL)
+        return false;
+
+    uint64_t h = 1469598103934665603ULL;
+    size_t firstCount = 0;
+    const unsigned char* base =
+        reinterpret_cast<const unsigned char*>(pixels) + skipOffset;
+
+    for (GLsizei y = 0; y < height; ++y) {
+        const unsigned char* row =
+            base + (uint64_t)y * paddedRow;
+        for (GLsizei x = 0; x < width; ++x) {
+            const unsigned char* p = row + (size_t)x * components;
+            unsigned char rgba[4];
+
+            if (format == GL_BGRA) {
+                rgba[0] = p[2];
+                rgba[1] = p[1];
+                rgba[2] = p[0];
+                rgba[3] = components == 4 ? p[3] : 255;
+            } else if (format == GL_BGR) {
+                rgba[0] = p[2];
+                rgba[1] = p[1];
+                rgba[2] = p[0];
+                rgba[3] = 255;
+            } else if (format == GL_RGBA) {
+                rgba[0] = p[0];
+                rgba[1] = p[1];
+                rgba[2] = p[2];
+                rgba[3] = p[3];
+            } else {
+                rgba[0] = p[0];
+                rgba[1] = p[1];
+                rgba[2] = p[2];
+                rgba[3] = 255;
+            }
+
+            for (unsigned k = 0; k < 4; ++k) {
+                h ^= (uint64_t)rgba[k];
+                h *= 1099511628211ULL;
+                if (firstCount < 16)
+                    first[firstCount++] = rgba[k];
+            }
+        }
+    }
+
+    hash = h;
+    return true;
+}
+
+static void nearVerifyUploadedTexture(const std::string& name,
+                                      GLenum target, GLint level,
+                                      GLsizei width, GLsizei height,
+                                      GLenum format, GLenum type,
+                                      const void* pixels,
+                                      GLint unpackBuffer,
+                                      GLenum uploadError) {
+    if (!nearIsWaterTextureDiagName(name) ||
+        target != GL_TEXTURE_2D || level != 0 ||
+        unpackBuffer != 0 || !pixels ||
+        width <= 0 || height <= 0 ||
+        width > 512 || height > 512 ||
+        type != GL_UNSIGNED_BYTE)
+        return;
+
+    unsigned char sourceFirst[16] = {};
+    uint64_t sourceHash = 0;
+    const bool sourceOk = nearHashSourceAsRgba(
+        pixels, width, height, format, type, sourceHash, sourceFirst);
+
+    GLint storedW = -1;
+    GLint storedH = -1;
+    GLint storedInternal = -1;
+    glGetTexLevelParameteriv(target, level, GL_TEXTURE_WIDTH, &storedW);
+    glGetTexLevelParameteriv(target, level, GL_TEXTURE_HEIGHT, &storedH);
+    glGetTexLevelParameteriv(target, level, GL_TEXTURE_INTERNAL_FORMAT,
+                             &storedInternal);
+    const GLenum queryError = glGetError();
+
+    const size_t readbackBytes =
+        (size_t)width * (size_t)height * 4u;
+    unsigned char* readback =
+        (unsigned char*)std::malloc(readbackBytes);
+    uint64_t gpuHash = 0;
+    unsigned char gpuFirst[16] = {};
+    GLenum readbackError = GL_NO_ERROR;
+
+    if (!readback) {
+        readbackError = GL_OUT_OF_MEMORY;
+    } else {
+        std::memset(readback, 0, readbackBytes);
+        glGetTexImage(target, level, GL_RGBA, GL_UNSIGNED_BYTE, readback);
+        readbackError = glGetError();
+        if (readbackError == GL_NO_ERROR) {
+            gpuHash = nearFnv1a64(readback, readbackBytes);
+            const size_t n = readbackBytes < 16 ? readbackBytes : 16;
+            std::memcpy(gpuFirst, readback, n);
+        }
+        std::free(readback);
+    }
+
+    compatPakLog(
+        "GL TEX VERIFY: name=%s level=%d source_ok=%d source_hash=0x%016" PRIx64
+        " source_rgba16=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x "
+        "stored=%dx%d stored_internal=0x%x queryerr=0x%x uploaderr=0x%x "
+        "gpu_hash=0x%016" PRIx64
+        " gpu_rgba16=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x "
+        "readbackerr=0x%x match=%s",
+        name.c_str(), level, sourceOk ? 1 : 0, sourceHash,
+        sourceFirst[0], sourceFirst[1], sourceFirst[2], sourceFirst[3],
+        sourceFirst[4], sourceFirst[5], sourceFirst[6], sourceFirst[7],
+        sourceFirst[8], sourceFirst[9], sourceFirst[10], sourceFirst[11],
+        sourceFirst[12], sourceFirst[13], sourceFirst[14], sourceFirst[15],
+        storedW, storedH, (unsigned)storedInternal, (unsigned)queryError,
+        (unsigned)uploadError, gpuHash,
+        gpuFirst[0], gpuFirst[1], gpuFirst[2], gpuFirst[3],
+        gpuFirst[4], gpuFirst[5], gpuFirst[6], gpuFirst[7],
+        gpuFirst[8], gpuFirst[9], gpuFirst[10], gpuFirst[11],
+        gpuFirst[12], gpuFirst[13], gpuFirst[14], gpuFirst[15],
+        (unsigned)readbackError,
+        (sourceOk && readbackError == GL_NO_ERROR && sourceHash == gpuHash)
+            ? "YES" : "NO");
+}
+
 static const char* nearGlTexTargetName(GLenum target) {
     switch (target) {
     case GL_TEXTURE_2D: return "TEXTURE_2D";
@@ -7015,6 +7192,8 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 #endif
 #ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
     GLint unpackBuffer = 0;
+#else
+    const GLint unpackBuffer = 0;
 #endif
     const void* caller = nullptr;
 
@@ -7122,6 +7301,7 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 
         glTexImage2D(target, level, (GLint)mappedInternal, width, height, border,
                      mappedFormat, type, pixels);
+        const GLenum uploadError = glGetError();
         if (traceThis) {
             compatPakLog(
                 "GL TEX RESULT[%u]: name=%s path=DSDT mapped_internal=0x%x "
@@ -7129,20 +7309,27 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                 "type=0x%x glerr=0x%x",
                 traceIndex, traceName.c_str(), (unsigned)mappedInternal,
                 (unsigned)mappedFormat, (unsigned)(GLenum)internalformat,
-                (unsigned)format, (unsigned)type, (unsigned)glGetError());
+                (unsigned)format, (unsigned)type, (unsigned)uploadError);
         }
+        nearVerifyUploadedTexture(traceName, target, level, width, height,
+                                  mappedFormat, type, pixels, unpackBuffer,
+                                  uploadError);
         return;
     }
 
     glTexImage2D(target, level, internalformat, width, height, border,
                  format, type, pixels);
+    const GLenum uploadError = glGetError();
     if (traceThis) {
         compatPakLog(
             "GL TEX RESULT[%u]: name=%s path=normal internal=0x%x format=0x%x "
             "type=0x%x glerr=0x%x",
             traceIndex, traceName.c_str(), (unsigned)(GLenum)internalformat,
-            (unsigned)format, (unsigned)type, (unsigned)glGetError());
+            (unsigned)format, (unsigned)type, (unsigned)uploadError);
     }
+    nearVerifyUploadedTexture(traceName, target, level, width, height,
+                              format, type, pixels, unpackBuffer,
+                              uploadError);
 }
 
 static void shim_glTexSubImage2D(GLenum target, GLint level,
