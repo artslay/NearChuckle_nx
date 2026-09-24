@@ -58,7 +58,7 @@ static bool isTargetPakTextureDiagLine(const char* msg) {
     // PAK lookup/index/read traces are still performed normally and remain
     // available through the regular engine log, but do not pollute this file.
     return std::strncmp(msg, "GL TEX ", 7) == 0 ||
-           std::strncmp(msg, "GL PIXELSTORE ", 14) == 0;
+           std::strncmp(msg, "GL PIXELSTORE", 13) == 0;
 }
 
 void compatPakLog(const char* fmt, ...) {
