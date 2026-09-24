@@ -7183,6 +7183,78 @@ static const char* nearGlTexTargetName(GLenum target) {
 
 static Mutex g_textureStateDiagLock;
 static std::unordered_map<GLuint, std::string> g_glTextureDiagNames;
+static std::unordered_map<GLuint, GLuint> g_glSamplerDiagUnits;
+
+static bool nearSamplerIsBound(GLuint sampler) {
+    if (!sampler)
+        return false;
+    mutexLock(&g_textureStateDiagLock);
+    bool bound = false;
+    for (const auto& kv : g_glSamplerDiagUnits) {
+        if (kv.second == sampler) {
+            bound = true;
+            break;
+        }
+    }
+    mutexUnlock(&g_textureStateDiagLock);
+    return bound;
+}
+
+static void shim_glBindSampler(GLuint unit, GLuint sampler) {
+    glBindSampler(unit, sampler);
+    mutexLock(&g_textureStateDiagLock);
+    if (sampler)
+        g_glSamplerDiagUnits[unit] = sampler;
+    else
+        g_glSamplerDiagUnits.erase(unit);
+    mutexUnlock(&g_textureStateDiagLock);
+
+    compatPakLog(
+        "GL TEX STATE: event=bindSampler unit=%u sampler=%u",
+        (unsigned)unit, (unsigned)sampler);
+}
+
+static void shim_glSamplerParameteri(GLuint sampler, GLenum pname, GLint param) {
+    glSamplerParameteri(sampler, pname, param);
+    if (nearSamplerIsBound(sampler)) {
+        compatPakLog(
+            "GL TEX STATE: event=samplerParameteri sampler=%u pname=0x%x param=%d",
+            (unsigned)sampler, (unsigned)pname, param);
+    }
+}
+
+static void shim_glSamplerParameterf(GLuint sampler, GLenum pname, GLfloat param) {
+    glSamplerParameterf(sampler, pname, param);
+    if (nearSamplerIsBound(sampler)) {
+        compatPakLog(
+            "GL TEX STATE: event=samplerParameterf sampler=%u pname=0x%x param=%g",
+            (unsigned)sampler, (unsigned)pname, (double)param);
+    }
+}
+
+static void shim_glSamplerParameteriv(GLuint sampler, GLenum pname, const GLint* params) {
+    glSamplerParameteriv(sampler, pname, params);
+    if (nearSamplerIsBound(sampler) && params) {
+        compatPakLog(
+            "GL TEX STATE: event=samplerParameteriv sampler=%u pname=0x%x param0=%d",
+            (unsigned)sampler, (unsigned)pname, params[0]);
+    }
+}
+
+static void shim_glSamplerParameterfv(GLuint sampler, GLenum pname, const GLfloat* params) {
+    glSamplerParameterfv(sampler, pname, params);
+    if (nearSamplerIsBound(sampler) && params) {
+        compatPakLog(
+            "GL TEX STATE: event=samplerParameterfv sampler=%u pname=0x%x param0=%g",
+            (unsigned)sampler, (unsigned)pname, (double)params[0]);
+    }
+}
+
+static bool nearSamplerDiagAnyUnitBound(GLuint sampler) {
+    return nearSamplerIsBound(sampler);
+}
+static Mutex g_textureStateDiagLock;
+static std::unordered_map<GLuint, std::string> g_glTextureDiagNames;
 
 static std::string nearBoundTextureDiagName(GLuint texture) {
     if (!texture)
@@ -8807,7 +8879,7 @@ static const ShimEntry g_shims[] = {
     {"glBeginTransformFeedback",(void*)glBeginTransformFeedback},
     {"glBindBufferBase",       (void*)glBindBufferBase},
     {"glBindBufferRange",      (void*)glBindBufferRange},
-    {"glBindSampler",          (void*)glBindSampler},
+    {"glBindSampler",          (void*)shim_glBindSampler},
     {"glBindTransformFeedback",(void*)glBindTransformFeedback},
     {"glBindVertexArray",      (void*)glBindVertexArray},
     {"glBlitFramebuffer",      (void*)glBlitFramebuffer},
@@ -8850,10 +8922,10 @@ static const ShimEntry g_shims[] = {
     {"glReadBuffer",           (void*)glReadBuffer},
     {"glRenderbufferStorageMultisample",(void*)glRenderbufferStorageMultisample},
     {"glResumeTransformFeedback",(void*)glResumeTransformFeedback},
-    {"glSamplerParameterf",    (void*)glSamplerParameterf},
-    {"glSamplerParameterfv",   (void*)glSamplerParameterfv},
-    {"glSamplerParameteri",    (void*)glSamplerParameteri},
-    {"glSamplerParameteriv",   (void*)glSamplerParameteriv},
+    {"glSamplerParameterf",    (void*)shim_glSamplerParameterf},
+    {"glSamplerParameterfv",   (void*)shim_glSamplerParameterfv},
+    {"glSamplerParameteri",    (void*)shim_glSamplerParameteri},
+    {"glSamplerParameteriv",   (void*)shim_glSamplerParameteriv},
     {"glTexImage3D",           (void*)glTexImage3D},
     {"glTexStorage2D",         (void*)glTexStorage2D},
     {"glTexStorage3D",         (void*)glTexStorage3D},
