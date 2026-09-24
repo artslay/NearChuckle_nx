@@ -2888,20 +2888,25 @@ static bool isCriticalCafDiagPath(const char* path) {
     if (!path || !*path)
         return false;
 
-    std::string lower(path);
-    for (char& c : lower)
-        c = (char)std::tolower((unsigned char)c);
+    std::string normalized(path);
+    for (char& c : normalized) {
+        if (c == '\\\\')
+            c = '/';
+        else
+            c = (char)std::tolower((unsigned char)c);
+    }
 
-    return lower.find("objects\\\\characters\\\\animations\\\\shared\\\\pidle_loop.caf") != std::string::npos ||
-           lower.find("objects/characters/animations/shared/pidle_loop.caf") != std::string::npos ||
-           lower.find("objects\\\\characters\\\\animations\\\\shared\\\\humvee_passenger5_sit_loop.caf") != std::string::npos ||
-           lower.find("objects/characters/animations/shared/humvee_passenger5_sit_loop.caf") != std::string::npos ||
-           lower.find("objects\\\\characters\\\\animations\\\\human_male\\\\heavy_runfwd_usaim_loop.bip.caf") != std::string::npos ||
-           lower.find("objects/characters/animations/human_male/heavy_runfwd_usaim_loop.bip.caf") != std::string::npos;
+    return normalized.find("objects/characters/animations/shared/pidle_loop.caf") != std::string::npos ||
+           normalized.find("objects/characters/animations/shared/humvee_passenger2_out.caf") != std::string::npos ||
+           normalized.find("objects/characters/animations/shared/humvee_passenger3_sit_loop.caf") != std::string::npos ||
+           normalized.find("objects/characters/animations/shared/humvee_passenger5_sit_loop.caf") != std::string::npos ||
+           normalized.find("objects/characters/animations/human_male/heavy_runfwd_usaim_loop.bip.caf") != std::string::npos ||
+           normalized.find("objects/characters/animations/human_male/awalkback_loop.caf") != std::string::npos;
 }
 
 extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2) {
     static unsigned g_cafDiag = 0;
+    static unsigned g_cafMissDiag = 0;
 
     const char* requested = compatGetFileSizePath(a0, a1);
     bool isCaf = false;
@@ -2999,10 +3004,10 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
         return meta.uncompressedSize;
     }
 
-    if (diag) {
+    if (isCaf && g_cafMissDiag < 256) {
         compatLogFmt("FARCRY GETFILESIZE MISS: %s normalized=%s",
-                     requested, path);
-        ++g_cafDiag;
+                     requested, normalizedPath.c_str());
+        ++g_cafMissDiag;
     }
     if (criticalCaf)
         compatLogFmt("FARCRY CAF GS MISS: %s normalized=%s",
