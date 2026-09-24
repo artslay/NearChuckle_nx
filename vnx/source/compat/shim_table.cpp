@@ -7181,6 +7181,131 @@ static const char* nearGlTexTargetName(GLenum target) {
     }
 }
 
+static Mutex g_textureStateDiagLock;
+static std::unordered_map<GLuint, std::string> g_glTextureDiagNames;
+
+static std::string nearBoundTextureDiagName(GLuint texture) {
+    if (!texture)
+        return {};
+    mutexLock(&g_textureStateDiagLock);
+    auto it = g_glTextureDiagNames.find(texture);
+    const std::string name =
+        (it != g_glTextureDiagNames.end()) ? it->second : std::string();
+    mutexUnlock(&g_textureStateDiagLock);
+    return name;
+}
+
+static void nearRememberTextureDiagName(GLuint texture, const std::string& name) {
+    if (!texture || !nearIsWaterTextureDiagName(name))
+        return;
+    mutexLock(&g_textureStateDiagLock);
+    g_glTextureDiagNames[texture] = name;
+    mutexUnlock(&g_textureStateDiagLock);
+}
+
+static bool nearGetDiagTextureState(GLint& activeTexture, GLint& textureBinding,
+                                    std::string& name) {
+    activeTexture = 0;
+    textureBinding = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &textureBinding);
+    name = nearBoundTextureDiagName((GLuint)textureBinding);
+    return !name.empty();
+}
+
+static void shim_glActiveTexture(GLenum texture) {
+    glActiveTexture(texture);
+
+    GLint active = 0;
+    GLint binding = 0;
+    std::string name;
+    if (nearGetDiagTextureState(active, binding, name)) {
+        compatPakLog(
+            "GL TEX STATE: active_texture=0x%x bound_texture=%d name=%s event=active",
+            (unsigned)active, binding, name.c_str());
+    }
+}
+
+static void shim_glBindTexture(GLenum target, GLuint texture) {
+    glBindTexture(target, texture);
+
+    if (target != GL_TEXTURE_2D)
+        return;
+
+    GLint active = 0;
+    GLint binding = 0;
+    std::string name;
+    if (nearGetDiagTextureState(active, binding, name)) {
+        compatPakLog(
+            "GL TEX STATE: active_texture=0x%x bound_texture=%d name=%s event=bind",
+            (unsigned)active, binding, name.c_str());
+    }
+}
+
+static void shim_glTexParameteri(GLenum target, GLenum pname, GLint param) {
+    glTexParameteri(target, pname, param);
+
+    if (target != GL_TEXTURE_2D)
+        return;
+
+    GLint active = 0;
+    GLint binding = 0;
+    std::string name;
+    if (nearGetDiagTextureState(active, binding, name)) {
+        compatPakLog(
+            "GL TEX STATE: active_texture=0x%x texture=%d name=%s event=texParameteri pname=0x%x param=%d",
+            (unsigned)active, binding, name.c_str(), (unsigned)pname, param);
+    }
+}
+
+static void shim_glTexParameterf(GLenum target, GLenum pname, GLfloat param) {
+    glTexParameterf(target, pname, param);
+
+    if (target != GL_TEXTURE_2D)
+        return;
+
+    GLint active = 0;
+    GLint binding = 0;
+    std::string name;
+    if (nearGetDiagTextureState(active, binding, name)) {
+        compatPakLog(
+            "GL TEX STATE: active_texture=0x%x texture=%d name=%s event=texParameterf pname=0x%x param=%g",
+            (unsigned)active, binding, name.c_str(), (unsigned)pname, (double)param);
+    }
+}
+
+static void shim_glTexParameteriv(GLenum target, GLenum pname, const GLint* params) {
+    glTexParameteriv(target, pname, params);
+
+    if (target != GL_TEXTURE_2D || !params)
+        return;
+
+    GLint active = 0;
+    GLint binding = 0;
+    std::string name;
+    if (nearGetDiagTextureState(active, binding, name)) {
+        compatPakLog(
+            "GL TEX STATE: active_texture=0x%x texture=%d name=%s event=texParameteriv pname=0x%x param0=%d",
+            (unsigned)active, binding, name.c_str(), (unsigned)pname, params[0]);
+    }
+}
+
+static void shim_glTexParameterfv(GLenum target, GLenum pname, const GLfloat* params) {
+    glTexParameterfv(target, pname, params);
+
+    if (target != GL_TEXTURE_2D || !params)
+        return;
+
+    GLint active = 0;
+    GLint binding = 0;
+    std::string name;
+    if (nearGetDiagTextureState(active, binding, name)) {
+        compatPakLog(
+            "GL TEX STATE: active_texture=0x%x texture=%d name=%s event=texParameterfv pname=0x%x param0=%g",
+            (unsigned)active, binding, name.c_str(), (unsigned)pname, (double)params[0]);
+    }
+}
+
 // This file is intentionally comprehensive but bounded: the first 4096
 // TexImage2D calls are enough to capture the startup/level-load texture path
 // without turning the diagnostic into another multi-hundred-MB log.
@@ -7218,7 +7343,7 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 #endif
     const void* caller = nullptr;
 
-    if (traceThis) {
+    if (traceThis || (target == GL_TEXTURE_2D && nearIsWaterTextureDiagName(traceName))) {
         glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
         if (target == GL_TEXTURE_2D) {
             glGetIntegerv(GL_TEXTURE_BINDING_2D, &textureBinding);
@@ -7323,6 +7448,7 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
         glTexImage2D(target, level, (GLint)mappedInternal, width, height, border,
                      mappedFormat, type, pixels);
         const GLenum uploadError = glGetError();
+        nearRememberTextureDiagName((GLuint)textureBinding, traceName);
         if (traceThis) {
             compatPakLog(
                 "GL TEX RESULT[%u]: name=%s path=DSDT mapped_internal=0x%x "
@@ -7341,6 +7467,7 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
     glTexImage2D(target, level, internalformat, width, height, border,
                  format, type, pixels);
     const GLenum uploadError = glGetError();
+    nearRememberTextureDiagName((GLuint)textureBinding, traceName);
     if (traceThis) {
         compatPakLog(
             "GL TEX RESULT[%u]: name=%s path=normal internal=0x%x format=0x%x "
