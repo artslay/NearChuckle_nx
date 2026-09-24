@@ -139,6 +139,29 @@ static bool suppressSuccessfulPakDiag(const char* msg) {
            normalized.find("pak dir ready:") != std::string::npos;
 }
 
+static bool suppressCompatNoise(const char* msg) {
+    if (!msg || !*msg)
+        return false;
+
+    std::string normalized(msg);
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+        else
+            c = (char)std::tolower((unsigned char)c);
+    }
+
+    // These are high-frequency diagnostics only; suppressing them must not
+    // alter PAK, input, directory, or SDL behavior.
+    return normalized.find("pak mem trace") == 0 ||
+           normalized.find("farcry getfilesize") == 0 ||
+           normalized.find("opendir ") == 0 ||
+           normalized.find("pak virtual") == 0 ||
+           normalized.find("switch input") == 0 ||
+           normalized.find("sdl: swap heartbeat[") == 0 ||
+           normalized.find("pak caf hit:") == 0;
+}
+
 static bool suppressCompatShaderDiag(const char* msg) {
     if (!msg || !*msg)
         return false;
@@ -459,15 +482,17 @@ void compatPollSwitchInput() {
 void compatLog(const char* msg) {
     const bool main_loop = is_main_loop_marker(msg);
     const bool suppress_pak_success = suppressSuccessfulPakDiag(msg);
+    const bool suppress_noise = suppressCompatNoise(msg);
 
     mutexLock(&g_log_lock);
 
-    // Successful PAK initialization/index messages are omitted from both the
-    // startup console and file log. PAK misses/read/open failures remain visible.
-    if (!suppress_pak_success)
+    // High-frequency compatibility diagnostics are omitted from both the
+    // startup console and file log, but the underlying operations still run.
+    if (!suppress_pak_success && !suppress_noise)
         bootUiWrite(msg, main_loop);
 
     if (!suppress_pak_success &&
+        !suppress_noise &&
         !suppressCompatShaderDiag(msg))
         log_write(msg, main_loop);
 
