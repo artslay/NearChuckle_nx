@@ -54,29 +54,11 @@ static bool isTargetPakTextureDiagLine(const char* msg) {
     if (!msg || !*msg)
         return false;
 
-    std::string s(msg);
-    for (char& c : s)
-        c = (char)std::tolower((unsigned char)c);
-
-    // Keep the dedicated PAK log focused on the texture families involved in
-    // the current Training-level rendering problem. Everything else still
-    // goes through the normal filesystem/PAK path, but does not pollute this
-    // diagnostic file.
-    static const char* const needles[] = {
-        "causq",
-        "water_",
-        "w01blue03",
-        "fresnel14",
-        "cylinderbump_ddp",
-        "_ddn",
-        "_ddp"
-    };
-
-    for (const char* needle : needles) {
-        if (s.find(needle) != std::string::npos)
-            return true;
-    }
-    return false;
+    // pak_lookup_diag.log is reserved exclusively for GL texture diagnostics.
+    // PAK lookup/index/read traces are still performed normally and remain
+    // available through the regular engine log, but do not pollute this file.
+    return std::strncmp(msg, "GL TEX ", 7) == 0 ||
+           std::strncmp(msg, "GL PIXELSTORE ", 14) == 0;
 }
 
 void compatPakLog(const char* fmt, ...) {
