@@ -7691,13 +7691,14 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
     GLenum uploadError = GL_NO_ERROR;
     bool normalized = false;
 
+    const bool legacy8BitColorTarget =
+        (GLenum)internalformat == GL_RGB ||
+        (GLenum)internalformat == GL_RGB8 ||
+        (GLenum)internalformat == GL_RGBA ||
+        (GLenum)internalformat == GL_RGBA8;
     const bool legacyColorFormat =
-        format == GL_BGR || format == GL_BGRA ||
-        (format == GL_RGB &&
-         ((GLenum)internalformat == GL_RGB ||
-          (GLenum)internalformat == GL_RGB8 ||
-          (GLenum)internalformat == GL_RGBA ||
-          (GLenum)internalformat == GL_RGBA8));
+        legacy8BitColorTarget &&
+        (format == GL_RGB || format == GL_BGR || format == GL_BGRA);
 
     if (type == GL_UNSIGNED_BYTE && legacyColorFormat &&
         unpackBuffer == 0 && width > 0 && height > 0) {
