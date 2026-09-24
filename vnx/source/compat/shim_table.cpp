@@ -4365,7 +4365,10 @@ static void* fake_dlsym(void* handle, const char* sym) {
     // Force this single presentation entry point through our Switch/EGL
     // implementation so the Android Java/UI swap path can never block.
     if (strcmp(sym, "SDL_GL_SwapWindow") == 0 ||
-        strcmp(sym, "eglSwapBuffers") == 0) {
+        strcmp(sym, "eglSwapBuffers") == 0 ||
+        strcmp(sym, "glTexImage2D") == 0 ||
+        strcmp(sym, "glPixelStorei") == 0 ||
+        strcmp(sym, "glTexSubImage2D") == 0) {
         void* forced = shimResolve(sym);
         compatLogFmt("dlsym: %s -> forced shim %p", sym, forced);
         if (forced)
@@ -6856,9 +6859,20 @@ static void nearLogTextureBytes(const std::string& name,
         paddedRow * (uint64_t)std::max<GLsizei>(height, 0));
 }
 
+static std::atomic<unsigned> g_glTexImageShimCalls{0};
+
 static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                               GLsizei width, GLsizei height, GLint border,
                               GLenum format, GLenum type, const void* pixels) {
+    const unsigned shimCall =
+        g_glTexImageShimCalls.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (shimCall <= 32) {
+        compatLogFmt("GL TEX SHIM ENTER[%u]: target=0x%x level=%d %dx%d internal=0x%x format=0x%x type=0x%x pixels=%p",
+                     shimCall, (unsigned)target, level, width, height,
+                     (unsigned)(GLenum)internalformat, (unsigned)format,
+                     (unsigned)type, pixels);
+    }
+
     std::string traceName = g_lastTexturePakName;
     if (traceName.empty()) {
         mutexLock(&g_textureDiagLock);
