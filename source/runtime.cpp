@@ -151,15 +151,29 @@ static bool suppressCompatNoise(const char* msg) {
             c = (char)std::tolower((unsigned char)c);
     }
 
-    // These are high-frequency diagnostics only; suppressing them must not
-    // alter PAK, input, directory, or SDL behavior.
+    // These diagnostics are either high-frequency compatibility chatter or
+    // known optional texture lookups. Suppressing them must not alter the
+    // underlying filesystem/PAK behavior.
+    const optionalMapTextureMiss =
+        normalized.find("fopen fail:") == 0 &&
+        (normalized.find("/gui/map_player.") != std::string::npos ||
+         normalized.find("/textures/gui/map_player.") != std::string::npos ||
+         normalized.find("/gui/map_vehicle.") != std::string::npos ||
+         normalized.find("/textures/gui/map_vehicle.") != std::string::npos ||
+         normalized.find("/gui/map_building.") != std::string::npos ||
+         normalized.find("/textures/gui/map_building.") != std::string::npos ||
+         normalized.find("/gui/map_unknown.") != std::string::npos ||
+         normalized.find("/textures/gui/map_unknown.") != std::string::npos);
+
     return normalized.find("pak mem trace") == 0 ||
            normalized.find("farcry getfilesize") == 0 ||
            normalized.find("opendir ") == 0 ||
            normalized.find("pak virtual") == 0 ||
            normalized.find("switch input") == 0 ||
            normalized.find("sdl: swap heartbeat[") == 0 ||
-           normalized.find("pak caf hit:") == 0;
+           normalized.find("pak caf hit:") == 0 ||
+           normalized.find("texture format '.tga' is deprecated") != std::string::npos ||
+           optionalMapTextureMiss;
 }
 
 static bool suppressCompatShaderDiag(const char* msg) {
