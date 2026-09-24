@@ -2940,9 +2940,9 @@ static bool isTexturePakName(const std::string& name) {
 
 static bool isInterestingTextureDiagName(const std::string& name) {
     static const char* const needles[] = {
-        "water", "causq", "caust", "w01blue03", "ddp", "ddn",
-        "concrete", "iron", "rust", "moss", "stone", "metal", "door",
-        "bump", "fresnel"
+        "causq", "caust", "water_bubbles2", "w01blue03",
+        "water_splash", "concrete", "iron", "rust", "moss",
+        "stone", "metal", "door", "cylinderbump", "fresnel14"
     };
     for (const char* needle : needles) {
         if (name.find(needle) != std::string::npos)
@@ -6708,9 +6708,11 @@ static inline bool isNearDsdtFormat(GLenum format) {
 static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                               GLsizei width, GLsizei height, GLint border,
                               GLenum format, GLenum type, const void* pixels) {
-    if (!g_lastTexturePakName.empty() &&
+    const bool traceThisUpload =
+        !g_lastTexturePakName.empty() &&
         isInterestingTextureDiagName(g_lastTexturePakName) &&
-        g_textureUploadDiagCount < 128) {
+        g_textureUploadDiagCount < 128;
+    if (traceThisUpload) {
         ++g_textureUploadDiagCount;
         const GLenum before = glGetError();
         compatPakLog("GL TEX UPLOAD[%u]: name=%s target=0x%x level=%d %dx%d internal=0x%x format=0x%x type=0x%x preerr=0x%x",
@@ -6732,9 +6734,7 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 
         glTexImage2D(target, level, (GLint)mappedInternal, width, height, border,
                      mappedFormat, type, pixels);
-        if (!g_lastTexturePakName.empty() &&
-            isInterestingTextureDiagName(g_lastTexturePakName) &&
-            g_textureUploadDiagCount <= 128) {
+        if (traceThisUpload) {
             compatPakLog("GL TEX RESULT[%u]: name=%s path=DSDT mapped_internal=0x%x mapped_format=0x%x glerr=0x%x",
                          g_textureUploadDiagCount, g_lastTexturePakName.c_str(),
                          (unsigned)mappedInternal, (unsigned)mappedFormat,
@@ -6745,9 +6745,7 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 
     glTexImage2D(target, level, internalformat, width, height, border,
                  format, type, pixels);
-    if (!g_lastTexturePakName.empty() &&
-        isInterestingTextureDiagName(g_lastTexturePakName) &&
-        g_textureUploadDiagCount <= 128) {
+    if (traceThisUpload) {
         compatPakLog("GL TEX RESULT[%u]: name=%s path=normal internal=0x%x format=0x%x type=0x%x glerr=0x%x",
                      g_textureUploadDiagCount, g_lastTexturePakName.c_str(),
                      (unsigned)(GLenum)internalformat, (unsigned)format,
