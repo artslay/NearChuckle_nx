@@ -3789,15 +3789,22 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     }
 
     if (!f) {
-        // Shader cache entries are never language-pack assets. In particular,
-        // do not scan FCData PAKs for them: a cache miss should reach the
-        // renderer's embedded fallback immediately.
-        if (!isShaderCacheLookupPath(ioPath)) {
-            FILE* pakFile = tryOpenFromPaks(ioPath, mode);
-            if (pakFile) {
-                if (videoIo) g_near_video_open_failed = 0;
-                return pakFile;
+        // Shader-cache files are not language assets, but valid precompiled
+        // .cgps/.cgvp/.cgasm entries may be present in the game's Shaders.pak.
+        // The renderer can consume them directly through the virtual PAK FILE
+        // path; only an actual miss should fall back to the embedded ARB shader.
+        FILE* pakFile = tryOpenFromPaks(ioPath, mode);
+        if (pakFile) {
+            if (videoIo) g_near_video_open_failed = 0;
+            if (isShaderCacheLookupPath(ioPath)) {
+                static std::atomic<unsigned> shaderCachePakHits{0};
+                const unsigned hit = shaderCachePakHits.fetch_add(
+                    1, std::memory_order_relaxed) + 1;
+                if (hit <= 32)
+                    compatLogFmt("shader cache: PAK hit %u -> %s", hit,
+                                 ioPath ? ioPath : "?");
             }
+            return pakFile;
         }
 
         if (videoIo)
