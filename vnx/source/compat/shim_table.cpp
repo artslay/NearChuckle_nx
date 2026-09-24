@@ -7691,8 +7691,15 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
     GLenum uploadError = GL_NO_ERROR;
     bool normalized = false;
 
-    if (type == GL_UNSIGNED_BYTE &&
-        (format == GL_RGB || format == GL_BGR || format == GL_BGRA) &&
+    const bool legacyColorFormat =
+        format == GL_BGR || format == GL_BGRA ||
+        (format == GL_RGB &&
+         ((GLenum)internalformat == GL_RGB ||
+          (GLenum)internalformat == GL_RGB8 ||
+          (GLenum)internalformat == GL_RGBA ||
+          (GLenum)internalformat == GL_RGBA8));
+
+    if (type == GL_UNSIGNED_BYTE && legacyColorFormat &&
         unpackBuffer == 0 && width > 0 && height > 0) {
         const GLint savedAlignment = g_glUnpackAlignment;
         const GLint savedRowLength = g_glUnpackRowLength;
@@ -7790,9 +7797,19 @@ static void shim_glTexSubImage2D(GLenum target, GLint level,
 #ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
         glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
 #endif
+        GLint targetInternal = 0;
+        glGetTexLevelParameteriv(target, level,
+                                 GL_TEXTURE_INTERNAL_FORMAT, &targetInternal);
+        const bool legacySubTarget =
+            targetInternal == (GLint)GL_RGB ||
+            targetInternal == (GLint)GL_RGB8 ||
+            targetInternal == (GLint)GL_RGBA ||
+            targetInternal == (GLint)GL_RGBA8;
+
         void* convertedPixels = nullptr;
         GLenum mappedFormat = format;
-        if (nearPrepareLegacyRgbaPixels(
+        if (legacySubTarget &&
+            nearPrepareLegacyRgbaPixels(
                 width, height, format, type, pixels, unpackBuffer,
                 convertedPixels, mappedFormat)) {
             const GLint savedAlignment = g_glUnpackAlignment;
