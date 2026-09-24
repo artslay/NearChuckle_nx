@@ -473,7 +473,7 @@ static int run_farcry(LoadedSo* game_so) {
     // startup command cannot override its default value of 1 reliably.
     // It is intentionally not included in the early command-line argument list.
 
-    char* argv[12];
+    char* argv[13];
     argv[0] = arg0;
     argv[1] = arg1;
     argv[2] = arg2;
