@@ -31,6 +31,66 @@ static const devoptab_t* g_boot_stdout_dotab = nullptr;
 static unsigned g_boot_ui_pending_lines = 0;
 static unsigned g_log_pending_lines = 0;
 
+static Mutex g_pak_diag_lock;
+static FILE* g_pak_diag = nullptr;
+static unsigned g_pak_diag_pending_lines = 0;
+
+static void pak_diag_open() {
+    if (g_pak_diag)
+        return;
+
+    // This is intentionally a dedicated diagnostic file. It is overwritten
+    // at every run so one test produces one self-contained PAK trace.
+    g_pak_diag = std::fopen("/switch/NearChuckle_nx/pak_lookup_diag.log", "w");
+    if (g_pak_diag) {
+        std::fprintf(g_pak_diag,
+                     "=== NearChuckle_nx PAK LOOKUP DIAGNOSTICS ===\\n");
+        std::fflush(g_pak_diag);
+    }
+}
+
+void compatPakLog(const char* fmt, ...) {
+    if (!fmt)
+        return;
+
+    char buf[2048];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    mutexLock(&g_pak_diag_lock);
+    pak_diag_open();
+    if (g_pak_diag) {
+        std::fprintf(g_pak_diag, "%s\\n", buf);
+        if (++g_pak_diag_pending_lines >= 64) {
+            std::fflush(g_pak_diag);
+            g_pak_diag_pending_lines = 0;
+        }
+    }
+    mutexUnlock(&g_pak_diag_lock);
+}
+
+static void compatPakLogFlush() {
+    mutexLock(&g_pak_diag_lock);
+    if (g_pak_diag) {
+        std::fflush(g_pak_diag);
+        g_pak_diag_pending_lines = 0;
+    }
+    mutexUnlock(&g_pak_diag_lock);
+}
+
+static void compatPakLogClose() {
+    mutexLock(&g_pak_diag_lock);
+    if (g_pak_diag) {
+        std::fflush(g_pak_diag);
+        std::fclose(g_pak_diag);
+        g_pak_diag = nullptr;
+    }
+    g_pak_diag_pending_lines = 0;
+    mutexUnlock(&g_pak_diag_lock);
+}
+
 static constexpr unsigned kBootUiUpdateBatch = 32;
 static constexpr unsigned kLogFlushBatch = 128;
 
@@ -568,6 +628,7 @@ void compatLogClose() {
     mutexLock(&g_log_lock);
     log_close_locked();
     mutexUnlock(&g_log_lock);
+    compatPakLogClose();
 }
 
 void compatUiLog(const char*) {}
