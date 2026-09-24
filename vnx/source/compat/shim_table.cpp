@@ -1451,6 +1451,16 @@ static int sh_fstat(int fd, struct stat* st) {
 
 // write() routed through the log for stdout/stderr — libc++abi terminate
 // messages ("terminating with uncaught exception of type ...") land on fd 2.
+static bool isCompressedBumpWarning(const char* text) {
+    if (!text)
+        return false;
+
+    // Android CryEngine's CTexMan path deliberately accepts compressed bump
+    // maps: it decodes DXT to RGBA and continues loading. The retail warning
+    // describes the old unsupported path and is therefore misleading here.
+    return std::strstr(text, "Loading of compressed bump-maps is not supported") != nullptr;
+}
+
 static ssize_t sh_write(int fd, const void* buf, size_t n) {
     if ((fd == 1 || fd == 2) && buf && n > 0) {
         char tmp[512];
@@ -1458,7 +1468,9 @@ static ssize_t sh_write(int fd, const void* buf, size_t n) {
         memcpy(tmp, buf, c);
         tmp[c] = '\0';
         while (c > 0 && (tmp[c - 1] == '\n' || tmp[c - 1] == '\r')) tmp[--c] = '\0';
-        if (c > 0) compatLogFmt("game %s: %s", fd == 2 ? "stderr" : "stdout", tmp);
+
+        if (c > 0 && !isCompressedBumpWarning(tmp))
+            compatLogFmt("game %s: %s", fd == 2 ? "stderr" : "stdout", tmp);
         return (ssize_t)n;
     }
     return write(fd, buf, n);
@@ -3458,6 +3470,9 @@ static int android_log_print(int, const char* tag, const char* fmt, ...) {
     vsnprintf(buf, sizeof(buf), fmt, va);
     va_end(va);
 
+    if (isCompressedBumpWarning(buf))
+        return (int)strlen(buf);
+
     // Never throttle the exact CryEngine main-loop marker. runtime.cpp uses it
     // as the definitive point where startup diagnostics end and the log is
     // permanently closed.
@@ -3468,6 +3483,9 @@ static int android_log_print(int, const char* tag, const char* fmt, ...) {
     return (int)strlen(buf);
 }
 static int android_log_write(int, const char* tag, const char* msg) {
+    if (isCompressedBumpWarning(msg))
+        return 0;
+
     const bool main_loop_marker =
         msg && std::strstr(msg, "CXGame::Run: entered main game loop") != nullptr;
     if (main_loop_marker || androidLogThrottleOk())
@@ -3477,6 +3495,10 @@ static int android_log_write(int, const char* tag, const char* msg) {
 static int android_log_vprint(int, const char* tag, const char* fmt, va_list va) {
     char buf[512];
     vsnprintf(buf, sizeof(buf), fmt, va);
+
+    if (isCompressedBumpWarning(buf))
+        return (int)strlen(buf);
+
     const bool main_loop_marker =
         std::strstr(buf, "CXGame::Run: entered main game loop") != nullptr;
     if (main_loop_marker || androidLogThrottleOk())
