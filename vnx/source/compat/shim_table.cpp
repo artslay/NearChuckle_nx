@@ -7185,77 +7185,6 @@ static Mutex g_textureStateDiagLock;
 static std::unordered_map<GLuint, std::string> g_glTextureDiagNames;
 static std::unordered_map<GLuint, GLuint> g_glSamplerDiagUnits;
 
-static bool nearSamplerIsBound(GLuint sampler) {
-    if (!sampler)
-        return false;
-    mutexLock(&g_textureStateDiagLock);
-    bool bound = false;
-    for (const auto& kv : g_glSamplerDiagUnits) {
-        if (kv.second == sampler) {
-            bound = true;
-            break;
-        }
-    }
-    mutexUnlock(&g_textureStateDiagLock);
-    return bound;
-}
-
-static void shim_glBindSampler(GLuint unit, GLuint sampler) {
-    glBindSampler(unit, sampler);
-    mutexLock(&g_textureStateDiagLock);
-    if (sampler)
-        g_glSamplerDiagUnits[unit] = sampler;
-    else
-        g_glSamplerDiagUnits.erase(unit);
-    mutexUnlock(&g_textureStateDiagLock);
-
-    compatPakLog(
-        "GL TEX STATE: event=bindSampler unit=%u sampler=%u",
-        (unsigned)unit, (unsigned)sampler);
-}
-
-static void shim_glSamplerParameteri(GLuint sampler, GLenum pname, GLint param) {
-    glSamplerParameteri(sampler, pname, param);
-    if (nearSamplerIsBound(sampler)) {
-        compatPakLog(
-            "GL TEX STATE: event=samplerParameteri sampler=%u pname=0x%x param=%d",
-            (unsigned)sampler, (unsigned)pname, param);
-    }
-}
-
-static void shim_glSamplerParameterf(GLuint sampler, GLenum pname, GLfloat param) {
-    glSamplerParameterf(sampler, pname, param);
-    if (nearSamplerIsBound(sampler)) {
-        compatPakLog(
-            "GL TEX STATE: event=samplerParameterf sampler=%u pname=0x%x param=%g",
-            (unsigned)sampler, (unsigned)pname, (double)param);
-    }
-}
-
-static void shim_glSamplerParameteriv(GLuint sampler, GLenum pname, const GLint* params) {
-    glSamplerParameteriv(sampler, pname, params);
-    if (nearSamplerIsBound(sampler) && params) {
-        compatPakLog(
-            "GL TEX STATE: event=samplerParameteriv sampler=%u pname=0x%x param0=%d",
-            (unsigned)sampler, (unsigned)pname, params[0]);
-    }
-}
-
-static void shim_glSamplerParameterfv(GLuint sampler, GLenum pname, const GLfloat* params) {
-    glSamplerParameterfv(sampler, pname, params);
-    if (nearSamplerIsBound(sampler) && params) {
-        compatPakLog(
-            "GL TEX STATE: event=samplerParameterfv sampler=%u pname=0x%x param0=%g",
-            (unsigned)sampler, (unsigned)pname, (double)params[0]);
-    }
-}
-
-static bool nearSamplerDiagAnyUnitBound(GLuint sampler) {
-    return nearSamplerIsBound(sampler);
-}
-static Mutex g_textureStateDiagLock;
-static std::unordered_map<GLuint, std::string> g_glTextureDiagNames;
-
 static std::string nearBoundTextureDiagName(GLuint texture) {
     if (!texture)
         return {};
@@ -7283,6 +7212,33 @@ static bool nearGetDiagTextureState(GLint& activeTexture, GLint& textureBinding,
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &textureBinding);
     name = nearBoundTextureDiagName((GLuint)textureBinding);
     return !name.empty();
+}
+
+static bool nearSamplerDiagBoundUnit(GLuint sampler, GLuint& unitOut,
+                                     GLint& textureOut, std::string& nameOut) {
+    if (!sampler)
+        return false;
+
+    std::vector<GLuint> units;
+    mutexLock(&g_textureStateDiagLock);
+    for (const auto& kv : g_glSamplerDiagUnits) {
+        if (kv.second == sampler)
+            units.push_back(kv.first);
+    }
+    mutexUnlock(&g_textureStateDiagLock);
+
+    for (GLuint unit : units) {
+        GLint texture = 0;
+        glGetIntegeri_v(GL_TEXTURE_BINDING_2D, unit, &texture);
+        const std::string name = nearBoundTextureDiagName((GLuint)texture);
+        if (!name.empty()) {
+            unitOut = unit;
+            textureOut = texture;
+            nameOut = name;
+            return true;
+        }
+    }
+    return false;
 }
 
 static void shim_glActiveTexture(GLenum texture) {
@@ -7375,6 +7331,82 @@ static void shim_glTexParameterfv(GLenum target, GLenum pname, const GLfloat* pa
         compatPakLog(
             "GL TEX STATE: active_texture=0x%x texture=%d name=%s event=texParameterfv pname=0x%x param0=%g",
             (unsigned)active, binding, name.c_str(), (unsigned)pname, (double)params[0]);
+    }
+}
+
+static void shim_glBindSampler(GLuint unit, GLuint sampler) {
+    glBindSampler(unit, sampler);
+
+    mutexLock(&g_textureStateDiagLock);
+    if (sampler)
+        g_glSamplerDiagUnits[unit] = sampler;
+    else
+        g_glSamplerDiagUnits.erase(unit);
+    mutexUnlock(&g_textureStateDiagLock);
+
+    GLint texture = 0;
+    glGetIntegeri_v(GL_TEXTURE_BINDING_2D, unit, &texture);
+    const std::string name = nearBoundTextureDiagName((GLuint)texture);
+    if (!name.empty()) {
+        compatPakLog(
+            "GL TEX STATE: event=bindSampler unit=%u sampler=%u texture=%d name=%s",
+            (unsigned)unit, (unsigned)sampler, texture, name.c_str());
+    }
+}
+
+static void shim_glSamplerParameteri(GLuint sampler, GLenum pname, GLint param) {
+    glSamplerParameteri(sampler, pname, param);
+
+    GLuint unit = 0;
+    GLint texture = 0;
+    std::string name;
+    if (nearSamplerDiagBoundUnit(sampler, unit, texture, name)) {
+        compatPakLog(
+            "GL TEX STATE: event=samplerParameteri unit=%u sampler=%u texture=%d name=%s pname=0x%x param=%d",
+            (unsigned)unit, (unsigned)sampler, texture, name.c_str(),
+            (unsigned)pname, param);
+    }
+}
+
+static void shim_glSamplerParameterf(GLuint sampler, GLenum pname, GLfloat param) {
+    glSamplerParameterf(sampler, pname, param);
+
+    GLuint unit = 0;
+    GLint texture = 0;
+    std::string name;
+    if (nearSamplerDiagBoundUnit(sampler, unit, texture, name)) {
+        compatPakLog(
+            "GL TEX STATE: event=samplerParameterf unit=%u sampler=%u texture=%d name=%s pname=0x%x param=%g",
+            (unsigned)unit, (unsigned)sampler, texture, name.c_str(),
+            (unsigned)pname, (double)param);
+    }
+}
+
+static void shim_glSamplerParameteriv(GLuint sampler, GLenum pname, const GLint* params) {
+    glSamplerParameteriv(sampler, pname, params);
+
+    GLuint unit = 0;
+    GLint texture = 0;
+    std::string name;
+    if (params && nearSamplerDiagBoundUnit(sampler, unit, texture, name)) {
+        compatPakLog(
+            "GL TEX STATE: event=samplerParameteriv unit=%u sampler=%u texture=%d name=%s pname=0x%x param0=%d",
+            (unsigned)unit, (unsigned)sampler, texture, name.c_str(),
+            (unsigned)pname, params[0]);
+    }
+}
+
+static void shim_glSamplerParameterfv(GLuint sampler, GLenum pname, const GLfloat* params) {
+    glSamplerParameterfv(sampler, pname, params);
+
+    GLuint unit = 0;
+    GLint texture = 0;
+    std::string name;
+    if (params && nearSamplerDiagBoundUnit(sampler, unit, texture, name)) {
+        compatPakLog(
+            "GL TEX STATE: event=samplerParameterfv unit=%u sampler=%u texture=%d name=%s pname=0x%x param0=%g",
+            (unsigned)unit, (unsigned)sampler, texture, name.c_str(),
+            (unsigned)pname, (double)params[0]);
     }
 }
 
