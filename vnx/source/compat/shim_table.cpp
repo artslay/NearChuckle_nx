@@ -3535,18 +3535,14 @@ static FILE* makeSyntheticAlphaGradientDds() {
     for (size_t i = 0; i < 256u; ++i)
         blob[128u + i] = (unsigned char)i;
 
-    FILE* f = tmpfile();
+    // Do not use tmpfile() here. On the Switch target there is no guarantee
+    // that newlib can create a native temporary FILE*. Reuse the same virtual
+    // FILE abstraction as PAK-backed streams instead; fread/fseek/fgetc/fclose
+    // already route through vpak* for these handles.
+    auto data = std::make_shared<std::vector<unsigned char>>(std::move(blob));
+    FILE* f = vpakOpen(std::move(data), "textures/$AlphaGradient.dds", false);
     if (!f)
         return nullptr;
-
-    const size_t written = fwrite(blob.data(), 1, blob.size(), f);
-    if (written != blob.size()) {
-        fclose(f);
-        return nullptr;
-    }
-
-    rewind(f);
-    setvbuf(f, nullptr, _IOFBF, 4096);
 
     static bool logged = false;
     if (!logged) {
