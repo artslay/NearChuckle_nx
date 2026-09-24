@@ -6990,7 +6990,8 @@ static uint64_t nearFnv1a64(const unsigned char* data, size_t size) {
 static bool nearHashSourceAsRgba(const void* pixels,
                                  GLsizei width, GLsizei height,
                                  GLenum format, GLenum type,
-                                 uint64_t& hash,
+                                 uint64_t& outRgbaHash,
+                                 uint64_t& outRgbHash,
                                  unsigned char first[16]) {
     if (!pixels || width <= 0 || height <= 0 || type != GL_UNSIGNED_BYTE)
         return false;
@@ -7024,7 +7025,8 @@ static bool nearHashSourceAsRgba(const void* pixels,
     if (sourceSpan > 4ULL * 1024ULL * 1024ULL)
         return false;
 
-    uint64_t h = 1469598103934665603ULL;
+    uint64_t rgbaHash = 1469598103934665603ULL;
+    uint64_t rgbHash = 1469598103934665603ULL;
     size_t firstCount = 0;
     const unsigned char* base =
         reinterpret_cast<const unsigned char*>(pixels) + skipOffset;
@@ -7034,40 +7036,45 @@ static bool nearHashSourceAsRgba(const void* pixels,
             base + (uint64_t)y * paddedRow;
         for (GLsizei x = 0; x < width; ++x) {
             const unsigned char* p = row + (size_t)x * components;
-            unsigned char rgba[4];
+            unsigned char px[4];
 
             if (format == GL_BGRA) {
-                rgba[0] = p[2];
-                rgba[1] = p[1];
-                rgba[2] = p[0];
-                rgba[3] = components == 4 ? p[3] : 255;
+                px[0] = p[2];
+                px[1] = p[1];
+                px[2] = p[0];
+                px[3] = p[3];
             } else if (format == GL_BGR) {
-                rgba[0] = p[2];
-                rgba[1] = p[1];
-                rgba[2] = p[0];
-                rgba[3] = 255;
+                px[0] = p[2];
+                px[1] = p[1];
+                px[2] = p[0];
+                px[3] = 255;
             } else if (format == GL_RGBA) {
-                rgba[0] = p[0];
-                rgba[1] = p[1];
-                rgba[2] = p[2];
-                rgba[3] = p[3];
+                px[0] = p[0];
+                px[1] = p[1];
+                px[2] = p[2];
+                px[3] = p[3];
             } else {
-                rgba[0] = p[0];
-                rgba[1] = p[1];
-                rgba[2] = p[2];
-                rgba[3] = 255;
+                px[0] = p[0];
+                px[1] = p[1];
+                px[2] = p[2];
+                px[3] = 255;
             }
 
             for (unsigned k = 0; k < 4; ++k) {
-                h ^= (uint64_t)rgba[k];
-                h *= 1099511628211ULL;
+                rgbaHash ^= (uint64_t)px[k];
+                rgbaHash *= 1099511628211ULL;
                 if (firstCount < 16)
-                    first[firstCount++] = rgba[k];
+                    first[firstCount++] = px[k];
+                if (k < 3) {
+                    rgbHash ^= (uint64_t)px[k];
+                    rgbHash *= 1099511628211ULL;
+                }
             }
         }
     }
 
-    hash = h;
+    outRgbaHash = rgbaHash;
+    outRgbHash = rgbHash;
     return true;
 }
 
@@ -7087,9 +7094,11 @@ static void nearVerifyUploadedTexture(const std::string& name,
         return;
 
     unsigned char sourceFirst[16] = {};
-    uint64_t sourceHash = 0;
+    uint64_t sourceRgbaHash = 0;
+    uint64_t sourceRgbHash = 0;
     const bool sourceOk = nearHashSourceAsRgba(
-        pixels, width, height, format, type, sourceHash, sourceFirst);
+        pixels, width, height, format, type,
+        sourceRgbaHash, sourceRgbHash, sourceFirst);
 
     GLint storedW = -1;
     GLint storedH = -1;
@@ -7105,6 +7114,7 @@ static void nearVerifyUploadedTexture(const std::string& name,
     unsigned char* readback =
         (unsigned char*)std::malloc(readbackBytes);
     uint64_t gpuHash = 0;
+    uint64_t gpuRgbHash = 0;
     unsigned char gpuFirst[16] = {};
     GLenum readbackError = GL_NO_ERROR;
 
@@ -7116,6 +7126,14 @@ static void nearVerifyUploadedTexture(const std::string& name,
         readbackError = glGetError();
         if (readbackError == GL_NO_ERROR) {
             gpuHash = nearFnv1a64(readback, readbackBytes);
+            for (size_t i = 0; i + 2 < readbackBytes; i += 4) {
+                gpuRgbHash ^= (uint64_t)readback[i + 0];
+                gpuRgbHash *= 1099511628211ULL;
+                gpuRgbHash ^= (uint64_t)readback[i + 1];
+                gpuRgbHash *= 1099511628211ULL;
+                gpuRgbHash ^= (uint64_t)readback[i + 2];
+                gpuRgbHash *= 1099511628211ULL;
+            }
             const size_t n = readbackBytes < 16 ? readbackBytes : 16;
             std::memcpy(gpuFirst, readback, n);
         }
@@ -7123,13 +7141,15 @@ static void nearVerifyUploadedTexture(const std::string& name,
     }
 
     compatPakLog(
-        "GL TEX VERIFY: name=%s level=%d source_ok=%d source_hash=0x%016" PRIx64
+        "GL TEX VERIFY: name=%s level=%d source_ok=%d source_rgba_hash=0x%016" PRIx64
+        " source_rgb_hash=0x%016" PRIx64
         " source_rgba16=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x "
         "stored=%dx%d stored_internal=0x%x queryerr=0x%x uploaderr=0x%x "
         "gpu_hash=0x%016" PRIx64
         " gpu_rgba16=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x "
-        "readbackerr=0x%x match=%s",
-        name.c_str(), level, sourceOk ? 1 : 0, sourceHash,
+        " gpu_rgb_hash=0x%016" PRIx64 " readbackerr=0x%x rgb_match=%s",
+
+        name.c_str(), level, sourceOk ? 1 : 0, sourceRgbaHash, sourceRgbHash,
         sourceFirst[0], sourceFirst[1], sourceFirst[2], sourceFirst[3],
         sourceFirst[4], sourceFirst[5], sourceFirst[6], sourceFirst[7],
         sourceFirst[8], sourceFirst[9], sourceFirst[10], sourceFirst[11],
@@ -7140,8 +7160,9 @@ static void nearVerifyUploadedTexture(const std::string& name,
         gpuFirst[4], gpuFirst[5], gpuFirst[6], gpuFirst[7],
         gpuFirst[8], gpuFirst[9], gpuFirst[10], gpuFirst[11],
         gpuFirst[12], gpuFirst[13], gpuFirst[14], gpuFirst[15],
-        (unsigned)readbackError,
-        (sourceOk && readbackError == GL_NO_ERROR && sourceHash == gpuHash)
+        gpuRgbHash, (unsigned)readbackError,
+        (sourceOk && readbackError == GL_NO_ERROR &&
+         sourceRgbHash == gpuRgbHash)
             ? "YES" : "NO");
 }
 
