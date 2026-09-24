@@ -3479,6 +3479,83 @@ static bool isShaderCacheLookupPath(const char* path) {
            normalized.compare(ext, std::string::npos, ".cgvp") == 0;
 }
 
+// Far Cry creates $AlphaGradient procedurally in the original renderer
+// (256x1, eTF_8000, values 0..255). The Android texture loader can still ask
+// its filesystem layer for "textures/$alphagradient.dds", so provide the same
+// data as a tiny legacy DDS luminance texture instead of reporting a real miss.
+static bool isSyntheticAlphaGradientDds(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string normalized = asciiLower(path);
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    const size_t slash = normalized.find_last_of('/');
+    const std::string base = slash == std::string::npos
+        ? normalized
+        : normalized.substr(slash + 1);
+    return base == "$alphagradient.dds";
+}
+
+static FILE* makeSyntheticAlphaGradientDds() {
+    // DDS header (128 bytes including the magic) + 256 bytes of 8-bit
+    // luminance. The original Far Cry loader maps DDS_LUMINANCE/8-bit to
+    // eTF_8000, which is exactly the format used by $AlphaGradient.
+    std::vector<unsigned char> blob(128u + 256u, 0);
+
+    auto put32 = [&](size_t off, uint32_t value) {
+        blob[off + 0] = (unsigned char)(value & 0xffu);
+        blob[off + 1] = (unsigned char)((value >> 8) & 0xffu);
+        blob[off + 2] = (unsigned char)((value >> 16) & 0xffu);
+        blob[off + 3] = (unsigned char)((value >> 24) & 0xffu);
+    };
+
+    blob[0] = 'D'; blob[1] = 'D'; blob[2] = 'S'; blob[3] = ' ';
+    put32(4,   124u);       // dwSize
+    put32(8,   0x100Fu);    // CAPS | HEIGHT | WIDTH | PITCH | PIXELFORMAT
+    put32(12,  1u);         // height
+    put32(16,  256u);       // width
+    put32(20,  256u);       // pitch
+    put32(24,  0u);         // depth
+    put32(28,  1u);         // mip map count
+
+    put32(76,  32u);        // DDS_PIXELFORMAT.dwSize
+    put32(80,  0x00020000u); // DDS_LUMINANCE
+    put32(84,  0u);         // fourCC
+    put32(88,  8u);         // RGB bit count
+    put32(92,  0x000000FFu); // red/luminance mask
+    put32(96,  0u);
+    put32(100, 0u);
+    put32(104, 0u);
+    put32(108, 0x1000u);    // DDSCAPS_TEXTURE
+
+    for (size_t i = 0; i < 256u; ++i)
+        blob[128u + i] = (unsigned char)i;
+
+    FILE* f = tmpfile();
+    if (!f)
+        return nullptr;
+
+    const size_t written = fwrite(blob.data(), 1, blob.size(), f);
+    if (written != blob.size()) {
+        fclose(f);
+        return nullptr;
+    }
+
+    rewind(f);
+    setvbuf(f, nullptr, _IOFBF, 4096);
+
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        compatLog("GL/TEX COMPAT: synthetic textures/$AlphaGradient.dds (256x1 luminance alpha gradient)");
+    }
+    return f;
+}
+
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
@@ -3491,6 +3568,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
 
+    if (isSyntheticAlphaGradientDds(ioPath)) {
+        if (FILE* synthetic = makeSyntheticAlphaGradientDds())
+            return synthetic;
+    }
 
     if (path && ioPathStorage != path && !shaderIo)
     if (std::string mapped = obbRemap(ioPath); !mapped.empty()) {
