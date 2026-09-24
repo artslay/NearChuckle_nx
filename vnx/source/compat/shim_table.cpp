@@ -5172,10 +5172,12 @@ static void w_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
 }
 
 static void w_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
+    nearLogWaterDrawState();
     glDrawArrays(mode, first, count);
 }
 
 static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
+    nearLogWaterDrawState();
     glDrawElements(mode, count, type, indices);
 }
 
@@ -7183,7 +7185,6 @@ static const char* nearGlTexTargetName(GLenum target) {
 
 static Mutex g_textureStateDiagLock;
 static std::unordered_map<GLuint, std::string> g_glTextureDiagNames;
-static std::unordered_map<GLuint, GLuint> g_glSamplerDiagUnits;
 
 static std::string nearBoundTextureDiagName(GLuint texture) {
     if (!texture)
@@ -7212,33 +7213,6 @@ static bool nearGetDiagTextureState(GLint& activeTexture, GLint& textureBinding,
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &textureBinding);
     name = nearBoundTextureDiagName((GLuint)textureBinding);
     return !name.empty();
-}
-
-static bool nearSamplerDiagBoundUnit(GLuint sampler, GLuint& unitOut,
-                                     GLint& textureOut, std::string& nameOut) {
-    if (!sampler)
-        return false;
-
-    std::vector<GLuint> units;
-    mutexLock(&g_textureStateDiagLock);
-    for (const auto& kv : g_glSamplerDiagUnits) {
-        if (kv.second == sampler)
-            units.push_back(kv.first);
-    }
-    mutexUnlock(&g_textureStateDiagLock);
-
-    for (GLuint unit : units) {
-        GLint texture = 0;
-        glGetIntegeri_v(GL_TEXTURE_BINDING_2D, unit, &texture);
-        const std::string name = nearBoundTextureDiagName((GLuint)texture);
-        if (!name.empty()) {
-            unitOut = unit;
-            textureOut = texture;
-            nameOut = name;
-            return true;
-        }
-    }
-    return false;
 }
 
 static void shim_glActiveTexture(GLenum texture) {
@@ -7334,79 +7308,64 @@ static void shim_glTexParameterfv(GLenum target, GLenum pname, const GLfloat* pa
     }
 }
 
-static void shim_glBindSampler(GLuint unit, GLuint sampler) {
-    glBindSampler(unit, sampler);
+static std::atomic<unsigned> g_waterDrawDiagCalls{0};
 
-    mutexLock(&g_textureStateDiagLock);
-    if (sampler)
-        g_glSamplerDiagUnits[unit] = sampler;
-    else
-        g_glSamplerDiagUnits.erase(unit);
-    mutexUnlock(&g_textureStateDiagLock);
+static void nearLogWaterDrawState() {
+    unsigned trace = g_waterDrawDiagCalls.fetch_add(1, std::memory_order_relaxed);
+    if (trace >= 256)
+        return;
 
-    GLint texture = 0;
-    glGetIntegeri_v(GL_TEXTURE_BINDING_2D, unit, &texture);
-    const std::string name = nearBoundTextureDiagName((GLuint)texture);
-    if (!name.empty()) {
+    GLint maxUnits = 0;
+    GLint program = 0;
+    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &maxUnits);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+
+    const GLint units = std::max(0, std::min(maxUnits, 32));
+    bool foundWater = false;
+
+    for (GLint unit = 0; unit < units; ++unit) {
+        GLint texture = 0;
+        glGetIntegeri_v(GL_TEXTURE_BINDING_2D, (GLuint)unit, &texture);
+        if (!texture)
+            continue;
+
+        const std::string name = nearBoundTextureDiagName((GLuint)texture);
+        if (name.empty())
+            continue;
+
+        foundWater = true;
         compatPakLog(
-            "GL TEX STATE: event=bindSampler unit=%u sampler=%u texture=%d name=%s",
-            (unsigned)unit, (unsigned)sampler, texture, name.c_str());
+            "GL TEX DRAW: program=%d unit=%d texture=%d name=%s",
+            program, unit, texture, name.c_str());
     }
-}
 
-static void shim_glSamplerParameteri(GLuint sampler, GLenum pname, GLint param) {
-    glSamplerParameteri(sampler, pname, param);
+    if (!foundWater || !program)
+        return;
 
-    GLuint unit = 0;
-    GLint texture = 0;
-    std::string name;
-    if (nearSamplerDiagBoundUnit(sampler, unit, texture, name)) {
+    GLint uniformCount = 0;
+    glGetProgramiv((GLuint)program, GL_ACTIVE_UNIFORMS, &uniformCount);
+    const GLint limit = std::max(0, std::min(uniformCount, 256));
+
+    char uname[256] = {};
+    for (GLint i = 0; i < limit; ++i) {
+        GLsizei nameLen = 0;
+        GLint size = 0;
+        GLenum type = 0;
+        glGetActiveUniform((GLuint)program, (GLuint)i, sizeof(uname),
+                           &nameLen, &size, &type, uname);
+        if (type != GL_SAMPLER_2D)
+            continue;
+
+        uname[std::min<int>(nameLen, (int)sizeof(uname) - 1)] = '\\0';
+        const GLint location = glGetUniformLocation((GLuint)program, uname);
+        if (location < 0)
+            continue;
+
+        GLint samplerUnit = -1;
+        glGetUniformiv((GLuint)program, location, &samplerUnit);
         compatPakLog(
-            "GL TEX STATE: event=samplerParameteri unit=%u sampler=%u texture=%d name=%s pname=0x%x param=%d",
-            (unsigned)unit, (unsigned)sampler, texture, name.c_str(),
-            (unsigned)pname, param);
-    }
-}
-
-static void shim_glSamplerParameterf(GLuint sampler, GLenum pname, GLfloat param) {
-    glSamplerParameterf(sampler, pname, param);
-
-    GLuint unit = 0;
-    GLint texture = 0;
-    std::string name;
-    if (nearSamplerDiagBoundUnit(sampler, unit, texture, name)) {
-        compatPakLog(
-            "GL TEX STATE: event=samplerParameterf unit=%u sampler=%u texture=%d name=%s pname=0x%x param=%g",
-            (unsigned)unit, (unsigned)sampler, texture, name.c_str(),
-            (unsigned)pname, (double)param);
-    }
-}
-
-static void shim_glSamplerParameteriv(GLuint sampler, GLenum pname, const GLint* params) {
-    glSamplerParameteriv(sampler, pname, params);
-
-    GLuint unit = 0;
-    GLint texture = 0;
-    std::string name;
-    if (params && nearSamplerDiagBoundUnit(sampler, unit, texture, name)) {
-        compatPakLog(
-            "GL TEX STATE: event=samplerParameteriv unit=%u sampler=%u texture=%d name=%s pname=0x%x param0=%d",
-            (unsigned)unit, (unsigned)sampler, texture, name.c_str(),
-            (unsigned)pname, params[0]);
-    }
-}
-
-static void shim_glSamplerParameterfv(GLuint sampler, GLenum pname, const GLfloat* params) {
-    glSamplerParameterfv(sampler, pname, params);
-
-    GLuint unit = 0;
-    GLint texture = 0;
-    std::string name;
-    if (params && nearSamplerDiagBoundUnit(sampler, unit, texture, name)) {
-        compatPakLog(
-            "GL TEX STATE: event=samplerParameterfv unit=%u sampler=%u texture=%d name=%s pname=0x%x param0=%g",
-            (unsigned)unit, (unsigned)sampler, texture, name.c_str(),
-            (unsigned)pname, (double)params[0]);
+            "GL TEX SAMPLER: program=%d uniform=%s location=%d unit=%d",
+            program, uname, location, samplerUnit);
     }
 }
 
@@ -8911,7 +8870,7 @@ static const ShimEntry g_shims[] = {
     {"glBeginTransformFeedback",(void*)glBeginTransformFeedback},
     {"glBindBufferBase",       (void*)glBindBufferBase},
     {"glBindBufferRange",      (void*)glBindBufferRange},
-    {"glBindSampler",          (void*)shim_glBindSampler},
+    {"glBindSampler",          (void*)glBindSampler},
     {"glBindTransformFeedback",(void*)glBindTransformFeedback},
     {"glBindVertexArray",      (void*)glBindVertexArray},
     {"glBlitFramebuffer",      (void*)glBlitFramebuffer},
@@ -8954,10 +8913,10 @@ static const ShimEntry g_shims[] = {
     {"glReadBuffer",           (void*)glReadBuffer},
     {"glRenderbufferStorageMultisample",(void*)glRenderbufferStorageMultisample},
     {"glResumeTransformFeedback",(void*)glResumeTransformFeedback},
-    {"glSamplerParameterf",    (void*)shim_glSamplerParameterf},
-    {"glSamplerParameterfv",   (void*)shim_glSamplerParameterfv},
-    {"glSamplerParameteri",    (void*)shim_glSamplerParameteri},
-    {"glSamplerParameteriv",   (void*)shim_glSamplerParameteriv},
+    {"glSamplerParameterf",    (void*)glSamplerParameterf},
+    {"glSamplerParameterfv",   (void*)glSamplerParameterfv},
+    {"glSamplerParameteri",    (void*)glSamplerParameteri},
+    {"glSamplerParameteriv",   (void*)glSamplerParameteriv},
     {"glTexImage3D",           (void*)glTexImage3D},
     {"glTexStorage2D",         (void*)glTexStorage2D},
     {"glTexStorage3D",         (void*)glTexStorage3D},
