@@ -282,18 +282,19 @@ extern "C" uint32_t compatGuestCallReadFileEx(void* proxy) {
         return 0;
     }
 
+    const uint64_t dataSize = data->size();
     const uint64_t srcOffset =
         (uint64_t)paramsOffset + (uint64_t)pieceOffset;
-    if (srcOffset > data.size() ||
-        (uint64_t)pieceLength > data.size() - srcOffset ||
-        (uint64_t)paramsSize > data.size() ||
-        (uint64_t)paramsOffset > data.size()) {
+    if (srcOffset > dataSize ||
+        (uint64_t)pieceLength > dataSize - srcOffset ||
+        (uint64_t)paramsSize > dataSize ||
+        (uint64_t)paramsOffset > dataSize) {
         complete(proxy, 0xF0000008u, 0);
         return 0;
     }
 
     std::memcpy(reinterpret_cast<unsigned char*>(buffer) + pieceOffset,
-                data.data() + srcOffset,
+                data->data() + srcOffset,
                 pieceLength);
 
     complete(proxy, 0, pieceLength);
@@ -3231,8 +3232,9 @@ static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
                      meta.localOffset);
     }
 
-    std::vector<unsigned char> data;
-    if (!pakReadEntryToMemory(pakPath, meta, data)) {
+    std::shared_ptr<std::vector<unsigned char>> data;
+    bool cacheHit = false;
+    if (!pakGetMemory(pakPath, meta, data, cacheHit)) {
         if (trace) {
             compatLogFmt("PAK MEM TRACE READ_FAILED: %s <- %s",
                          wantedTrace.c_str(), pakPath.c_str());
