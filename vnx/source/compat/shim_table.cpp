@@ -4480,6 +4480,7 @@ static EGLBoolean w_eglSwapBuffers(EGLDisplay d, EGLSurface s) {
 // same shim resolver before returning NULL, otherwise the renderer can cache a
 // null function pointer and later jump to PC=0 during pipeline setup/shutdown.
 // Forward declarations for legacy texture shims defined later in this file.
+static void shim_glPixelStorei(GLenum pname, GLint param);
 static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                               GLsizei width, GLsizei height, GLint border,
                               GLenum format, GLenum type, const void* pixels);
@@ -4494,6 +4495,10 @@ static void* w_eglGetProcAddress(const char* name) {
     // XRenderOGL may resolve these core texture entry points dynamically.
     // Force them through the Switch compatibility shim so legacy Android
     // texture formats (notably NVIDIA DSDT) cannot bypass our translation.
+    if (strcmp(name, "glPixelStorei") == 0) {
+        compatLog("EGL: eglGetProcAddress(glPixelStorei) -> Switch texture diagnostic shim");
+        return reinterpret_cast<void*>(shim_glPixelStorei);
+    }
     if (strcmp(name, "glTexImage2D") == 0) {
         compatLog("EGL: eglGetProcAddress(glTexImage2D) -> Switch texture shim");
         return reinterpret_cast<void*>(shim_glTexImage2D);
@@ -6717,6 +6722,141 @@ static inline bool isNearDsdtFormat(GLenum format) {
     return format == kNearGL_DSDT_NV || format == kNearGL_DSDT_MAG_NV;
 }
 
+// Guest GL unpack state used by the texture diagnostic. These are per-thread
+// because CryEngine's texture workers keep their own current GL context/state.
+// Defaults match OpenGL: alignment=4, row/skip fields=0.
+static thread_local GLint g_glUnpackAlignment = 4;
+static thread_local GLint g_glUnpackRowLength = 0;
+static thread_local GLint g_glUnpackSkipPixels = 0;
+static thread_local GLint g_glUnpackSkipRows = 0;
+
+static void shim_glPixelStorei(GLenum pname, GLint param) {
+    switch (pname) {
+    case GL_UNPACK_ALIGNMENT:
+        g_glUnpackAlignment = param;
+        break;
+#if defined(GL_UNPACK_ROW_LENGTH)
+    case GL_UNPACK_ROW_LENGTH:
+        g_glUnpackRowLength = param;
+        break;
+#endif
+#if defined(GL_UNPACK_SKIP_PIXELS)
+    case GL_UNPACK_SKIP_PIXELS:
+        g_glUnpackSkipPixels = param;
+        break;
+#endif
+#if defined(GL_UNPACK_SKIP_ROWS)
+    case GL_UNPACK_SKIP_ROWS:
+        g_glUnpackSkipRows = param;
+        break;
+#endif
+    default:
+        break;
+    }
+
+    glPixelStorei(pname, param);
+}
+
+static unsigned nearGlFormatComponents(GLenum format) {
+    switch (format) {
+    case GL_RED:
+    case GL_ALPHA:
+    case GL_LUMINANCE:
+        return 1;
+    case GL_RG:
+    case GL_LUMINANCE_ALPHA:
+        return 2;
+    case GL_RGB:
+        return 3;
+#ifdef GL_BGR
+    case GL_BGR:
+        return 3;
+#endif
+    case GL_RGBA:
+        return 4;
+#ifdef GL_BGRA
+    case GL_BGRA:
+        return 4;
+#endif
+    default:
+        return 0;
+    }
+}
+
+static unsigned nearGlTypeBytes(GLenum type, bool& packed) {
+    packed = false;
+    switch (type) {
+    case GL_UNSIGNED_BYTE:
+    case GL_BYTE:
+        return 1;
+    case GL_UNSIGNED_SHORT:
+    case GL_SHORT:
+    case GL_HALF_FLOAT:
+        return 2;
+    case GL_UNSIGNED_INT:
+    case GL_INT:
+    case GL_FLOAT:
+        return 4;
+#ifdef GL_UNSIGNED_SHORT_5_6_5
+    case GL_UNSIGNED_SHORT_5_6_5:
+        packed = true;
+        return 2;
+#endif
+#ifdef GL_UNSIGNED_SHORT_4_4_4_4
+    case GL_UNSIGNED_SHORT_4_4_4_4:
+        packed = true;
+        return 2;
+#endif
+#ifdef GL_UNSIGNED_SHORT_5_5_5_1
+    case GL_UNSIGNED_SHORT_5_5_5_1:
+        packed = true;
+        return 2;
+#endif
+#ifdef GL_UNSIGNED_INT_24_8
+    case GL_UNSIGNED_INT_24_8:
+        packed = true;
+        return 4;
+#endif
+#ifdef GL_FLOAT_32_UNSIGNED_INT_24_8_REV
+    case GL_FLOAT_32_UNSIGNED_INT_24_8_REV:
+        packed = true;
+        return 8;
+#endif
+    default:
+        return 0;
+    }
+}
+
+static void nearLogTextureBytes(const std::string& name,
+                                GLsizei width, GLsizei height,
+                                GLenum format, GLenum type) {
+    const unsigned components = nearGlFormatComponents(format);
+    bool packed = false;
+    const unsigned typeBytes = nearGlTypeBytes(type, packed);
+    const unsigned bytesPerPixel =
+        packed ? typeBytes : (components && typeBytes ? components * typeBytes : 0);
+
+    uint64_t rowPixels = (g_glUnpackRowLength > 0)
+        ? (uint64_t)g_glUnpackRowLength
+        : (uint64_t)std::max<GLsizei>(width, 0);
+    uint64_t tightRow = bytesPerPixel ? rowPixels * bytesPerPixel : 0;
+    const unsigned alignment = (g_glUnpackAlignment > 0) ? (unsigned)g_glUnpackAlignment : 1u;
+    const uint64_t paddedRow =
+        tightRow ? ((tightRow + alignment - 1u) / alignment) * alignment : 0;
+
+    compatPakLog(
+        "GL TEX LAYOUT: name=%s format=0x%x type=0x%x components=%u typeBytes=%u packed=%u "
+        "alignment=%d rowLength=%d skipPixels=%d skipRows=%d bpp=%u tightRow=%" PRIu64
+        " paddedRow=%" PRIu64 " rows=%d minLevel0=%" PRIu64 " pixels=%p",
+        name.c_str(), (unsigned)format, (unsigned)type,
+        components, typeBytes, packed ? 1u : 0u,
+        (int)g_glUnpackAlignment, (int)g_glUnpackRowLength,
+        (int)g_glUnpackSkipPixels, (int)g_glUnpackSkipRows,
+        bytesPerPixel, tightRow, paddedRow, (int)height,
+        paddedRow * (uint64_t)std::max<GLsizei>(height, 0),
+        nullptr);
+}
+
 static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                               GLsizei width, GLsizei height, GLint border,
                               GLenum format, GLenum type, const void* pixels) {
@@ -6743,6 +6883,24 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                      (unsigned)target, level, width, height,
                      (unsigned)(GLenum)internalformat, (unsigned)format,
                      (unsigned)type, (unsigned)before);
+        nearLogTextureBytes(traceName, width, height, format, type);
+
+        // Only inspect client memory when no pixel-unpack buffer is active.
+        // In that case 'pixels' is a real CPU pointer. Keep this to 16 bytes
+        // so the diagnostic remains cheap and does not alter the upload.
+        char first16[64];
+        first16[0] = '\0';
+        if (pixels) {
+            const unsigned char* p = static_cast<const unsigned char*>(pixels);
+            const size_t n = 16;
+            size_t pos = 0;
+            for (size_t i = 0; i < n && pos + 4 < sizeof(first16); ++i)
+                pos += (size_t)snprintf(first16 + pos, sizeof(first16) - pos,
+                                        "%02x%s", (unsigned)p[i], i + 1 == n ? "" : " ");
+        }
+        compatPakLog("GL TEX PTR[%u]: name=%s pixels=%p first16=%s",
+                     traceIndex, traceName.c_str(), pixels,
+                     first16[0] ? first16 : "<null>");
     }
     if (type == GL_FLOAT &&
         (isNearDsdtFormat(format) || isNearDsdtFormat((GLenum)internalformat))) {
@@ -8045,7 +8203,7 @@ static const ShimEntry g_shims[] = {
     {"glIsTexture",         (void*)glIsTexture},
     {"glLineWidth",         (void*)glLineWidth},
     {"glLinkProgram",       (void*)glLinkProgram},
-    {"glPixelStorei",       (void*)glPixelStorei},
+    {"glPixelStorei",       (void*)shim_glPixelStorei},
     {"glPolygonOffset",     (void*)glPolygonOffset},
     {"glReadPixels",        (void*)glReadPixels},
     {"glReleaseShaderCompiler",(void*)glReleaseShaderCompiler},
