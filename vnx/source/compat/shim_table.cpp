@@ -2718,11 +2718,27 @@ static void getAnimationAliasCandidates(const std::string& wanted,
         candidates.emplace_back("objects/characters/animations/vehicles/humvee_passenger2_out.caf");
     } else if (wanted == "objects/characters/animations/shared/humvee_passenger3_sit_loop.caf") {
         candidates.emplace_back("objects/characters/animations/vehicles/humvee_passenger3_sit_loop.caf");
+    } else if (wanted == "objects/characters/animations/shared/humvee_passenger3_out.caf") {
+        candidates.emplace_back("objects/characters/animations/vehicles/humvee_passenger3_out.caf");
+    } else if (wanted == "objects/characters/animations/shared/humvee_passenger4_sit_loop.caf") {
+        candidates.emplace_back("objects/characters/animations/vehicles/humvee_passenger4_sit_loop.caf");
+    } else if (wanted == "objects/characters/animations/shared/humvee_passenger5_sit_loop.caf") {
+        candidates.emplace_back("objects/characters/animations/vehicles/humvee_passenger5_sit_loop.caf");
+    } else if (wanted == "objects/characters/animations/human_male/awalkfwd_loop.caf") {
+        // The standard Far Cry animation list maps awalkfwd to xwalkfwd.
+        // Keep this at the PAK layer so the animation record is untouched.
+        candidates.emplace_back("objects/characters/animations/human_male/xwalkfwd_loop.caf");
+    } else if (wanted == "objects/characters/animations/human_male/awalkfwd_upaim_loop.caf") {
+        candidates.emplace_back("objects/characters/animations/human_male/xwalkfwd_upaim_loop.caf");
     } else if (wanted == "objects/characters/animations/human_male/awalkback_loop.caf") {
         // The standard Far Cry animation list uses xwalkback_loop.caf for
         // the awalkback animation. Keep the alias at the PAK layer so the
         // animation record itself remains untouched.
         candidates.emplace_back("objects/characters/animations/human_male/xwalkback_loop.caf");
+    } else if (wanted == "objects/characters/animations/human_male/awalkback_utaim_loop.caf") {
+        candidates.emplace_back("objects/characters/animations/human_male/xwalkback_utaim_loop.caf");
+    } else if (wanted == "objects/characters/animations/human_male/awalkback_upaim_loop.caf") {
+        candidates.emplace_back("objects/characters/animations/human_male/xwalkback_upaim_loop.caf");
     }
 }
 
