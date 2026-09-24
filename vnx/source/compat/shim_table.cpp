@@ -7114,7 +7114,7 @@ static void nearVerifyUploadedTexture(const std::string& name,
     unsigned char* readback =
         (unsigned char*)std::malloc(readbackBytes);
     uint64_t gpuHash = 0;
-    uint64_t gpuRgbHash = 0;
+    uint64_t gpuRgbHash = 1469598103934665603ULL;
     unsigned char gpuFirst[16] = {};
     GLenum readbackError = GL_NO_ERROR;
 
