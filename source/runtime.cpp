@@ -565,6 +565,9 @@ void compatLog(const char* msg) {
     const bool main_loop = is_main_loop_marker(msg);
     const bool suppress_pak_success = suppressSuccessfulPakDiag(msg);
     const bool suppress_noise = suppressCompatNoise(msg);
+    const bool suppress_gl_texture_diag =
+        msg && (std::strncmp(msg, "GL TEX ", 7) == 0 ||
+                std::strncmp(msg, "GL PIXELSTORE", 13) == 0);
 
     mutexLock(&g_log_lock);
 
@@ -575,7 +578,8 @@ void compatLog(const char* msg) {
 
     if (!suppress_pak_success &&
         !suppress_noise &&
-        !suppressCompatShaderDiag(msg))
+        !suppressCompatShaderDiag(msg) &&
+        !suppress_gl_texture_diag)
         log_write(msg, main_loop);
 
     // Keep the file log open after the main-loop marker so we can capture
