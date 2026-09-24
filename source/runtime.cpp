@@ -50,15 +50,48 @@ static void pak_diag_open() {
     }
 }
 
-static bool isTargetPakTextureDiagLine(const char* msg) {
+static thread_local bool g_pak_diag_target_trace = false;
+
+static bool isPakLookupTargetPath(const char* msg) {
     if (!msg || !*msg)
         return false;
 
-    // pak_lookup_diag.log is reserved exclusively for GL texture diagnostics.
-    // PAK lookup/index/read traces are still performed normally and remain
-    // available through the regular engine log, but do not pollute this file.
-    return std::strncmp(msg, "GL TEX ", 7) == 0 ||
-           std::strncmp(msg, "GL PIXELSTORE", 13) == 0;
+    std::string lower(msg);
+    for (char& c : lower)
+        c = (char)std::tolower((unsigned char)c);
+
+    return lower.find(".cgf") != std::string::npos ||
+           lower.find(".ccg") != std::string::npos ||
+           lower.find(".caf") != std::string::npos;
+}
+
+static bool isPakLookupDiagLine(const char* msg) {
+    if (!msg || !*msg)
+        return false;
+
+    // Keep this file focused on the resource lookup problem. A target QUERY
+    // enables a short trace window for that lookup; all subsequent PAK
+    // lookup/index/read messages on the same thread are retained until the
+    // next QUERY switches the trace to another target or non-target resource.
+    if (std::strncmp(msg, "QUERY:", 6) == 0) {
+        g_pak_diag_target_trace = isPakLookupTargetPath(msg);
+        return g_pak_diag_target_trace;
+    }
+
+    if (!g_pak_diag_target_trace)
+        return false;
+
+    // Only retain messages that describe archive lookup or archive-backed
+    // reads. GL texture diagnostics are intentionally excluded here.
+    return std::strncmp(msg, "QUERY ", 6) == 0 ||
+           std::strncmp(msg, "LEVEL_PAK_", 10) == 0 ||
+           std::strncmp(msg, "LEVEL_LOCAL_", 12) == 0 ||
+           std::strncmp(msg, "GLOBAL_PAK_", 11) == 0 ||
+           std::strncmp(msg, "INDEX_", 6) == 0 ||
+           std::strncmp(msg, "READ_", 5) == 0 ||
+           std::strncmp(msg, "PAK EXACT:", 10) == 0 ||
+           std::strncmp(msg, "PAK STREAM ", 11) == 0 ||
+           std::strncmp(msg, "PAK MEM ", 8) == 0;
 }
 
 void compatPakLog(const char* fmt, ...) {
@@ -71,7 +104,7 @@ void compatPakLog(const char* fmt, ...) {
     std::vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
-    if (!isTargetPakTextureDiagLine(buf))
+    if (!isPakLookupDiagLine(buf))
         return;
 
     mutexLock(&g_pak_diag_lock);
