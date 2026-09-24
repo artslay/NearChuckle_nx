@@ -2927,7 +2927,9 @@ static void getAnimationAliasCandidates(const std::string& wanted,
 }
 
 static thread_local std::string g_lastTexturePakName;
-static thread_local unsigned g_textureUploadDiagCount = 0;
+static Mutex g_textureDiagLock;
+static std::string g_lastTexturePakNameGlobal;
+static std::atomic<unsigned> g_textureUploadDiagCount{0};
 
 static bool isTexturePakName(const std::string& name) {
     const size_t dot = name.rfind('.');
@@ -2961,9 +2963,6 @@ static bool pakFindVirtualEntry(const char* requested,
         return false;
 
     const std::string wanted = pakAssetRelativeName(requested);
-    g_lastTexturePakName.clear();
-    if (isTexturePakName(wanted))
-        g_lastTexturePakName = wanted;
     if (wanted.empty()) {
         compatPakLog("QUERY INVALID: requested=%s normalized=<empty>",
                      requested ? requested : "<null>");
@@ -2972,6 +2971,19 @@ static bool pakFindVirtualEntry(const char* requested,
 
     compatPakLog("QUERY: requested=%s normalized=%s",
                  requested, wanted.c_str());
+
+    // Keep the diagnostic texture candidate alive across unrelated CryPak
+    // lookups. The old code cleared it for every request, so a shader/CAF/etc.
+    // query between a DDS lookup and glTexImage2D erased the texture name.
+    // Keep both a TLS copy (most precise) and a global fallback for GL work
+    // that happens on another thread.
+    if (isTexturePakName(wanted) &&
+        isInterestingTextureDiagName(wanted)) {
+        g_lastTexturePakName = wanted;
+        mutexLock(&g_textureDiagLock);
+        g_lastTexturePakNameGlobal = wanted;
+        mutexUnlock(&g_textureDiagLock);
+    }
 
     // Check the positive lookup cache before touching the filesystem or
     // rescanning level-local PAKs. rememberActiveLevelPak() clears this cache
@@ -6708,15 +6720,26 @@ static inline bool isNearDsdtFormat(GLenum format) {
 static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                               GLsizei width, GLsizei height, GLint border,
                               GLenum format, GLenum type, const void* pixels) {
+    std::string traceName = g_lastTexturePakName;
+    if (traceName.empty()) {
+        mutexLock(&g_textureDiagLock);
+        traceName = g_lastTexturePakNameGlobal;
+        mutexUnlock(&g_textureDiagLock);
+    }
+
     const bool traceThisUpload =
-        !g_lastTexturePakName.empty() &&
-        isInterestingTextureDiagName(g_lastTexturePakName) &&
-        g_textureUploadDiagCount < 128;
+        !traceName.empty() &&
+        isInterestingTextureDiagName(traceName);
+    unsigned traceIndex = 0;
     if (traceThisUpload) {
-        ++g_textureUploadDiagCount;
+        traceIndex = g_textureUploadDiagCount.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (traceIndex > 128)
+            traceIndex = 0;
+    }
+    if (traceIndex) {
         const GLenum before = glGetError();
         compatPakLog("GL TEX UPLOAD[%u]: name=%s target=0x%x level=%d %dx%d internal=0x%x format=0x%x type=0x%x preerr=0x%x",
-                     g_textureUploadDiagCount, g_lastTexturePakName.c_str(),
+                     traceIndex, traceName.c_str(),
                      (unsigned)target, level, width, height,
                      (unsigned)(GLenum)internalformat, (unsigned)format,
                      (unsigned)type, (unsigned)before);
@@ -6734,9 +6757,9 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 
         glTexImage2D(target, level, (GLint)mappedInternal, width, height, border,
                      mappedFormat, type, pixels);
-        if (traceThisUpload) {
+        if (traceIndex) {
             compatPakLog("GL TEX RESULT[%u]: name=%s path=DSDT mapped_internal=0x%x mapped_format=0x%x glerr=0x%x",
-                         g_textureUploadDiagCount, g_lastTexturePakName.c_str(),
+                         traceIndex, traceName.c_str(),
                          (unsigned)mappedInternal, (unsigned)mappedFormat,
                          (unsigned)glGetError());
         }
@@ -6745,9 +6768,9 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 
     glTexImage2D(target, level, internalformat, width, height, border,
                  format, type, pixels);
-    if (traceThisUpload) {
+    if (traceIndex) {
         compatPakLog("GL TEX RESULT[%u]: name=%s path=normal internal=0x%x format=0x%x type=0x%x glerr=0x%x",
-                     g_textureUploadDiagCount, g_lastTexturePakName.c_str(),
+                     traceIndex, traceName.c_str(),
                      (unsigned)(GLenum)internalformat, (unsigned)format,
                      (unsigned)type, (unsigned)glGetError());
     }
