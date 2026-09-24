@@ -2850,6 +2850,23 @@ static bool pakFindVirtualEntry(const char* requested,
     if (wanted.empty())
         return false;
 
+    // Check the positive lookup cache before touching the filesystem or
+    // rescanning level-local PAKs. rememberActiveLevelPak() clears this cache
+    // whenever a newly opened level PAK can change the lookup result, so a
+    // cached hit remains valid while avoiding repeated opendir()/index work
+    // for the thousands of CGF/CAF accesses performed during level loading.
+    {
+        mutexLock(&g_pak_index_lock);
+        auto hit = g_pak_lookup_cache.find(wanted);
+        if (hit != g_pak_lookup_cache.end()) {
+            pakPathOut = hit->second.pakPath;
+            metaOut = hit->second.meta;
+            mutexUnlock(&g_pak_index_lock);
+            return true;
+        }
+        mutexUnlock(&g_pak_index_lock);
+    }
+
     std::vector<std::string> activeLevelPaks;
     {
         mutexLock(&g_pak_index_lock);
@@ -2880,14 +2897,6 @@ static bool pakFindVirtualEntry(const char* requested,
 
     {
         mutexLock(&g_pak_index_lock);
-        auto hit = g_pak_lookup_cache.find(wanted);
-        if (hit != g_pak_lookup_cache.end()) {
-            pakPathOut = hit->second.pakPath;
-            metaOut = hit->second.meta;
-            mutexUnlock(&g_pak_index_lock);
-            return true;
-        }
-
         const bool wantedIsCaf =
             wanted.size() >= 4 &&
             wanted.compare(wanted.size() - 4, 4, ".caf") == 0;
