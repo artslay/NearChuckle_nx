@@ -2890,7 +2890,7 @@ static bool isCriticalCafDiagPath(const char* path) {
 
     std::string normalized(path);
     for (char& c : normalized) {
-        if (c == '\\\\')
+        if (c == '\\')
             c = '/';
         else
             c = (char)std::tolower((unsigned char)c);
