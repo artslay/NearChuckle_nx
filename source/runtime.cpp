@@ -31,106 +31,13 @@ static const devoptab_t* g_boot_stdout_dotab = nullptr;
 static unsigned g_boot_ui_pending_lines = 0;
 static unsigned g_log_pending_lines = 0;
 
-static Mutex g_pak_diag_lock;
-static FILE* g_pak_diag = nullptr;
-static unsigned g_pak_diag_pending_lines = 0;
-static bool g_pak_diag_closed = false;
-
-static void pak_diag_open() {
-    if (g_pak_diag || g_pak_diag_closed)
-        return;
-
-    // This is intentionally a dedicated diagnostic file. It is overwritten
-    // at every run so one test produces one self-contained PAK trace.
-    g_pak_diag = std::fopen("/switch/NearChuckle_nx/pak_lookup_diag.log", "w");
-    if (g_pak_diag) {
-        std::fprintf(g_pak_diag,
-                     "=== NearChuckle_nx PAK LOOKUP DIAGNOSTICS ===\n");
-        std::fflush(g_pak_diag);
-    }
-}
-
-static thread_local bool g_pak_diag_target_trace = false;
-
-static bool isPakLookupTargetPath(const char* msg) {
-    if (!msg || !*msg)
-        return false;
-
-    std::string lower(msg);
-    for (char& c : lower)
-        c = (char)std::tolower((unsigned char)c);
-
-    return lower.find(".cgf") != std::string::npos ||
-           lower.find(".ccg") != std::string::npos ||
-           lower.find(".caf") != std::string::npos;
-}
-
-static bool isPakLookupDiagLine(const char* msg) {
-    if (!msg || !*msg)
-        return false;
-
-    // Keep this file focused on the resource lookup problem. A target QUERY
-    // enables a short trace window for that lookup; all subsequent PAK
-    // lookup/index/read messages on the same thread are retained until the
-    // next QUERY switches the trace to another target or non-target resource.
-    if (std::strncmp(msg, "QUERY:", 6) == 0) {
-        g_pak_diag_target_trace = isPakLookupTargetPath(msg);
-        return g_pak_diag_target_trace;
-    }
-
-    if (!g_pak_diag_target_trace)
-        return false;
-
-    // Only retain messages that describe archive lookup or archive-backed
-    // reads. GL texture diagnostics are intentionally excluded here.
-    return std::strncmp(msg, "QUERY ", 6) == 0 ||
-           std::strncmp(msg, "LEVEL_PAK_", 10) == 0 ||
-           std::strncmp(msg, "LEVEL_LOCAL_", 12) == 0 ||
-           std::strncmp(msg, "GLOBAL_PAK_", 11) == 0 ||
-           std::strncmp(msg, "INDEX_", 6) == 0 ||
-           std::strncmp(msg, "READ_", 5) == 0 ||
-           std::strncmp(msg, "PAK EXACT:", 10) == 0 ||
-           std::strncmp(msg, "PAK STREAM ", 11) == 0 ||
-           std::strncmp(msg, "PAK MEM ", 8) == 0;
-}
-
+// Dedicated PAK lookup diagnostic file is intentionally disabled. Keep the
+// public logging entry point so existing PAK I/O call sites remain unchanged.
 void compatPakLog(const char* fmt, ...) {
-    if (!fmt)
-        return;
-
-    char buf[2048];
-    va_list args;
-    va_start(args, fmt);
-    std::vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-
-    if (!isPakLookupDiagLine(buf))
-        return;
-
-    mutexLock(&g_pak_diag_lock);
-    pak_diag_open();
-    if (g_pak_diag) {
-        std::fprintf(g_pak_diag, "%s\n", buf);
-        if (++g_pak_diag_pending_lines >= 64) {
-            std::fflush(g_pak_diag);
-            g_pak_diag_pending_lines = 0;
-        }
-    }
-    mutexUnlock(&g_pak_diag_lock);
+    (void)fmt;
 }
 
-
-static void compatPakLogClose() {
-    mutexLock(&g_pak_diag_lock);
-    if (g_pak_diag) {
-        std::fflush(g_pak_diag);
-        std::fclose(g_pak_diag);
-        g_pak_diag = nullptr;
-    }
-    g_pak_diag_pending_lines = 0;
-    g_pak_diag_closed = true;
-    mutexUnlock(&g_pak_diag_lock);
-}
+static void compatPakLogClose() {}
 
 static constexpr unsigned kBootUiUpdateBatch = 32;
 static constexpr unsigned kLogFlushBatch = 128;
