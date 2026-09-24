@@ -6847,14 +6847,13 @@ static void nearLogTextureBytes(const std::string& name,
     compatPakLog(
         "GL TEX LAYOUT: name=%s format=0x%x type=0x%x components=%u typeBytes=%u packed=%u "
         "alignment=%d rowLength=%d skipPixels=%d skipRows=%d bpp=%u tightRow=%" PRIu64
-        " paddedRow=%" PRIu64 " rows=%d minLevel0=%" PRIu64 " pixels=%p",
+        " paddedRow=%" PRIu64 " rows=%d minLevel0=%" PRIu64,
         name.c_str(), (unsigned)format, (unsigned)type,
         components, typeBytes, packed ? 1u : 0u,
         (int)g_glUnpackAlignment, (int)g_glUnpackRowLength,
         (int)g_glUnpackSkipPixels, (int)g_glUnpackSkipRows,
         bytesPerPixel, tightRow, paddedRow, (int)height,
-        paddedRow * (uint64_t)std::max<GLsizei>(height, 0),
-        nullptr);
+        paddedRow * (uint64_t)std::max<GLsizei>(height, 0));
 }
 
 static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
