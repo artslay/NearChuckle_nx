@@ -1642,6 +1642,7 @@ struct PakIndex {
 };
 
 static std::atomic<unsigned> g_pakMemoryTraceEvents{0};
+static std::atomic<unsigned> g_cafLookupDiagEvents{0};
 
 static bool pakMemoryTracePath(const char* path) {
     if (!path || !*path)
@@ -2749,7 +2750,11 @@ static bool pakFindVirtualEntry(const char* requested,
 
     const std::vector<std::string> globalPaks =
         getGlobalPakPathsSnapshot();
-    for (const std::string& pakPath : globalPaks) {
+
+    // CryPak loads PAKs alphabetically and later PAKs override earlier ones.
+    // Search in reverse order to preserve that priority.
+    for (auto it = globalPaks.rbegin(); it != globalPaks.rend(); ++it) {
+        const std::string& pakPath = *it;
         PakEntryMeta meta;
         if (!pakFindEntryCached(pakPath, wanted, meta))
             continue;
@@ -2762,12 +2767,34 @@ static bool pakFindVirtualEntry(const char* requested,
             PakLookupCacheEntry{pakPathOut, metaOut};
         g_pak_lookup_misses.erase(wanted);
         mutexUnlock(&g_pak_index_lock);
+
+        if (wanted.size() >= 4 &&
+            wanted.compare(wanted.size() - 4, 4, ".caf") == 0) {
+            const unsigned n =
+                g_cafLookupDiagEvents.fetch_add(1);
+            if (n < 64) {
+                compatLogFmt("PAK CAF HIT: %s <- %s size=%u method=%u",
+                             wanted.c_str(), pakPathOut.c_str(),
+                             (unsigned)metaOut.uncompressedSize,
+                             (unsigned)metaOut.method);
+            }
+        }
         return true;
     }
 
     mutexLock(&g_pak_index_lock);
     g_pak_lookup_misses.emplace(wanted);
     mutexUnlock(&g_pak_index_lock);
+
+    if (wanted.size() >= 4 &&
+        wanted.compare(wanted.size() - 4, 4, ".caf") == 0) {
+        const unsigned n =
+            g_cafLookupDiagEvents.fetch_add(1);
+        if (n < 64) {
+            compatLogFmt("PAK CAF MISS: %s", wanted.c_str());
+        }
+    }
+
     return false;
 }
 
@@ -2843,7 +2870,12 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
     std::string pakPath;
     PakEntryMeta meta;
     if (pakFindVirtualEntry(path, pakPath, meta)) {
-        if (diag) {            ++g_cafDiag;
+        if (diag) {
+            compatLogFmt("FARCRY GETFILESIZE HIT: %s size=%u pak=%s",
+                         requested,
+                         (unsigned)meta.uncompressedSize,
+                         pakPath.c_str());
+            ++g_cafDiag;
         }
         return meta.uncompressedSize;
     }
