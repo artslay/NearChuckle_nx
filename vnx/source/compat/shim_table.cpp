@@ -6796,6 +6796,17 @@ static inline bool isNearDsdtFormat(GLenum format) {
     return format == kNearGL_DSDT_NV || format == kNearGL_DSDT_MAG_NV;
 }
 
+static inline bool isNearS3tcInternalFormat(GLenum format) {
+    return format == GL_COMPRESSED_RGB_S3TC_DXT1_EXT ||
+           format == GL_COMPRESSED_RGBA_S3TC_DXT1_EXT ||
+           format == GL_COMPRESSED_RGBA_S3TC_DXT3_EXT ||
+           format == GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+}
+
+static inline bool isNearDdsDdtTextureName(const std::string& name) {
+    return name.find("_ddt") != std::string::npos;
+}
+
 static inline bool isNearLegacyHiloFormat(GLenum format) {
     return format == kNearGL_HILO_NV ||
            format == kNearGL_HILO16_NV ||
@@ -7617,6 +7628,8 @@ static bool nearPrepareLegacyRgbaPixels(GLsizei width, GLsizei height,
     } else if (format == GL_BGR) {
         components = 3;
         swapRB = true;
+    } else if (format == GL_RGBA) {
+        components = 4;
     } else if (format == GL_RGB) {
         components = 3;
     } else {
@@ -7845,6 +7858,108 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
         return;
     }
 
+    // Some Android CryEngine paths ask for an S3TC internal format while
+    // passing the already-decoded 8-bit image as BGRA/RGBA. That is valid in
+    // the Android/gl4es path, but it is not the compressed upload representation
+    // we want to expose to Zink here. Preserve the pixels as RGBA8 instead.
+    if (isNearS3tcInternalFormat((GLenum)internalformat) &&
+        type == GL_UNSIGNED_BYTE &&
+        unpackBuffer == 0 &&
+        pixels &&
+        width > 0 && height > 0 &&
+        (format == GL_RGBA || format == GL_BGRA ||
+         format == GL_RGB || format == GL_BGR)) {
+        const GLint savedAlignment = g_glUnpackAlignment;
+        const GLint savedRowLength = g_glUnpackRowLength;
+        const GLint savedSkipPixels = g_glUnpackSkipPixels;
+        const GLint savedSkipRows = g_glUnpackSkipRows;
+
+        void* convertedPixels = nullptr;
+        GLenum mappedFormat = format;
+        if (nearPrepareLegacyRgbaPixels(
+                width, height, format, type, pixels, unpackBuffer,
+                convertedPixels, mappedFormat)) {
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+#if defined(GL_UNPACK_ROW_LENGTH)
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+#endif
+#if defined(GL_UNPACK_SKIP_PIXELS)
+            glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+#endif
+#if defined(GL_UNPACK_SKIP_ROWS)
+            glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+#endif
+
+            glTexImage2D(target, level, (GLint)GL_RGBA8,
+                         width, height, border,
+                         mappedFormat, GL_UNSIGNED_BYTE, convertedPixels);
+            const GLenum uploadError = glGetError();
+            nearUploadUnpackReset(savedAlignment, savedRowLength,
+                                  savedSkipPixels, savedSkipRows);
+
+            compatLogFmt(
+                "GL COMPAT: uncompressed pixels for S3TC internal=0x%x "
+                "mapped to RGBA8 format=0x%x size=%dx%d err=0x%x",
+                (unsigned)(GLenum)internalformat,
+                (unsigned)mappedFormat, width, height,
+                (unsigned)uploadError);
+
+            std::free(convertedPixels);
+            nearRememberTextureDiagName((GLuint)textureBinding, traceName);
+            if (traceThis) {
+                compatPakLog(
+                    "GL TEX RESULT[%u]: name=%s path=S3TC-uncompressed->RGBA8 "
+                    "internal=0x%x format=0x%x type=0x%x glerr=0x%x",
+                    traceIndex, traceName.c_str(),
+                    (unsigned)GL_RGBA8, (unsigned)mappedFormat,
+                    (unsigned)GL_UNSIGNED_BYTE, (unsigned)uploadError);
+            }
+            nearVerifyUploadedTexture(
+                traceName, target, level, width, height,
+                mappedFormat, GL_UNSIGNED_BYTE, nullptr, unpackBuffer,
+                uploadError);
+            return;
+        }
+        nearUploadUnpackReset(savedAlignment, savedRowLength,
+                              savedSkipPixels, savedSkipRows);
+    }
+
+    // DSDT_MAG fallback from the Android renderer stores three signed
+    // normalized channels in a 4-byte/pixel buffer. The original Android
+    // BuildMips path uses GL_RGB8 + GL_RGBA + GL_BYTE when NV_texture_shader
+    // is unavailable. Map that exact pattern to RGB8_SNORM so shader reads
+    // retain the original [-1,1] semantics without changing the 4-byte stride.
+    if (isNearDdsDdtTextureName(traceName) &&
+        (GLenum)internalformat == GL_RGB8 &&
+        format == GL_RGBA &&
+        type == GL_BYTE &&
+        pixels) {
+        compatLogFmt(
+            "GL COMPAT: DSDT byte texture %s %dx%d -> RGB8_SNORM "
+            "(RGBA source stride)",
+            traceName.c_str(), width, height);
+
+        glTexImage2D(target, level, (GLint)GL_RGB8_SNORM,
+                     width, height, border,
+                     GL_RGBA, GL_BYTE, pixels);
+        const GLenum uploadError = glGetError();
+        nearRememberTextureDiagName((GLuint)textureBinding, traceName);
+        if (traceThis) {
+            compatPakLog(
+                "GL TEX RESULT[%u]: name=%s path=DSDT-BYTE "
+                "mapped_internal=0x%x mapped_format=0x%x original_internal=0x%x "
+                "original_format=0x%x type=0x%x glerr=0x%x",
+                traceIndex, traceName.c_str(),
+                (unsigned)GL_RGB8_SNORM, (unsigned)GL_RGBA,
+                (unsigned)(GLenum)internalformat, (unsigned)format,
+                (unsigned)type, (unsigned)uploadError);
+        }
+        nearVerifyUploadedTexture(
+            traceName, target, level, width, height,
+            GL_RGBA, GL_BYTE, pixels, unpackBuffer, uploadError);
+        return;
+    }
+
     if (type == GL_FLOAT &&
         (isNearDsdtFormat(format) || isNearDsdtFormat((GLenum)internalformat))) {
         const bool mag = (format == kNearGL_DSDT_MAG_NV ||
@@ -7981,9 +8096,10 @@ static bool nearMapLegacySubImageFormat(GLenum format, GLenum type,
         }
     }
 
-    // Dynamic DSDT textures on Android use the legacy internal-format token as
-    // the client format too, but their uploaded bytes are ordinary 8-bit RGB/RG
-    // data rather than floats.
+    // Dynamic DSDT textures use the legacy internal-format token as the
+    // client format too. These byte uploads carry signed/normalized DSDT data;
+    // the destination texture is created as RGB8_SNORM by the corresponding
+    // glTexImage2D compatibility path.
     if ((type == GL_UNSIGNED_BYTE || type == GL_BYTE) &&
         isNearDsdtFormat(format)) {
         mappedFormat = (format == kNearGL_DSDT_MAG_NV) ? GL_RGB : GL_RG;
