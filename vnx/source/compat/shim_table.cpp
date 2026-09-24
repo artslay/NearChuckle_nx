@@ -6996,13 +6996,17 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
     const bool traceThis = traceIndex <= 4096;
 
     std::string traceName = g_lastTexturePakName;
+    const char* traceNameSource = "tls";
     if (traceName.empty()) {
         mutexLock(&g_textureDiagLock);
         traceName = g_lastTexturePakNameGlobal;
         mutexUnlock(&g_textureDiagLock);
+        traceNameSource = "global";
     }
-    if (traceName.empty())
+    if (traceName.empty()) {
         traceName = "<unknown>";
+        traceNameSource = "none";
+    }
 
     GLint activeTexture = 0;
     GLint textureBinding = 0;
@@ -7035,7 +7039,7 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
         const GLenum preerr = glGetError();
 
         compatLogFmt(
-            "GL TEX SHIM ENTER[%u]: name=%s target=0x%x(%s) level=%d size=%dx%d "
+            "GL TEX SHIM ENTER[%u]: name=%s source=%s target=0x%x(%s) level=%d size=%dx%d "
             "border=%d internal=0x%x format=0x%x type=0x%x pixels=%p "
             "activeTex=0x%x tex2DBinding=%d"
 #ifdef GL_TEXTURE_BINDING_CUBE_MAP
@@ -7045,9 +7049,33 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
             " unpackBuffer=%d"
 #endif
             " caller=%p preerr=0x%x",
-            traceIndex, traceName.c_str(), (unsigned)target, nearGlTexTargetName(target),
-            level, width, height, border, (unsigned)(GLenum)internalformat,
+            traceIndex, traceName.c_str(), traceNameSource,
+            (unsigned)target, nearGlTexTargetName(target), level, width, height, border,
+            (unsigned)(GLenum)internalformat,
             (unsigned)format, (unsigned)type, pixels, activeTexture, textureBinding
+#ifdef GL_TEXTURE_BINDING_CUBE_MAP
+            , cubeBinding
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+            , unpackBuffer
+#endif
+            , caller, (unsigned)preerr);
+
+        compatPakLog(
+            "GL TEX SHIM ENTER[%u]: name=%s source=%s target=0x%x(%s) level=%d size=%dx%d "
+            "border=%d internal=0x%x format=0x%x type=0x%x pixels=%p activeTex=0x%x "
+            "tex2DBinding=%d"
+#ifdef GL_TEXTURE_BINDING_CUBE_MAP
+            " cubeBinding=%d"
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+            " unpackBuffer=%d"
+#endif
+            " caller=%p preerr=0x%x",
+            traceIndex, traceName.c_str(), traceNameSource, (unsigned)target,
+            nearGlTexTargetName(target), level, width, height, border,
+            (unsigned)(GLenum)internalformat, (unsigned)format, (unsigned)type,
+            pixels, activeTexture, textureBinding
 #ifdef GL_TEXTURE_BINDING_CUBE_MAP
             , cubeBinding
 #endif
