@@ -7318,8 +7318,24 @@ static void nearLogWaterDrawState() {
 
     GLint maxUnits = 0;
     GLint program = 0;
+    GLint activeTexture = 0;
+    GLint currentTexture = 0;
+    GLint vertexProgram = 0;
+    GLint fragmentProgram = 0;
+    GLint textureEnvMode = 0;
+
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &maxUnits);
     glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &currentTexture);
+
+    // Legacy ARB program state used by Far Cry's OpenGL renderer.
+    // Numeric enums keep this diagnostic independent of header exposure.
+    glGetIntegerv(0x864A, &vertexProgram);   // GL_VERTEX_PROGRAM_BINDING_ARB
+    glGetIntegerv(0x8677, &fragmentProgram); // GL_FRAGMENT_PROGRAM_BINDING_ARB
+
+    if (glIsEnabled(GL_TEXTURE_2D))
+        glGetTexEnviv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, &textureEnvMode);
 
     const GLint units = std::max(0, std::min(maxUnits, 32));
     bool foundWater = false;
@@ -7336,8 +7352,15 @@ static void nearLogWaterDrawState() {
 
         foundWater = true;
         compatPakLog(
-            "GL TEX DRAW: program=%d unit=%d texture=%d name=%s",
-            program, unit, texture, name.c_str());
+            "GL TEX DRAW: program=%d unit=%d texture=%d name=%s "
+            "active=0x%x current_texture=%d tex2d=%d texenv=0x%x "
+            "vertex_program=%d fragment_program=%d fragment_enabled=%d",
+            program, unit, texture, name.c_str(),
+            (unsigned)activeTexture, currentTexture,
+            glIsEnabled(GL_TEXTURE_2D) ? 1 : 0,
+            (unsigned)textureEnvMode,
+            vertexProgram, fragmentProgram,
+            glIsEnabled(0x8804) ? 1 : 0);
     }
 
     if (!foundWater || !program)
