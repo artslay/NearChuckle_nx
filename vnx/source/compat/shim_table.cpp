@@ -7428,6 +7428,111 @@ static void nearLogWaterDrawState() {
 // TexImage2D calls are enough to capture the startup/level-load texture path
 // without turning the diagnostic into another multi-hundred-MB log.
 static std::atomic<unsigned> g_glTexImageShimCalls{0};
+static std::atomic<unsigned> g_legacyTextureNormalizeCalls{0};
+
+// gl4es exposes explicit compatibility controls for BGRA and 24-bit RGB
+// textures. Far Cry's Android renderer relies on these legacy upload forms.
+// Normalize them here so Zink/NVK receives a plain RGBA8 client image.
+static bool nearPrepareLegacyRgbaPixels(GLsizei width, GLsizei height,
+                                        GLenum format, GLenum type,
+                                        const void* pixels, GLint unpackBuffer,
+                                        void*& outPixels, GLenum& outFormat) {
+    outPixels = nullptr;
+    outFormat = format;
+
+    if (!pixels || unpackBuffer != 0 || type != GL_UNSIGNED_BYTE ||
+        width <= 0 || height <= 0)
+        return false;
+
+    unsigned components = 0;
+    bool swapRB = false;
+    if (format == GL_BGRA) {
+        components = 4;
+        swapRB = true;
+    } else if (format == GL_BGR) {
+        components = 3;
+        swapRB = true;
+    } else if (format == GL_RGB) {
+        components = 3;
+    } else {
+        return false;
+    }
+
+    const uint64_t rowPixels = g_glUnpackRowLength > 0
+        ? (uint64_t)g_glUnpackRowLength
+        : (uint64_t)width;
+    const uint64_t srcRowBytes = rowPixels * (uint64_t)components;
+    const unsigned alignment =
+        g_glUnpackAlignment > 0 ? (unsigned)g_glUnpackAlignment : 1u;
+    const uint64_t paddedRow =
+        ((srcRowBytes + alignment - 1u) / alignment) * alignment;
+    const uint64_t skipOffset =
+        (uint64_t)std::max<GLint>(g_glUnpackSkipRows, 0) * paddedRow +
+        (uint64_t)std::max<GLint>(g_glUnpackSkipPixels, 0) * components;
+    const uint64_t sourceSpan =
+        skipOffset +
+        (uint64_t)(height - 1) * paddedRow +
+        (uint64_t)width * components;
+    const uint64_t rgbaBytes =
+        (uint64_t)width * (uint64_t)height * 4u;
+
+    // Conversion is deliberately bounded; large/unknown uploads use the
+    // original path rather than risking an oversized temporary allocation.
+    if (!srcRowBytes || !paddedRow ||
+        sourceSpan > 128ULL * 1024ULL * 1024ULL ||
+        rgbaBytes > 128ULL * 1024ULL * 1024ULL ||
+        rgbaBytes > (uint64_t)SIZE_MAX)
+        return false;
+
+    unsigned char* converted =
+        reinterpret_cast<unsigned char*>(std::malloc((size_t)rgbaBytes));
+    if (!converted)
+        return false;
+
+    const unsigned char* src =
+        reinterpret_cast<const unsigned char*>(pixels) + skipOffset;
+
+    for (GLsizei y = 0; y < height; ++y) {
+        const unsigned char* srow =
+            src + (uint64_t)y * paddedRow;
+        unsigned char* drow =
+            converted + (size_t)y * (size_t)width * 4u;
+        for (GLsizei x = 0; x < width; ++x) {
+            const unsigned char* s =
+                srow + (size_t)x * components;
+            unsigned char* d =
+                drow + (size_t)x * 4u;
+            if (swapRB) {
+                d[0] = s[2];
+                d[1] = s[1];
+                d[2] = s[0];
+            } else {
+                d[0] = s[0];
+                d[1] = s[1];
+                d[2] = s[2];
+            }
+            d[3] = components == 4 ? s[3] : 255;
+        }
+    }
+
+    outPixels = converted;
+    outFormat = GL_RGBA;
+    return true;
+}
+
+static void nearUploadUnpackReset(GLint alignment, GLint rowLength,
+                                  GLint skipPixels, GLint skipRows) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+#if defined(GL_UNPACK_ROW_LENGTH)
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, rowLength);
+#endif
+#if defined(GL_UNPACK_SKIP_PIXELS)
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, skipPixels);
+#endif
+#if defined(GL_UNPACK_SKIP_ROWS)
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, skipRows);
+#endif
+}
 
 static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                               GLsizei width, GLsizei height, GLint border,
@@ -7582,19 +7687,81 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
         return;
     }
 
-    glTexImage2D(target, level, internalformat, width, height, border,
-                 format, type, pixels);
-    const GLenum uploadError = glGetError();
+    void* convertedPixels = nullptr;
+    GLenum uploadError = GL_NO_ERROR;
+    bool normalized = false;
+
+    if (type == GL_UNSIGNED_BYTE &&
+        (format == GL_RGB || format == GL_BGR || format == GL_BGRA) &&
+        unpackBuffer == 0 && width > 0 && height > 0) {
+        const GLint savedAlignment = g_glUnpackAlignment;
+        const GLint savedRowLength = g_glUnpackRowLength;
+        const GLint savedSkipPixels = g_glUnpackSkipPixels;
+        const GLint savedSkipRows = g_glUnpackSkipRows;
+
+        GLenum mappedFormat = format;
+        if (nearPrepareLegacyRgbaPixels(
+                width, height, format, type, pixels, unpackBuffer,
+                convertedPixels, mappedFormat)) {
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+#if defined(GL_UNPACK_ROW_LENGTH)
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+#endif
+#if defined(GL_UNPACK_SKIP_PIXELS)
+            glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+#endif
+#if defined(GL_UNPACK_SKIP_ROWS)
+            glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+#endif
+
+            glTexImage2D(target, level, (GLint)GL_RGBA8,
+                         width, height, border,
+                         mappedFormat, GL_UNSIGNED_BYTE, convertedPixels);
+            uploadError = glGetError();
+            nearUploadUnpackReset(savedAlignment, savedRowLength,
+                                  savedSkipPixels, savedSkipRows);
+            normalized = true;
+        }
+    }
+
+    if (convertedPixels) {
+        const unsigned normalizeIndex =
+            g_legacyTextureNormalizeCalls.fetch_add(
+                1, std::memory_order_relaxed) + 1;
+        if (normalizeIndex <= 128) {
+            compatLogFmt(
+                "GL COMPAT: legacy texture normalized[%u] name=%s "
+                "original_internal=0x%x original_format=0x%x "
+                "mapped_internal=0x%x mapped_format=0x%x size=%dx%d err=0x%x",
+                normalizeIndex, traceName.c_str(),
+                (unsigned)(GLenum)internalformat, (unsigned)format,
+                (unsigned)GL_RGBA8, (unsigned)GL_RGBA,
+                width, height, (unsigned)uploadError);
+        }
+        std::free(convertedPixels);
+        convertedPixels = nullptr;
+    }
+
+    if (!normalized) {
+        glTexImage2D(target, level, internalformat, width, height, border,
+                     format, type, pixels);
+        uploadError = glGetError();
+    }
+
     nearRememberTextureDiagName((GLuint)textureBinding, traceName);
     if (traceThis) {
         compatPakLog(
-            "GL TEX RESULT[%u]: name=%s path=normal internal=0x%x format=0x%x "
+            "GL TEX RESULT[%u]: name=%s path=%s internal=0x%x format=0x%x "
             "type=0x%x glerr=0x%x",
-            traceIndex, traceName.c_str(), (unsigned)(GLenum)internalformat,
-            (unsigned)format, (unsigned)type, (unsigned)uploadError);
+            traceIndex, traceName.c_str(),
+            normalized ? "legacy-rgba8" : "normal",
+            (unsigned)(GLenum)(normalized ? GL_RGBA8 : internalformat),
+            (unsigned)(GLenum)(normalized ? GL_RGBA : format),
+            (unsigned)(GLenum)type, (unsigned)uploadError);
     }
     nearVerifyUploadedTexture(traceName, target, level, width, height,
-                              format, type, pixels, unpackBuffer,
+                              normalized ? GL_RGBA : format, type,
+                              normalized ? nullptr : pixels, unpackBuffer,
                               uploadError);
 }
 
@@ -7614,6 +7781,56 @@ static void shim_glTexSubImage2D(GLenum target, GLint level,
         glTexSubImage2D(target, level, xoffset, yoffset, width, height,
                         mappedFormat, type, pixels);
         return;
+    }
+
+    if (type == GL_UNSIGNED_BYTE &&
+        (format == GL_RGB || format == GL_BGR || format == GL_BGRA) &&
+        pixels) {
+        GLint unpackBuffer = 0;
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
+#endif
+        void* convertedPixels = nullptr;
+        GLenum mappedFormat = format;
+        if (nearPrepareLegacyRgbaPixels(
+                width, height, format, type, pixels, unpackBuffer,
+                convertedPixels, mappedFormat)) {
+            const GLint savedAlignment = g_glUnpackAlignment;
+            const GLint savedRowLength = g_glUnpackRowLength;
+            const GLint savedSkipPixels = g_glUnpackSkipPixels;
+            const GLint savedSkipRows = g_glUnpackSkipRows;
+
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+#if defined(GL_UNPACK_ROW_LENGTH)
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+#endif
+#if defined(GL_UNPACK_SKIP_PIXELS)
+            glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+#endif
+#if defined(GL_UNPACK_SKIP_ROWS)
+            glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+#endif
+
+            glTexSubImage2D(target, level, xoffset, yoffset, width, height,
+                            mappedFormat, GL_UNSIGNED_BYTE, convertedPixels);
+            const GLenum err = glGetError();
+
+            nearUploadUnpackReset(savedAlignment, savedRowLength,
+                                  savedSkipPixels, savedSkipRows);
+            std::free(convertedPixels);
+
+            const unsigned normalizeIndex =
+                g_legacyTextureNormalizeCalls.fetch_add(
+                    1, std::memory_order_relaxed) + 1;
+            if (normalizeIndex <= 128) {
+                compatLogFmt(
+                    "GL COMPAT: legacy subtexture normalized[%u] "
+                    "original_format=0x%x mapped_format=0x%x size=%dx%d err=0x%x",
+                    normalizeIndex, (unsigned)format, (unsigned)mappedFormat,
+                    width, height, (unsigned)err);
+            }
+            return;
+        }
     }
 
     glTexSubImage2D(target, level, xoffset, yoffset, width, height,
