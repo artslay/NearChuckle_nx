@@ -4375,7 +4375,9 @@ static void* fake_dlsym(void* handle, const char* sym) {
         strcmp(sym, "eglSwapBuffers") == 0 ||
         strcmp(sym, "glTexImage2D") == 0 ||
         strcmp(sym, "glPixelStorei") == 0 ||
-        strcmp(sym, "glTexSubImage2D") == 0) {
+        strcmp(sym, "glTexSubImage2D") == 0 ||
+        strcmp(sym, "glCompressedTexImage2DARB") == 0 ||
+        strcmp(sym, "glCompressedTexSubImage2DARB") == 0) {
         void* forced = shimResolve(sym);
         compatLogFmt("dlsym: %s -> forced shim %p", sym, forced);
         if (forced)
@@ -4498,6 +4500,16 @@ static void shim_glTexSubImage2D(GLenum target, GLint level,
                                  GLint xoffset, GLint yoffset,
                                  GLsizei width, GLsizei height,
                                  GLenum format, GLenum type, const void* pixels);
+static void shim_glCompressedTexImage2DARB(GLenum target, GLint level,
+                                           GLenum internalformat,
+                                           GLsizei width, GLsizei height,
+                                           GLint border, GLsizei imageSize,
+                                           const void* data);
+static void shim_glCompressedTexSubImage2DARB(GLenum target, GLint level,
+                                              GLint xoffset, GLint yoffset,
+                                              GLsizei width, GLsizei height,
+                                              GLenum format, GLsizei imageSize,
+                                              const void* data);
 
 static void* w_eglGetProcAddress(const char* name) {
     if (!name || !*name)
@@ -4516,6 +4528,14 @@ static void* w_eglGetProcAddress(const char* name) {
     if (strcmp(name, "glTexSubImage2D") == 0) {
         compatLog("EGL: eglGetProcAddress(glTexSubImage2D) -> Switch texture shim");
         return reinterpret_cast<void*>(shim_glTexSubImage2D);
+    }
+    if (strcmp(name, "glCompressedTexImage2DARB") == 0) {
+        compatLog("EGL: eglGetProcAddress(glCompressedTexImage2DARB) -> Switch compressed-texture shim");
+        return reinterpret_cast<void*>(shim_glCompressedTexImage2DARB);
+    }
+    if (strcmp(name, "glCompressedTexSubImage2DARB") == 0) {
+        compatLog("EGL: eglGetProcAddress(glCompressedTexSubImage2DARB) -> Switch compressed-texture shim");
+        return reinterpret_cast<void*>(shim_glCompressedTexSubImage2DARB);
     }
 
     if (strcmp(name, "eglSwapBuffers") == 0) {
@@ -6729,11 +6749,146 @@ static int stub_pthread_barrier_destroy(void*) { return 0; }
 #define GL_RG 0x8227
 #endif
 
-static constexpr GLenum kNearGL_DSDT_NV     = 0x86F5;
-static constexpr GLenum kNearGL_DSDT_MAG_NV = 0x86F6;
+static constexpr GLenum kNearGL_HILO_NV              = 0x86F4;
+static constexpr GLenum kNearGL_DSDT_NV              = 0x86F5;
+static constexpr GLenum kNearGL_DSDT_MAG_NV          = 0x86F6;
+static constexpr GLenum kNearGL_HILO16_NV            = 0x86F8;
+static constexpr GLenum kNearGL_SIGNED_HILO_NV       = 0x86F9;
+static constexpr GLenum kNearGL_SIGNED_HILO16_NV     = 0x86FA;
+static constexpr GLenum kNearGL_SIGNED_RGB8_NV       = 0x86FF;
+static constexpr GLenum kNearGL_COMPRESSED_3DC_ATI   = 0x8837;
+
+// Core/EXT texture formats used as the closest normalized representation of
+// the old NVIDIA/ATI formats. The Switch GL context advertises the required
+// RG/RGTC and signed-normalized functionality through Mesa extensions.
+#ifndef GL_RG8
+#define GL_RG8 0x822B
+#endif
+#ifndef GL_RG16
+#define GL_RG16 0x822C
+#endif
+#ifndef GL_RG8_SNORM
+#define GL_RG8_SNORM 0x8F95
+#endif
+#ifndef GL_RG16_SNORM
+#define GL_RG16_SNORM 0x8F99
+#endif
+#ifndef GL_RGB8_SNORM
+#define GL_RGB8_SNORM 0x8F96
+#endif
+#ifndef GL_COMPRESSED_RG_RGTC2
+#define GL_COMPRESSED_RG_RGTC2 0x8DBD
+#endif
+#ifndef GL_TEXTURE_SWIZZLE_R
+#define GL_TEXTURE_SWIZZLE_R 0x8E42
+#endif
+#ifndef GL_TEXTURE_SWIZZLE_G
+#define GL_TEXTURE_SWIZZLE_G 0x8E43
+#endif
+#ifndef GL_TEXTURE_SWIZZLE_B
+#define GL_TEXTURE_SWIZZLE_B 0x8E44
+#endif
+#ifndef GL_TEXTURE_SWIZZLE_A
+#define GL_TEXTURE_SWIZZLE_A 0x8E45
+#endif
 
 static inline bool isNearDsdtFormat(GLenum format) {
     return format == kNearGL_DSDT_NV || format == kNearGL_DSDT_MAG_NV;
+}
+
+static inline bool isNearLegacyHiloFormat(GLenum format) {
+    return format == kNearGL_HILO_NV ||
+           format == kNearGL_HILO16_NV ||
+           format == kNearGL_SIGNED_HILO_NV ||
+           format == kNearGL_SIGNED_HILO16_NV ||
+           format == kNearGL_SIGNED_RGB8_NV;
+}
+
+struct NearLegacyTexFormat {
+    GLenum internalformat = 0;
+    GLenum format = 0;
+    GLenum type = 0;
+    const char* label = nullptr;
+};
+
+// Map the old NVIDIA HILO/signed texture internal formats to ordinary
+// normalized GL texture formats while keeping the original component count
+// and numeric signedness. For the 16-bit variants the storage width follows
+// the guest upload type (BYTE/UNSIGNED_BYTE -> 8-bit, SHORT/UNSIGNED_SHORT ->
+// 16-bit). This also covers the Android renderer's HILO_NV + GL_BYTE path.
+static bool nearMapLegacyHiloFormat(GLenum internalformat, GLenum format,
+                                    GLenum type, NearLegacyTexFormat& out) {
+    if (!isNearLegacyHiloFormat(internalformat) ||
+        format != kNearGL_HILO_NV)
+        return false;
+
+    const bool signedFormat =
+        internalformat == kNearGL_SIGNED_HILO_NV ||
+        internalformat == kNearGL_SIGNED_HILO16_NV;
+    const bool signedRgb =
+        internalformat == kNearGL_SIGNED_RGB8_NV;
+
+    if (signedRgb) {
+        // The legacy SIGNED_RGB8 format is a 3-component normalized [-1,1]
+        // texture. Map it directly to RGB8_SNORM.
+        if (type != GL_BYTE)
+            return false;
+        out.internalformat = GL_RGB8_SNORM;
+        out.format = GL_RGB;
+        out.type = GL_BYTE;
+        out.label = "SIGNED_RGB8";
+        return true;
+    }
+
+    if (type == GL_BYTE) {
+        out.internalformat = signedFormat ? GL_RG8_SNORM : GL_RG8;
+        out.format = GL_RG;
+        out.type = signedFormat ? GL_BYTE : GL_UNSIGNED_BYTE;
+        out.label = signedFormat ? "SIGNED_HILO8" : "HILO8";
+        return true;
+    }
+
+    if (type == GL_UNSIGNED_BYTE) {
+        out.internalformat = signedFormat ? GL_RG8_SNORM : GL_RG8;
+        out.format = GL_RG;
+        out.type = GL_UNSIGNED_BYTE;
+        out.label = signedFormat ? "SIGNED_HILO8" : "HILO8";
+        return true;
+    }
+
+    if (type == GL_SHORT) {
+        out.internalformat = signedFormat ? GL_RG16_SNORM : GL_RG16;
+        out.format = GL_RG;
+        out.type = GL_SHORT;
+        out.label = signedFormat ? "SIGNED_HILO16" : "HILO16";
+        return true;
+    }
+
+    if (type == GL_UNSIGNED_SHORT) {
+        out.internalformat = signedFormat ? GL_RG16_SNORM : GL_RG16;
+        out.format = GL_RG;
+        out.type = GL_UNSIGNED_SHORT;
+        out.label = signedFormat ? "SIGNED_HILO16" : "HILO16";
+        return true;
+    }
+
+    return false;
+}
+
+static inline bool isNear3dcCompressedFormat(GLenum format) {
+    return format == kNearGL_COMPRESSED_3DC_ATI;
+}
+
+// ATI 3Dc is a two-channel 4x4 block compression format. RGTC2 exposes the
+// corresponding two-channel block layout on modern GL. The original ATI
+// format has LUMINANCE+ALPHA sampling semantics (R=L, G=L, B=L, A=A), so
+// apply the texture swizzle after uploading as RGTC2 to retain the guest
+// shader-visible channels.
+static void nearApply3dcSwizzle(GLenum target) {
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_R, GL_RED);
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_G, GL_RED);
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_B, GL_RED);
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_A, GL_GREEN);
 }
 
 // Guest GL unpack state used by the texture diagnostic. These are per-thread
@@ -7664,6 +7819,29 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
         nearLogTextureBytes(traceName, width, height, format, type);
     }
 
+    NearLegacyTexFormat legacyHilo;
+    if (nearMapLegacyHiloFormat((GLenum)internalformat, format, type, legacyHilo)) {
+        compatLogFmt(
+            "GL COMPAT: %s texture -> internal=0x%x format=0x%x type=0x%x size=%dx%d",
+            legacyHilo.label, (unsigned)legacyHilo.internalformat,
+            (unsigned)legacyHilo.format, (unsigned)legacyHilo.type,
+            width, height);
+
+        glTexImage2D(target, level, (GLint)legacyHilo.internalformat,
+                     width, height, border,
+                     legacyHilo.format, legacyHilo.type, pixels);
+        const GLenum err = glGetError();
+        nearRememberTextureDiagName((GLuint)textureBinding, traceName);
+        if (traceThis)
+            compatPakLog(
+                "GL TEX RESULT[%u]: name=%s path=%s internal=0x%x format=0x%x type=0x%x glerr=0x%x",
+                traceIndex, traceName.c_str(), legacyHilo.label,
+                (unsigned)legacyHilo.internalformat,
+                (unsigned)legacyHilo.format,
+                (unsigned)legacyHilo.type, (unsigned)err);
+        return;
+    }
+
     if (type == GL_FLOAT &&
         (isNearDsdtFormat(format) || isNearDsdtFormat((GLenum)internalformat))) {
         const bool mag = (format == kNearGL_DSDT_MAG_NV ||
@@ -7785,6 +7963,28 @@ static void shim_glTexSubImage2D(GLenum target, GLint level,
                                  GLsizei width, GLsizei height,
                                  GLenum format, GLenum type,
                                  const void* pixels) {
+    if (isNearLegacyHiloFormat(format)) {
+        NearLegacyTexFormat legacyHilo;
+        GLint targetInternal = 0;
+        glGetTexLevelParameteriv(target, level,
+                                 GL_TEXTURE_INTERNAL_FORMAT, &targetInternal);
+        if (nearMapLegacyHiloFormat((GLenum)targetInternal, format, type, legacyHilo) ||
+            nearMapLegacyHiloFormat(
+                (targetInternal == (GLint)GL_RG8_SNORM ||
+                 targetInternal == (GLint)GL_RG16_SNORM)
+                    ? kNearGL_SIGNED_HILO_NV
+                    : kNearGL_HILO_NV,
+                format, type, legacyHilo)) {
+            compatLogFmt(
+                "GL COMPAT: %s subtexture -> format=0x%x type=0x%x size=%dx%d",
+                legacyHilo.label, (unsigned)legacyHilo.format,
+                (unsigned)legacyHilo.type, width, height);
+            glTexSubImage2D(target, level, xoffset, yoffset, width, height,
+                            legacyHilo.format, legacyHilo.type, pixels);
+            return;
+        }
+    }
+
     if (type == GL_FLOAT && isNearDsdtFormat(format)) {
         const bool mag = (format == kNearGL_DSDT_MAG_NV);
         const GLenum mappedFormat = mag ? GL_RGB : GL_RG;
@@ -7880,12 +8080,41 @@ static void shim_glColorTableEXT(GLenum target, GLenum internalformat, GLsizei w
 static void shim_glCompressedTexImage2DARB(GLenum target, GLint level, GLenum internalformat,
                                            GLsizei width, GLsizei height, GLint border,
                                            GLsizei imageSize, const void* data) {
-    glCompressedTexImage2D(target, level, internalformat, width, height, border, imageSize, data);
+    if (isNear3dcCompressedFormat(internalformat)) {
+        glCompressedTexImage2D(
+            target, level, GL_COMPRESSED_RG_RGTC2,
+            width, height, border, imageSize, data);
+        const GLenum err = glGetError();
+        if (err == GL_NO_ERROR)
+            nearApply3dcSwizzle(target);
+        compatLogFmt(
+            "GL COMPAT: 3DC compressed texture -> RGTC2 size=%dx%d bytes=%d err=0x%x",
+            width, height, (int)imageSize, (unsigned)err);
+        return;
+    }
+
+    glCompressedTexImage2D(
+        target, level, internalformat, width, height, border, imageSize, data);
 }
+
 static void shim_glCompressedTexSubImage2DARB(GLenum target, GLint level, GLint xoffset, GLint yoffset,
                                               GLsizei width, GLsizei height, GLenum format,
                                               GLsizei imageSize, const void* data) {
-    glCompressedTexSubImage2D(target, level, xoffset, yoffset, width, height, format, imageSize, data);
+    if (isNear3dcCompressedFormat(format)) {
+        glCompressedTexSubImage2D(
+            target, level, xoffset, yoffset, width, height,
+            GL_COMPRESSED_RG_RGTC2, imageSize, data);
+        const GLenum err = glGetError();
+        if (err == GL_NO_ERROR)
+            nearApply3dcSwizzle(target);
+        compatLogFmt(
+            "GL COMPAT: 3DC compressed subtexture -> RGTC2 size=%dx%d bytes=%d err=0x%x",
+            width, height, (int)imageSize, (unsigned)err);
+        return;
+    }
+
+    glCompressedTexSubImage2D(
+        target, level, xoffset, yoffset, width, height, format, imageSize, data);
 }
 static void shim_glFinishFenceNV(GLuint) {}
 static void shim_glGenFencesNV(GLsizei n, GLuint* fences) {
