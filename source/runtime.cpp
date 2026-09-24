@@ -154,7 +154,7 @@ static bool suppressCompatNoise(const char* msg) {
     // These diagnostics are either high-frequency compatibility chatter or
     // known optional texture lookups. Suppressing them must not alter the
     // underlying filesystem/PAK behavior.
-    const optionalMapTextureMiss =
+    const bool optionalMapTextureMiss =
         normalized.find("fopen fail:") == 0 &&
         (normalized.find("/gui/map_player.") != std::string::npos ||
          normalized.find("/textures/gui/map_player.") != std::string::npos ||
