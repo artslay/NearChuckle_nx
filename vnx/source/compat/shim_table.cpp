@@ -6732,40 +6732,108 @@ static thread_local GLint g_glUnpackAlignment = 4;
 static thread_local GLint g_glUnpackRowLength = 0;
 static thread_local GLint g_glUnpackSkipPixels = 0;
 static thread_local GLint g_glUnpackSkipRows = 0;
+#if defined(GL_UNPACK_IMAGE_HEIGHT)
+static thread_local GLint g_glUnpackImageHeight = 0;
+#endif
+#if defined(GL_UNPACK_SWAP_BYTES)
+static thread_local GLint g_glUnpackSwapBytes = GL_FALSE;
+#endif
+#if defined(GL_UNPACK_LSB_FIRST)
+static thread_local GLint g_glUnpackLsbFirst = GL_FALSE;
+#endif
+
+static const char* nearGlPixelStoreName(GLenum pname) {
+    switch (pname) {
+    case GL_UNPACK_ALIGNMENT: return "UNPACK_ALIGNMENT";
+#ifdef GL_PACK_ALIGNMENT
+    case GL_PACK_ALIGNMENT: return "PACK_ALIGNMENT";
+#endif
+#if defined(GL_UNPACK_ROW_LENGTH)
+    case GL_UNPACK_ROW_LENGTH: return "UNPACK_ROW_LENGTH";
+#endif
+#if defined(GL_UNPACK_SKIP_PIXELS)
+    case GL_UNPACK_SKIP_PIXELS: return "UNPACK_SKIP_PIXELS";
+#endif
+#if defined(GL_UNPACK_SKIP_ROWS)
+    case GL_UNPACK_SKIP_ROWS: return "UNPACK_SKIP_ROWS";
+#endif
+#if defined(GL_UNPACK_IMAGE_HEIGHT)
+    case GL_UNPACK_IMAGE_HEIGHT: return "UNPACK_IMAGE_HEIGHT";
+#endif
+#if defined(GL_UNPACK_SWAP_BYTES)
+    case GL_UNPACK_SWAP_BYTES: return "UNPACK_SWAP_BYTES";
+#endif
+#if defined(GL_UNPACK_LSB_FIRST)
+    case GL_UNPACK_LSB_FIRST: return "UNPACK_LSB_FIRST";
+#endif
+#ifdef GL_PACK_ROW_LENGTH
+    case GL_PACK_ROW_LENGTH: return "PACK_ROW_LENGTH";
+#endif
+#ifdef GL_PACK_SKIP_PIXELS
+    case GL_PACK_SKIP_PIXELS: return "PACK_SKIP_PIXELS";
+#endif
+#ifdef GL_PACK_SKIP_ROWS
+    case GL_PACK_SKIP_ROWS: return "PACK_SKIP_ROWS";
+#endif
+#ifdef GL_PACK_IMAGE_HEIGHT
+    case GL_PACK_IMAGE_HEIGHT: return "PACK_IMAGE_HEIGHT";
+#endif
+#ifdef GL_PACK_SWAP_BYTES
+    case GL_PACK_SWAP_BYTES: return "PACK_SWAP_BYTES";
+#endif
+#ifdef GL_PACK_LSB_FIRST
+    case GL_PACK_LSB_FIRST: return "PACK_LSB_FIRST";
+#endif
+    default: return nullptr;
+    }
+}
 
 static void shim_glPixelStorei(GLenum pname, GLint param) {
-    const char* label = nullptr;
-
     switch (pname) {
     case GL_UNPACK_ALIGNMENT:
         g_glUnpackAlignment = param;
-        label = "UNPACK_ALIGNMENT";
         break;
 #if defined(GL_UNPACK_ROW_LENGTH)
     case GL_UNPACK_ROW_LENGTH:
         g_glUnpackRowLength = param;
-        label = "UNPACK_ROW_LENGTH";
         break;
 #endif
 #if defined(GL_UNPACK_SKIP_PIXELS)
     case GL_UNPACK_SKIP_PIXELS:
         g_glUnpackSkipPixels = param;
-        label = "UNPACK_SKIP_PIXELS";
         break;
 #endif
 #if defined(GL_UNPACK_SKIP_ROWS)
     case GL_UNPACK_SKIP_ROWS:
         g_glUnpackSkipRows = param;
-        label = "UNPACK_SKIP_ROWS";
+        break;
+#endif
+#if defined(GL_UNPACK_IMAGE_HEIGHT)
+    case GL_UNPACK_IMAGE_HEIGHT:
+        g_glUnpackImageHeight = param;
+        break;
+#endif
+#if defined(GL_UNPACK_SWAP_BYTES)
+    case GL_UNPACK_SWAP_BYTES:
+        g_glUnpackSwapBytes = param;
+        break;
+#endif
+#if defined(GL_UNPACK_LSB_FIRST)
+    case GL_UNPACK_LSB_FIRST:
+        g_glUnpackLsbFirst = param;
         break;
 #endif
     default:
         break;
     }
 
+    const char* label = nearGlPixelStoreName(pname);
     if (label) {
-        compatPakLog("GL PIXELSTORE %s: pname=0x%x param=%d",
+        compatPakLog("GL PIXELSTORE: %s pname=0x%x param=%d",
                      label, (unsigned)pname, (int)param);
+    } else {
+        compatPakLog("GL PIXELSTORE: UNKNOWN pname=0x%x param=%d",
+                     (unsigned)pname, (int)param);
     }
 
     glPixelStorei(pname, param);
@@ -6850,39 +6918,82 @@ static void nearLogTextureBytes(const std::string& name,
     const unsigned bytesPerPixel =
         packed ? typeBytes : (components && typeBytes ? components * typeBytes : 0);
 
-    uint64_t rowPixels = (g_glUnpackRowLength > 0)
+    const uint64_t rowPixels = (g_glUnpackRowLength > 0)
         ? (uint64_t)g_glUnpackRowLength
         : (uint64_t)std::max<GLsizei>(width, 0);
-    uint64_t tightRow = bytesPerPixel ? rowPixels * bytesPerPixel : 0;
-    const unsigned alignment = (g_glUnpackAlignment > 0) ? (unsigned)g_glUnpackAlignment : 1u;
+    const uint64_t tightRow = bytesPerPixel ? rowPixels * bytesPerPixel : 0;
+    const unsigned alignment =
+        (g_glUnpackAlignment > 0) ? (unsigned)g_glUnpackAlignment : 1u;
     const uint64_t paddedRow =
         tightRow ? ((tightRow + alignment - 1u) / alignment) * alignment : 0;
+    const uint64_t skipOffset =
+        (uint64_t)std::max<GLint>(g_glUnpackSkipRows, 0) * paddedRow +
+        (uint64_t)std::max<GLint>(g_glUnpackSkipPixels, 0) * bytesPerPixel;
+    const uint64_t requiredBytes =
+        (height > 0 && paddedRow && bytesPerPixel)
+            ? skipOffset +
+              (uint64_t)(height - 1) * paddedRow +
+              (uint64_t)std::max<GLsizei>(width, 0) * bytesPerPixel
+            : skipOffset;
 
     compatPakLog(
         "GL TEX LAYOUT: name=%s format=0x%x type=0x%x components=%u typeBytes=%u packed=%u "
-        "alignment=%d rowLength=%d skipPixels=%d skipRows=%d bpp=%u tightRow=%" PRIu64
-        " paddedRow=%" PRIu64 " rows=%d minLevel0=%" PRIu64,
+        "alignment=%d rowLength=%d skipPixels=%d skipRows=%d"
+#if defined(GL_UNPACK_IMAGE_HEIGHT)
+        " imageHeight=%d"
+#endif
+#if defined(GL_UNPACK_SWAP_BYTES)
+        " swapBytes=%d"
+#endif
+#if defined(GL_UNPACK_LSB_FIRST)
+        " lsbFirst=%d"
+#endif
+        " bpp=%u rowPixels=%" PRIu64 " tightRow=%" PRIu64
+        " paddedRow=%" PRIu64 " skipOffset=%" PRIu64
+        " requiredBytes=%" PRIu64 " width=%d height=%d",
         name.c_str(), (unsigned)format, (unsigned)type,
         components, typeBytes, packed ? 1u : 0u,
         (int)g_glUnpackAlignment, (int)g_glUnpackRowLength,
         (int)g_glUnpackSkipPixels, (int)g_glUnpackSkipRows,
-        bytesPerPixel, tightRow, paddedRow, (int)height,
-        paddedRow * (uint64_t)std::max<GLsizei>(height, 0));
+#if defined(GL_UNPACK_IMAGE_HEIGHT)
+        (int)g_glUnpackImageHeight,
+#endif
+#if defined(GL_UNPACK_SWAP_BYTES)
+        (int)g_glUnpackSwapBytes,
+#endif
+#if defined(GL_UNPACK_LSB_FIRST)
+        (int)g_glUnpackLsbFirst,
+#endif
+        bytesPerPixel, rowPixels, tightRow, paddedRow,
+        skipOffset, requiredBytes, (int)width, (int)height);
 }
 
+static const char* nearGlTexTargetName(GLenum target) {
+    switch (target) {
+    case GL_TEXTURE_2D: return "TEXTURE_2D";
+#ifdef GL_TEXTURE_CUBE_MAP_POSITIVE_X
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_X: return "CUBE_POSITIVE_X";
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_X: return "CUBE_NEGATIVE_X";
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Y: return "CUBE_POSITIVE_Y";
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Y: return "CUBE_NEGATIVE_Y";
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Z: return "CUBE_POSITIVE_Z";
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Z: return "CUBE_NEGATIVE_Z";
+#endif
+    default: return "OTHER";
+    }
+}
+
+// This file is intentionally comprehensive but bounded: the first 4096
+// TexImage2D calls are enough to capture the startup/level-load texture path
+// without turning the diagnostic into another multi-hundred-MB log.
 static std::atomic<unsigned> g_glTexImageShimCalls{0};
 
 static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                               GLsizei width, GLsizei height, GLint border,
                               GLenum format, GLenum type, const void* pixels) {
-    const unsigned shimCall =
+    const unsigned traceIndex =
         g_glTexImageShimCalls.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (shimCall <= 32) {
-        compatLogFmt("GL TEX SHIM ENTER[%u]: target=0x%x level=%d %dx%d internal=0x%x format=0x%x type=0x%x pixels=%p",
-                     shimCall, (unsigned)target, level, width, height,
-                     (unsigned)(GLenum)internalformat, (unsigned)format,
-                     (unsigned)type, pixels);
-    }
+    const bool traceThis = traceIndex <= 4096;
 
     std::string traceName = g_lastTexturePakName;
     if (traceName.empty()) {
@@ -6890,31 +7001,86 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
         traceName = g_lastTexturePakNameGlobal;
         mutexUnlock(&g_textureDiagLock);
     }
+    if (traceName.empty())
+        traceName = "<unknown>";
 
-    const bool traceThisUpload =
-        !traceName.empty() &&
-        isInterestingTextureDiagName(traceName);
-    unsigned traceIndex = 0;
-    if (traceThisUpload) {
-        traceIndex = g_textureUploadDiagCount.fetch_add(1, std::memory_order_relaxed) + 1;
-        if (traceIndex > 128)
-            traceIndex = 0;
-    }
-    if (traceIndex) {
-        const GLenum before = glGetError();
-        compatPakLog("GL TEX UPLOAD[%u]: name=%s target=0x%x level=%d %dx%d internal=0x%x format=0x%x type=0x%x preerr=0x%x",
-                     traceIndex, traceName.c_str(),
-                     (unsigned)target, level, width, height,
-                     (unsigned)(GLenum)internalformat, (unsigned)format,
-                     (unsigned)type, (unsigned)before);
+    GLint activeTexture = 0;
+    GLint textureBinding = 0;
+#ifdef GL_TEXTURE_BINDING_CUBE_MAP
+    GLint cubeBinding = 0;
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+    GLint unpackBuffer = 0;
+#endif
+    const void* caller = nullptr;
+
+    if (traceThis) {
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+        if (target == GL_TEXTURE_2D) {
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &textureBinding);
+        }
+#ifdef GL_TEXTURE_BINDING_CUBE_MAP
+        else if (target >= GL_TEXTURE_CUBE_MAP_POSITIVE_X &&
+                 target <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z) {
+            glGetIntegerv(GL_TEXTURE_BINDING_CUBE_MAP, &cubeBinding);
+        }
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+        caller = __builtin_return_address(0);
+#endif
+
+        const GLenum preerr = glGetError();
+
+        compatLogFmt(
+            "GL TEX SHIM ENTER[%u]: name=%s target=0x%x(%s) level=%d size=%dx%d "
+            "border=%d internal=0x%x format=0x%x type=0x%x pixels=%p "
+            "activeTex=0x%x tex2DBinding=%d"
+#ifdef GL_TEXTURE_BINDING_CUBE_MAP
+            " cubeBinding=%d"
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+            " unpackBuffer=%d"
+#endif
+            " caller=%p preerr=0x%x",
+            traceIndex, traceName.c_str(), (unsigned)target, nearGlTexTargetName(target),
+            level, width, height, border, (unsigned)(GLenum)internalformat,
+            (unsigned)format, (unsigned)type, pixels, activeTexture, textureBinding
+#ifdef GL_TEXTURE_BINDING_CUBE_MAP
+            , cubeBinding
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+            , unpackBuffer
+#endif
+            , caller, (unsigned)preerr);
+
+        compatPakLog(
+            "GL TEX UPLOAD[%u]: name=%s target=0x%x(%s) level=%d size=%dx%d border=%d "
+            "internal=0x%x format=0x%x type=0x%x pixels=%p activeTex=0x%x "
+            "tex2DBinding=%d"
+#ifdef GL_TEXTURE_BINDING_CUBE_MAP
+            " cubeBinding=%d"
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+            " unpackBuffer=%d"
+#endif
+            " caller=%p preerr=0x%x",
+            traceIndex, traceName.c_str(), (unsigned)target, nearGlTexTargetName(target),
+            level, width, height, border, (unsigned)(GLenum)internalformat,
+            (unsigned)format, (unsigned)type, pixels, activeTexture, textureBinding
+#ifdef GL_TEXTURE_BINDING_CUBE_MAP
+            , cubeBinding
+#endif
+#ifdef GL_PIXEL_UNPACK_BUFFER_BINDING
+            , unpackBuffer
+#endif
+            , caller, (unsigned)preerr);
+
         nearLogTextureBytes(traceName, width, height, format, type);
-
-        // Do not dereference 'pixels' here: with a pixel-unpack buffer bound,
-        // this argument is an offset rather than a CPU pointer. The pointer value
-        // is still useful for correlating the upload without risking a crash.
-        compatPakLog("GL TEX PTR[%u]: name=%s pixels=%p",
-                     traceIndex, traceName.c_str(), pixels);
     }
+
     if (type == GL_FLOAT &&
         (isNearDsdtFormat(format) || isNearDsdtFormat((GLenum)internalformat))) {
         const bool mag = (format == kNearGL_DSDT_MAG_NV ||
@@ -6928,45 +7094,27 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
 
         glTexImage2D(target, level, (GLint)mappedInternal, width, height, border,
                      mappedFormat, type, pixels);
-        if (traceIndex) {
-            compatPakLog("GL TEX RESULT[%u]: name=%s path=DSDT mapped_internal=0x%x mapped_format=0x%x glerr=0x%x",
-                         traceIndex, traceName.c_str(),
-                         (unsigned)mappedInternal, (unsigned)mappedFormat,
-                         (unsigned)glGetError());
+        if (traceThis) {
+            compatPakLog(
+                "GL TEX RESULT[%u]: name=%s path=DSDT mapped_internal=0x%x "
+                "mapped_format=0x%x original_internal=0x%x original_format=0x%x "
+                "type=0x%x glerr=0x%x",
+                traceIndex, traceName.c_str(), (unsigned)mappedInternal,
+                (unsigned)mappedFormat, (unsigned)(GLenum)internalformat,
+                (unsigned)format, (unsigned)type, (unsigned)glGetError());
         }
         return;
     }
 
     glTexImage2D(target, level, internalformat, width, height, border,
                  format, type, pixels);
-    if (traceIndex) {
-        compatPakLog("GL TEX RESULT[%u]: name=%s path=normal internal=0x%x format=0x%x type=0x%x glerr=0x%x",
-                     traceIndex, traceName.c_str(),
-                     (unsigned)(GLenum)internalformat, (unsigned)format,
-                     (unsigned)type, (unsigned)glGetError());
+    if (traceThis) {
+        compatPakLog(
+            "GL TEX RESULT[%u]: name=%s path=normal internal=0x%x format=0x%x "
+            "type=0x%x glerr=0x%x",
+            traceIndex, traceName.c_str(), (unsigned)(GLenum)internalformat,
+            (unsigned)format, (unsigned)type, (unsigned)glGetError());
     }
-}
-
-static void shim_glTexSubImage2D(GLenum target, GLint level,
-                                 GLint xoffset, GLint yoffset,
-                                 GLsizei width, GLsizei height,
-                                 GLenum format, GLenum type,
-                                 const void* pixels) {
-    if (type == GL_FLOAT && isNearDsdtFormat(format)) {
-        const bool mag = (format == kNearGL_DSDT_MAG_NV);
-        const GLenum mappedFormat = mag ? GL_RGB : GL_RG;
-
-        compatLogFmt("GL COMPAT: DSDT float subimage %s %dx%d -> format=0x%x",
-                     mag ? "MAG" : "DSDT", width, height,
-                     (unsigned)mappedFormat);
-
-        glTexSubImage2D(target, level, xoffset, yoffset, width, height,
-                        mappedFormat, type, pixels);
-        return;
-    }
-
-    glTexSubImage2D(target, level, xoffset, yoffset, width, height,
-                    format, type, pixels);
 }
 
 static void shim_glActiveStencilFaceEXT(GLenum) {}
