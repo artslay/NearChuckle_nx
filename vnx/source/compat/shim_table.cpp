@@ -2718,6 +2718,8 @@ static void getAnimationAliasCandidates(const std::string& wanted,
         candidates.emplace_back("objects/characters/animations/vehicles/humvee_passenger2_out.caf");
     } else if (wanted == "objects/characters/animations/shared/humvee_passenger3_sit_loop.caf") {
         candidates.emplace_back("objects/characters/animations/vehicles/humvee_passenger3_sit_loop.caf");
+    } else if (wanted == "objects/characters/animations/shared/humvee_gunner_in.caf") {
+        candidates.emplace_back("objects/characters/animations/vehicles/humvee_gunner_in.caf");
     } else if (wanted == "objects/characters/animations/shared/humvee_passenger3_out.caf") {
         candidates.emplace_back("objects/characters/animations/vehicles/humvee_passenger3_out.caf");
     } else if (wanted == "objects/characters/animations/shared/humvee_passenger4_sit_loop.caf") {
@@ -2847,6 +2849,24 @@ static bool pakFindVirtualEntry(const char* requested,
         std::vector<std::string> aliases;
         getAnimationAliasCandidates(wanted, aliases);
         for (const std::string& alias : aliases) {
+            // Some canonical animation paths have already been resolved by
+            // the normal preload pass. Reuse that positive lookup before
+            // rebuilding the PAK index search for the alias candidate.
+            {
+                mutexLock(&g_pak_index_lock);
+                auto cachedAlias = g_pak_lookup_cache.find(alias);
+                if (cachedAlias != g_pak_lookup_cache.end()) {
+                    pakPathOut = cachedAlias->second.pakPath;
+                    metaOut = cachedAlias->second.meta;
+                    mutexUnlock(&g_pak_index_lock);
+                    compatLogFmt("PAK ANIM ALIAS CACHE HIT: %s -> %s <- %s size=%u",
+                                 wanted.c_str(), alias.c_str(), pakPathOut.c_str(),
+                                 (unsigned)metaOut.uncompressedSize);
+                    return true;
+                }
+                mutexUnlock(&g_pak_index_lock);
+            }
+
             for (const std::string& levelPak : activeLevelPaks) {
                 if (pakFindEntryCached(levelPak, alias, metaOut)) {
                     pakPathOut = levelPak;
