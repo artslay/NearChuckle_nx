@@ -8975,23 +8975,80 @@ static void* shim_glMapBufferARB(GLenum target, GLenum access) {
     const bool indexTarget = (target == 0x8893 /* GL_ELEMENT_ARRAY_BUFFER */);
 
     if (vertexTarget) {
-        if (g_nearArrayMapDiagCalls < 8 || !p) {
+        if (g_nearArrayMapDiagCalls < 32 || !p) {
             GLint buffer = 0;
             glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &buffer);
             compatLogFmt(
                 "GL DEFORM MAP[%u]: target=ARRAY_BUFFER buffer=%d access=0x%x size=%d flags=0x%x ptr=%p",
                 g_nearArrayMapDiagCalls + 1, (int)buffer, (unsigned)access,
                 (int)size, (unsigned)flags, p);
+
+            // The map path is where the large/merged VBOs are populated. Dump
+            // the first 64 bytes as raw 32-bit words so we can inspect the
+            // actual vertex representation without assuming a format here.
+            if (p && (g_nearArrayMapDiagCalls < 16 || buffer >= 500)) {
+                const uint32_t* w = reinterpret_cast<const uint32_t*>(p);
+                const size_t words = std::min<size_t>((size_t)size / sizeof(uint32_t), 16);
+                compatLogFmt(
+                    "GL VERTEX MAP WORDS: buffer=%d words=%u "
+                    "%08x %08x %08x %08x %08x %08x %08x %08x "
+                    "%08x %08x %08x %08x %08x %08x %08x %08x",
+                    (int)buffer, (unsigned)words,
+                    words > 0 ? (unsigned)w[0] : 0u,
+                    words > 1 ? (unsigned)w[1] : 0u,
+                    words > 2 ? (unsigned)w[2] : 0u,
+                    words > 3 ? (unsigned)w[3] : 0u,
+                    words > 4 ? (unsigned)w[4] : 0u,
+                    words > 5 ? (unsigned)w[5] : 0u,
+                    words > 6 ? (unsigned)w[6] : 0u,
+                    words > 7 ? (unsigned)w[7] : 0u,
+                    words > 8 ? (unsigned)w[8] : 0u,
+                    words > 9 ? (unsigned)w[9] : 0u,
+                    words > 10 ? (unsigned)w[10] : 0u,
+                    words > 11 ? (unsigned)w[11] : 0u,
+                    words > 12 ? (unsigned)w[12] : 0u,
+                    words > 13 ? (unsigned)w[13] : 0u,
+                    words > 14 ? (unsigned)w[14] : 0u,
+                    words > 15 ? (unsigned)w[15] : 0u);
+            }
         }
         ++g_nearArrayMapDiagCalls;
     } else if (indexTarget) {
-        if (g_nearIndexMapDiagCalls < 2 || !p) {
+        if (g_nearIndexMapDiagCalls < 16 || !p) {
             GLint buffer = 0;
             glGetIntegerv(0x8895 /* GL_ELEMENT_ARRAY_BUFFER_BINDING */, &buffer);
             compatLogFmt(
                 "GL INDEX MAP[%u]: buffer=%d access=0x%x size=%d flags=0x%x ptr=%p",
                 g_nearIndexMapDiagCalls + 1, (int)buffer, (unsigned)access,
                 (int)size, (unsigned)flags, p);
+
+            if (p && (g_nearIndexMapDiagCalls < 8 || buffer >= 500)) {
+                const uint16_t* idx = reinterpret_cast<const uint16_t*>(p);
+                const size_t count = std::min<size_t>((size_t)size / sizeof(uint16_t), 2048);
+                uint16_t minIndex = 0xFFFF;
+                uint16_t maxIndex = 0;
+                for (size_t i = 0; i < count; ++i) {
+                    minIndex = std::min(minIndex, idx[i]);
+                    maxIndex = std::max(maxIndex, idx[i]);
+                }
+                compatLogFmt(
+                    "GL INDEX MAP DATA: buffer=%d count16=%u min=%u max=%u "
+                    "first=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
+                    (int)buffer, (unsigned)count, (unsigned)minIndex,
+                    (unsigned)maxIndex,
+                    count > 0 ? (unsigned)idx[0] : 0u,
+                    count > 1 ? (unsigned)idx[1] : 0u,
+                    count > 2 ? (unsigned)idx[2] : 0u,
+                    count > 3 ? (unsigned)idx[3] : 0u,
+                    count > 4 ? (unsigned)idx[4] : 0u,
+                    count > 5 ? (unsigned)idx[5] : 0u,
+                    count > 6 ? (unsigned)idx[6] : 0u,
+                    count > 7 ? (unsigned)idx[7] : 0u,
+                    count > 8 ? (unsigned)idx[8] : 0u,
+                    count > 9 ? (unsigned)idx[9] : 0u,
+                    count > 10 ? (unsigned)idx[10] : 0u,
+                    count > 11 ? (unsigned)idx[11] : 0u);
+            }
         }
         ++g_nearIndexMapDiagCalls;
     }
@@ -9058,15 +9115,24 @@ static void shim_glBufferSubDataARB(GLenum target, GLintptr offset, GLsizeiptr s
         glGetBufferParameteriv(GL_ARRAY_BUFFER, 0x8764 /* GL_BUFFER_SIZE */, &totalSize);
 
         const float* p = reinterpret_cast<const float*>(data);
+        const bool hasSecond28 = size >= 40;
         compatLogFmt(
             "GL VERTEX UPLOAD[%u]: buffer=%d offset=%lld size=%lld total=%d "
-            "XYZ0=%g,%g,%g XYZ1=%g,%g,%g",
+            "XYZ0=%g,%g,%g RAW12=%g,%g,%g%s",
             g_nearVertexUploadDiagCalls + 1, (int)buffer,
             (long long)offset, (long long)size, (int)totalSize,
             (double)p[0], (double)p[1], (double)p[2],
             size >= 24 ? (double)p[3] : 0.0,
             size >= 24 ? (double)p[4] : 0.0,
-            size >= 24 ? (double)p[5] : 0.0);
+            size >= 24 ? (double)p[5] : 0.0,
+            hasSecond28 ? " SECOND28=" : "");
+        if (hasSecond28) {
+            const float* p28 = reinterpret_cast<const float*>(
+                reinterpret_cast<const uint8_t*>(data) + 28);
+            compatLogFmt(
+                "GL VERTEX UPLOAD SECOND28: buffer=%d XYZ=%g,%g,%g",
+                (int)buffer, (double)p28[0], (double)p28[1], (double)p28[2]);
+        }
         ++g_nearVertexUploadDiagCalls;
     }
 

@@ -472,7 +472,7 @@ static int run_farcry(LoadedSo* game_so) {
     // Force render-buffer merging for the geometry A/B run. The original
     // CryEngine merge path rewrites vertex/index data in mfFillRB(), so this
     // deliberately routes mergeable render elements through that path.
-    std::snprintf(arg13, sizeof(arg13), "\"r_rb_merge 4096\"");
+    std::snprintf(arg13, sizeof(arg13), "\"r_rb_merge 0\"");
     // CryEngine applies +CVar post-commands after renderer/system initialization.
     // ui_BackGroundVideo is created later by CUISystem::CreateCVars(), so a
     // startup command cannot override its default value of 1 reliably.
@@ -505,7 +505,7 @@ static int run_farcry(LoadedSo* game_so) {
     compatLog("Far Cry: r_UseHWShaders 1 queued for shader script registration");
     compatLog("Far Cry: r_displayInfo 1 queued for on-screen FPS/render statistics");
     compatLog("Far Cry: r_DetailTextures 0 queued to avoid fallback detail-overlay artifacts");
-    compatLog("Far Cry: r_RB_Merge 4096 queued to force render-buffer merge for geometry A/B test");
+    compatLog("Far Cry: r_RB_Merge 0 queued for control run without render-buffer merge");
     compatLog("Far Cry: command-line CVars use quoted name + value commands");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
