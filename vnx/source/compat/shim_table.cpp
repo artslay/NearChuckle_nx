@@ -8788,9 +8788,34 @@ static void shim_glBindBufferARB(GLenum target, GLuint buffer) { glBindBuffer(ta
 // vertex coordinates in-place, then releases it with glUnmapBufferARB().
 // Route the legacy ARB names to Mesa/Zink's core map/unmap entry points.
 static void* shim_glMapBufferARB(GLenum target, GLenum access) {
-    void* p = glMapBuffer(target, access);
-    compatPakLog("GL VERTEX BUFFER: glMapBufferARB target=0x%x access=0x%x -> %p",
-                 (unsigned)target, (unsigned)access, p);
+    // devkitA64 headers expose glMapBufferRange(), but not desktop glMapBuffer().
+    // Translate the legacy ARB access enum and map the entire currently bound
+    // buffer so the Android vertex-deformation code can edit it in place.
+    GLint size = 0;
+    glGetBufferParameteriv(target, 0x8764 /* GL_BUFFER_SIZE */, &size);
+
+    GLbitfield flags = 0;
+    if (access == 0x88B8 /* GL_READ_ONLY_ARB */)
+        flags = GL_MAP_READ_BIT;
+    else if (access == 0x88B9 /* GL_WRITE_ONLY_ARB */)
+        flags = GL_MAP_WRITE_BIT;
+    else if (access == 0x88BA /* GL_READ_WRITE_ARB */)
+        flags = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT;
+    else {
+        compatPakLog("GL VERTEX BUFFER: glMapBufferARB unsupported access=0x%x",
+                     (unsigned)access);
+        return nullptr;
+    }
+
+    if (size <= 0) {
+        compatPakLog("GL VERTEX BUFFER: glMapBufferARB target=0x%x size=%d -> NULL",
+                     (unsigned)target, (int)size);
+        return nullptr;
+    }
+
+    void* p = glMapBufferRange(target, 0, (GLsizeiptr)size, flags);
+    compatPakLog("GL VERTEX BUFFER: glMapBufferARB target=0x%x access=0x%x size=%d flags=0x%x -> %p",
+                 (unsigned)target, (unsigned)access, (int)size, (unsigned)flags, p);
     return p;
 }
 static GLboolean shim_glUnmapBufferARB(GLenum target) {
