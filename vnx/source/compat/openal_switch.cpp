@@ -401,9 +401,10 @@ void alDeleteSources(ALsizei n,const ALuint* ids) {
 }
 ALboolean alIsSource(ALuint id){return getSource(id)?AL_TRUE:AL_FALSE;}
 void alSourcePlay(ALuint id){
+    mutexLock(&g_audio.lock);
     Source*s=getSource(id);
-    if(!s){setError(AL_INVALID_NAME);return;}
-    if(s->queue.empty()){setError(AL_INVALID_OPERATION);return;}
+    if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
+    if(s->queue.empty()){mutexUnlock(&g_audio.lock);setError(AL_INVALID_OPERATION);return;}
     s->state=AL_PLAYING;
     if(g_play_log_count<16) {
         compatLogFmt("AUDIO: alSourcePlay[%u] source=%u queued=%u looping=%d",
@@ -411,30 +412,66 @@ void alSourcePlay(ALuint id){
                      static_cast<unsigned>(s->queue.size()), s->looping ? 1 : 0);
         ++g_play_log_count;
     }
+    mutexUnlock(&g_audio.lock);
 }
-void alSourcePause(ALuint id){Source*s=getSource(id);if(!s){setError(AL_INVALID_NAME);return;}if(s->state==AL_PLAYING)s->state=AL_PAUSED;}
-void alSourceStop(ALuint id){Source*s=getSource(id);if(!s){setError(AL_INVALID_NAME);return;}s->state=AL_STOPPED;s->current=0;s->processed=0;s->sample_pos=0;}
-void alSourceRewind(ALuint id){Source*s=getSource(id);if(!s){setError(AL_INVALID_NAME);return;}s->state=AL_INITIAL;s->current=0;s->processed=0;s->sample_pos=0;}
+void alSourcePause(ALuint id){
+    mutexLock(&g_audio.lock);
+    Source*s=getSource(id);
+    if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
+    if(s->state==AL_PLAYING)s->state=AL_PAUSED;
+    mutexUnlock(&g_audio.lock);
+}
+void alSourceStop(ALuint id){
+    mutexLock(&g_audio.lock);
+    Source*s=getSource(id);
+    if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
+    s->state=AL_STOPPED;s->current=0;s->processed=0;s->sample_pos=0;
+    mutexUnlock(&g_audio.lock);
+}
+void alSourceRewind(ALuint id){
+    mutexLock(&g_audio.lock);
+    Source*s=getSource(id);
+    if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
+    s->state=AL_INITIAL;s->current=0;s->processed=0;s->sample_pos=0;
+    mutexUnlock(&g_audio.lock);
+}
 void alSourcei(ALuint id,ALenum p,ALint v){
-    Source*s=getSource(id);if(!s){setError(AL_INVALID_NAME);return;}
+    mutexLock(&g_audio.lock);
+    Source*s=getSource(id);
+    if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
     if(p==AL_LOOPING)s->looping=(v!=0);
-    else if(p==AL_BUFFER){if(v&&!getBuffer(v)){setError(AL_INVALID_VALUE);return;}resetSource(*s);if(v)s->queue.push_back(v);s->state=AL_INITIAL;}
-    else if(p!=AL_SOURCE_RELATIVE)setError(AL_INVALID_ENUM);
+    else if(p==AL_BUFFER){
+        if(v&&!getBuffer(v)){mutexUnlock(&g_audio.lock);setError(AL_INVALID_VALUE);return;}
+        resetSource(*s);
+        if(v)s->queue.push_back(v);
+        s->state=AL_INITIAL;
+    } else if(p!=AL_SOURCE_RELATIVE) {
+        mutexUnlock(&g_audio.lock);setError(AL_INVALID_ENUM);return;
+    }
+    mutexUnlock(&g_audio.lock);
 }
 void alSourcef(ALuint id,ALenum p,ALfloat v){
-    Source*s=getSource(id);if(!s){setError(AL_INVALID_NAME);return;}
+    mutexLock(&g_audio.lock);
+    Source*s=getSource(id);
+    if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
     if(p==AL_PITCH)s->pitch=std::max(0.01f,v);
     else if(p==AL_GAIN)s->gain=std::max(0.0f,v);
     else if(p==AL_REFERENCE_DISTANCE)s->ref=std::max(0.001f,v);
     else if(p==AL_ROLLOFF_FACTOR)s->rolloff=std::max(0.0f,v);
     else if(p==AL_MAX_DISTANCE)s->maxdist=std::max(0.001f,v);
     else if(p==AL_SEC_OFFSET)s->sample_pos=std::max(0.0,double(v))*static_cast<double>(kRate);
-    else setError(AL_INVALID_ENUM);
+    else {mutexUnlock(&g_audio.lock);setError(AL_INVALID_ENUM);return;}
+    mutexUnlock(&g_audio.lock);
 }
 void alSource3f(ALuint id,ALenum p,ALfloat a,ALfloat b,ALfloat c){
-    Source*s=getSource(id);if(!s){setError(AL_INVALID_NAME);return;}
+    mutexLock(&g_audio.lock);
+    Source*s=getSource(id);
+    if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
     if(p==AL_POSITION){s->pos[0]=a;s->pos[1]=b;s->pos[2]=c;}
-    else if(p!=AL_VELOCITY&&p!=AL_DIRECTION)setError(AL_INVALID_ENUM);
+    else if(p!=AL_VELOCITY&&p!=AL_DIRECTION){
+        mutexUnlock(&g_audio.lock);setError(AL_INVALID_ENUM);return;
+    }
+    mutexUnlock(&g_audio.lock);
 }
 void alSourcefv(ALuint id,ALenum p,const ALfloat*v){
     if(!v){setError(AL_INVALID_VALUE);return;}
@@ -466,18 +503,26 @@ void alSourceUnqueueBuffers(ALuint id,ALsizei n,ALuint*v){
     if(take!=static_cast<size_t>(n))setError(AL_INVALID_VALUE);
 }
 void alGetSourcei(ALuint id,ALenum p,ALint*v){
-    Source*s=getSource(id);if(!s||!v){setError(AL_INVALID_VALUE);return;}
+    mutexLock(&g_audio.lock);
+    Source*s=getSource(id);
+    if(!s||!v){mutexUnlock(&g_audio.lock);setError(AL_INVALID_VALUE);return;}
     if(p==AL_SOURCE_STATE)*v=s->state;
     else if(p==AL_BUFFERS_QUEUED)*v=static_cast<ALint>(s->queue.size());
     else if(p==AL_BUFFERS_PROCESSED)*v=static_cast<ALint>(s->processed);
     else if(p==AL_SAMPLE_OFFSET)*v=static_cast<ALint>(s->sample_pos);
     else if(p==AL_BYTE_OFFSET)*v=static_cast<ALint>(s->sample_pos*2.0);
-    else setError(AL_INVALID_ENUM);
+    else {mutexUnlock(&g_audio.lock);setError(AL_INVALID_ENUM);return;}
+    mutexUnlock(&g_audio.lock);
 }
 void alGetSourcef(ALuint id,ALenum p,ALfloat*v){
-    Source*s=getSource(id);if(!s||!v){setError(AL_INVALID_VALUE);return;}
-    if(p==AL_PITCH)*v=s->pitch; else if(p==AL_GAIN)*v=s->gain; else if(p==AL_SEC_OFFSET)*v=static_cast<ALfloat>(s->sample_pos/static_cast<double>(kRate));
-    else setError(AL_INVALID_ENUM);
+    mutexLock(&g_audio.lock);
+    Source*s=getSource(id);
+    if(!s||!v){mutexUnlock(&g_audio.lock);setError(AL_INVALID_VALUE);return;}
+    if(p==AL_PITCH)*v=s->pitch;
+    else if(p==AL_GAIN)*v=s->gain;
+    else if(p==AL_SEC_OFFSET)*v=static_cast<ALfloat>(s->sample_pos/static_cast<double>(kRate));
+    else {mutexUnlock(&g_audio.lock);setError(AL_INVALID_ENUM);return;}
+    mutexUnlock(&g_audio.lock);
 }
 void alListenerf(ALenum p,ALfloat v){if(p==AL_GAIN)g_listener_gain=std::max(0.0f,v);else setError(AL_INVALID_ENUM);}
 void alListener3f(ALenum p,ALfloat,ALfloat,ALfloat){if(p!=AL_POSITION&&p!=AL_VELOCITY&&p!=AL_DIRECTION)setError(AL_INVALID_ENUM);}
