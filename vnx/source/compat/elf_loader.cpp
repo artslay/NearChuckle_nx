@@ -252,6 +252,8 @@ void elfResetCounts() {
     g_last_svc_perm_code = 0;
     g_symbol_cache.clear();
     g_symbol_cache.reserve(4096);
+    g_exported_symbols.clear();
+    g_exported_symbols.reserve(32768);
 }
 
 // ─── elfNearestSym ───────────────────────────────────────────────────────────
@@ -478,6 +480,7 @@ void elfRunCtors(LoadedSo* so, ProgressCb cb) {
 
 // All successfully loaded .so files (for cross-library symbol resolution)
 static std::vector<LoadedSo*> g_loaded_sos;
+static std::unordered_map<std::string, void*> g_exported_symbols;
 
 
 // Describe an arbitrary code address as "<so> +0x<off> sym=<name>" (or mark it
@@ -729,6 +732,38 @@ void* LoadedSo::findSym(const char* name) const {
     return nullptr;
 }
 
+// Build the global export index once per loaded library. This replaces the
+// expensive nested lookup (every relocation -> every SO -> every dynsym entry)
+// with one dynsym scan at library load time and O(1) name lookup afterwards.
+// emplace() deliberately preserves the first-loaded definition, matching the
+// resolver's existing search order.
+static void indexLoadedSoSymbols(LoadedSo* so) {
+    if (!so || !so->symtab || !so->strtab || so->sym_count == 0)
+        return;
+
+    for (uint32_t i = 1; i < so->sym_count; ++i) {
+        const Elf64_Sym& sym = so->symtab[i];
+        if (sym.st_shndx == SHN_UNDEF || sym.st_value == 0)
+            continue;
+        if (so->strsz > 0 && (uint64_t)sym.st_name >= so->strsz)
+            continue;
+        if (so->alloc_size > 0 && sym.st_value >= so->alloc_size)
+            continue;
+
+        const char* name = so->strtab + sym.st_name;
+        if (!name[0])
+            continue;
+
+        void* addr = nullptr;
+        if (so->data_alloc && so->data_vaddr > 0 && sym.st_value >= so->data_vaddr)
+            addr = so->data_alloc + (sym.st_value - so->data_vaddr);
+        else
+            addr = so->base + sym.st_value;
+
+        g_exported_symbols.emplace(name, addr);
+    }
+}
+
 // ─── Global symbol resolver ───────────────────────────────────────────────────
 // Checks our shim table FIRST so Switch-compatible implementations always win
 // over any Bionic copies embedded in libapplovin.so / libquack.so.
@@ -808,8 +843,18 @@ static void* resolveSymbol(const char* name) {
         return shim;
     }
 
-    // Then the game's own libraries — a game that ships its own libc MUST keep
-    // using it.
+    // Then the game's own libraries. The export index was built once when
+    // each library was registered, preserving the first-loaded definition while
+    // avoiding a full dynsym scan for every relocation.
+    auto exported = g_exported_symbols.find(name);
+    if (exported != g_exported_symbols.end()) {
+        if (trace) compatLogFmt("bind: %s -> indexed %p", name, exported->second);
+        g_symbol_cache.emplace(name, exported->second);
+        return exported->second;
+    }
+
+    // Keep the original linear search as a safety net for any unusual symbol
+    // that was intentionally excluded from the index.
     for (LoadedSo* so : g_loaded_sos) {
         void* p = so->findSym(name);
         if (p) {
@@ -2803,8 +2848,10 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     }
     compatLogFmt("ELF: so built sym_count=%u strsz=%llu", sym_count, (unsigned long long)strsz);
 
-    // Register now so cross-library resolution works during relocation
+    // Register now so cross-library resolution works during relocation.
+    // Index this library's exports immediately for subsequent libraries.
     g_loaded_sos.push_back(so);
+    indexLoadedSoSymbols(so);
     compatLog("ELF: registered");
 
     // ── Apply relocations to staging buffer ──────────────────────────────────
