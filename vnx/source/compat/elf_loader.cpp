@@ -2848,11 +2848,9 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     }
     compatLogFmt("ELF: so built sym_count=%u strsz=%llu", sym_count, (unsigned long long)strsz);
 
-    // Register now so cross-library resolution works during relocation.
-    // Index this library's exports immediately for subsequent libraries.
-    g_loaded_sos.push_back(so);
-    indexLoadedSoSymbols(so);
-    compatLog("ELF: registered");
+    // Registration is deferred until the process-code mapping and permissions
+    // are known to have succeeded. This prevents the global export index from
+    // retaining pointers to a library whose load later failed.
 
     // ── Apply relocations to staging buffer ──────────────────────────────────
     // GOT entries store exec-side addresses; the writes go to the heap stage.
@@ -2977,6 +2975,12 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     compatLogFmt("ProcessMap: mapped image base=%p backing=%p size=0x%zx",
                  (void*)code_exec, (void*)backing, alloc_size);
     compatLog("ELF: process-code copy complete");
+
+    // Now that the image is fully mapped and executable, publish it to the
+    // cross-library resolver and build its export index for following loads.
+    g_loaded_sos.push_back(so);
+    indexLoadedSoSymbols(so);
+    compatLog("ELF: registered");
     compatLogFlush();
 
     // PT_LOAD permissions above make PF_X pages executable.
