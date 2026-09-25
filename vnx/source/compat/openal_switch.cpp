@@ -59,6 +59,7 @@ struct Source {
     bool used=false;
     ALint state=AL_INITIAL;
     bool looping=false;
+    bool relative=false;
     float gain=1.0f, pitch=1.0f;
     float pos[3]={0,0,0};
     float ref=1.0f, maxdist=1000000.0f, rolloff=1.0f, mingain=0.0f, maxgain=1.0f;
@@ -86,6 +87,7 @@ ALuint g_next_buffer=1, g_next_source=1;
 thread_local ALenum g_al_error=AL_NO_ERROR;
 thread_local ALCenum g_alc_error=ALC_NO_ERROR;
 float g_listener_gain=1.0f;
+float g_listener_pos[3]={0,0,0};
 unsigned g_buffer_log_count=0;
 unsigned g_queue_log_count=0;
 unsigned g_play_log_count=0;
@@ -141,16 +143,30 @@ void mixSource(Source& s, float* dst, size_t frames) {
                 const float a=b->pcm[i0]/32768.0f;
                 const float c=b->pcm[i1]/32768.0f;
                 const float mono=a+(c-a)*frac;
-                const float dist=std::sqrt(s.pos[0]*s.pos[0]+s.pos[1]*s.pos[1]+s.pos[2]*s.pos[2]);
-                float att=1.0f;
-                if(dist>s.ref)
-                    att=s.ref/(s.ref+s.rolloff*(dist-s.ref));
-                if(dist>=s.maxdist) att=0.0f;
-                att=std::clamp(att,s.mingain,s.maxgain);
-                const float pan=std::clamp(s.pos[0]/std::max(1.0f,dist),-1.0f,1.0f);
-                const float v=mono*s.gain*g_listener_gain*att;
-                left=v*0.5f*(1.0f-pan);
-                right=v*0.5f*(1.0f+pan);
+
+                // AL_SOURCE_RELATIVE means the source is attached to the
+                // listener (2D audio). Movie/dialogue streams commonly use
+                // this mode; applying world-space attenuation to them can
+                // make the cutscene track effectively inaudible.
+                if(s.relative) {
+                    const float v=mono*s.gain*g_listener_gain;
+                    left=v*0.70710678f;
+                    right=v*0.70710678f;
+                } else {
+                    const float dx=s.pos[0]-g_listener_pos[0];
+                    const float dy=s.pos[1]-g_listener_pos[1];
+                    const float dz=s.pos[2]-g_listener_pos[2];
+                    const float dist=std::sqrt(dx*dx+dy*dy+dz*dz);
+                    float att=1.0f;
+                    if(dist>s.ref)
+                        att=s.ref/(s.ref+s.rolloff*(dist-s.ref));
+                    if(dist>=s.maxdist) att=0.0f;
+                    att=std::clamp(att,s.mingain,s.maxgain);
+                    const float pan=std::clamp(dx/std::max(1.0f,dist),-1.0f,1.0f);
+                    const float v=mono*s.gain*g_listener_gain*att;
+                    left=v*0.5f*(1.0f-pan);
+                    right=v*0.5f*(1.0f+pan);
+                }
             } else {
                 const size_t p0=i0*2, p1=i1*2;
                 left=(b->pcm[p0]+(b->pcm[p1]-b->pcm[p0])*frac)/32768.0f*s.gain*g_listener_gain;
@@ -459,6 +475,11 @@ void alSourcei(ALuint id,ALenum p,ALint v){
     Source*s=getSource(id);
     if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
     if(p==AL_LOOPING)s->looping=(v!=0);
+    else if(p==AL_SOURCE_RELATIVE){
+        s->relative=(v!=0);
+        if(g_play_log_count<16)
+            compatLogFmt("AUDIO: source=%u relative=%d", static_cast<unsigned>(id), s->relative ? 1 : 0);
+    }
     else if(p==AL_BUFFER){
         if(v&&!getBuffer(v)){mutexUnlock(&g_audio.lock);setError(AL_INVALID_VALUE);return;}
         resetSource(*s);
@@ -550,8 +571,15 @@ void alGetSourcef(ALuint id,ALenum p,ALfloat*v){
     mutexUnlock(&g_audio.lock);
 }
 void alListenerf(ALenum p,ALfloat v){if(p==AL_GAIN)g_listener_gain=std::max(0.0f,v);else setError(AL_INVALID_ENUM);}
-void alListener3f(ALenum p,ALfloat,ALfloat,ALfloat){if(p!=AL_POSITION&&p!=AL_VELOCITY&&p!=AL_DIRECTION)setError(AL_INVALID_ENUM);}
-void alListenerfv(ALenum p,const ALfloat*v){if(!v){setError(AL_INVALID_VALUE);return;}if(p!=AL_POSITION&&p!=AL_VELOCITY&&p!=AL_ORIENTATION)setError(AL_INVALID_ENUM);}
+void alListener3f(ALenum p,ALfloat a,ALfloat b,ALfloat c){
+    if(p==AL_POSITION){g_listener_pos[0]=a;g_listener_pos[1]=b;g_listener_pos[2]=c;}
+    else if(p!=AL_VELOCITY&&p!=AL_DIRECTION) setError(AL_INVALID_ENUM);
+}
+void alListenerfv(ALenum p,const ALfloat*v){
+    if(!v){setError(AL_INVALID_VALUE);return;}
+    if(p==AL_POSITION){g_listener_pos[0]=v[0];g_listener_pos[1]=v[1];g_listener_pos[2]=v[2];}
+    else if(p!=AL_VELOCITY&&p!=AL_ORIENTATION) setError(AL_INVALID_ENUM);
+}
 void alDistanceModel(ALenum){} void alDopplerFactor(ALfloat){} void alDopplerVelocity(ALfloat){} void alSpeedOfSound(ALfloat){}
 ALenum alGetEnumValue(const ALchar*n){
     if(!n)return 0;
