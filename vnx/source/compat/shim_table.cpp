@@ -8037,10 +8037,8 @@ static bool nearMapLegacySubImageFormat(GLenum format, GLenum type,
         }
     }
 
-    // Dynamic DSDT textures use the legacy internal-format token as the
-    // client format too. These byte uploads carry signed/normalized DSDT data;
-    // the destination texture is created as RGB8_SNORM by the corresponding
-    // glTexImage2D compatibility path.
+    // Dynamic/static DSDT byte uploads use the legacy internal-format token
+    // as the client format too. Preserve the signed two's-complement bytes.
     if ((type == GL_UNSIGNED_BYTE || type == GL_BYTE) &&
         isNearDsdtFormat(format)) {
         mappedFormat = (format == kNearGL_DSDT_MAG_NV) ? GL_RGB : GL_RG;
@@ -8049,6 +8047,16 @@ static bool nearMapLegacySubImageFormat(GLenum format, GLenum type,
         // format interprets those bytes as signed offset components; replay
         // the same bit pattern through the core signed type.
         mappedType = GL_BYTE;
+        return true;
+    }
+
+    // CREOcean::UpdateTexture() uses this exact legacy call:
+    //   glTexSubImage2D(..., GL_DSDT_NV, GL_FLOAT, data)
+    // The matching glTexImage2D path maps GL_DSDT_NV to RG32F, so the
+    // subsequent sub-upload must use the ordinary two-component float format.
+    if (type == GL_FLOAT && isNearDsdtFormat(format)) {
+        mappedFormat = (format == kNearGL_DSDT_MAG_NV) ? GL_RGB : GL_RG;
+        mappedType = GL_FLOAT;
         return true;
     }
 
