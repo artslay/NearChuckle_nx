@@ -5240,7 +5240,34 @@ static void w_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
     if (emu) nearFinishTextureShaderEmulation();
 }
 
+static unsigned g_nearDrawElementsDiagCalls = 0;
+
 static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
+    if (g_nearDrawElementsDiagCalls < 24) {
+        GLint arrayBuffer = 0;
+        GLint elementBuffer = 0;
+        GLint vertexBufferSize = 0;
+        GLint indexBufferSize = 0;
+        glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &arrayBuffer);
+        glGetIntegerv(0x8895 /* GL_ELEMENT_ARRAY_BUFFER_BINDING */, &elementBuffer);
+
+        if (arrayBuffer != 0)
+            glGetBufferParameteriv(GL_ARRAY_BUFFER, 0x8764 /* GL_BUFFER_SIZE */, &vertexBufferSize);
+        if (elementBuffer != 0)
+            glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, 0x8764 /* GL_BUFFER_SIZE */, &indexBufferSize);
+
+        compatLogFmt(
+            "GL DRAW ELEMENTS[%u]: mode=0x%x count=%d type=0x%x indexOff=0x%llx "
+            "vbo=%d vboSize=%d ibo=%d iboSize=%d vertexArray=%d",
+            g_nearDrawElementsDiagCalls + 1,
+            (unsigned)mode, (int)count, (unsigned)type,
+            (unsigned long long)(uintptr_t)indices,
+            (int)arrayBuffer, (int)vertexBufferSize,
+            (int)elementBuffer, (int)indexBufferSize,
+            glIsEnabled(GL_VERTEX_ARRAY) ? 1 : 0);
+    }
+    ++g_nearDrawElementsDiagCalls;
+
     nearLogWaterDrawState();
     const bool emu = nearPrepareTextureShaderEmulation();
     glDrawElements(mode, count, type, indices);
