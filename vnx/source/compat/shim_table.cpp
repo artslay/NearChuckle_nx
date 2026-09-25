@@ -8798,7 +8798,11 @@ static void* shim_glMapBufferARB(GLenum target, GLenum access) {
     if (access == 0x88B8 /* GL_READ_ONLY_ARB */)
         flags = GL_MAP_READ_BIT;
     else if (access == 0x88B9 /* GL_WRITE_ONLY_ARB */)
-        flags = GL_MAP_WRITE_BIT;
+        // Far Cry's deformation code reads the old XYZ values before writing
+        // the deformed coordinates, even though the legacy API requests
+        // GL_WRITE_ONLY_ARB. Keep the mapping readable on Switch/Zink so the
+        // read-modify-write operation sees the original VBO contents.
+        flags = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT;
     else if (access == 0x88BA /* GL_READ_WRITE_ARB */)
         flags = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT;
     else {
