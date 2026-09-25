@@ -789,21 +789,23 @@ static void* resolveSymbol(const char* name) {
     if (!name || !name[0]) return nullptr;
     const bool trace = isAllocSym(name) || isFsTraceSym(name) || isCtypeTraceSym(name);
 
+    // Successful bindings are stable for the lifetime of this process under
+    // the resolver's existing first-loaded-definition semantics. Check the
+    // cache BEFORE the shim table: shimResolve() is itself a linear scan over
+    // every compatibility entry, so calling it for every repeated relocation
+    // would erase most of the benefit of caching.
+    auto cached = g_symbol_cache.find(name);
+    if (cached != g_symbol_cache.end()) {
+        if (trace) compatLogFmt("bind: %s -> cached %p", name, cached->second);
+        return cached->second;
+    }
+
     // Shim table takes priority over guest libraries.
     void* shim = shimResolve(name);
     if (shim) {
         if (trace) compatLogFmt("bind: %s -> shim %p", name, shim);
         g_symbol_cache.emplace(name, shim);
         return shim;
-    }
-
-    // Successful bindings are stable for the lifetime of this process under
-    // the resolver's existing first-loaded-definition semantics. A later
-    // dlopen must not replace an already selected earlier definition.
-    auto cached = g_symbol_cache.find(name);
-    if (cached != g_symbol_cache.end()) {
-        if (trace) compatLogFmt("bind: %s -> cached %p", name, cached->second);
-        return cached->second;
     }
 
     // Then the game's own libraries — a game that ships its own libc MUST keep
