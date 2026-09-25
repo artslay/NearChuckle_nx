@@ -7642,9 +7642,8 @@ static bool nearTextureShaderBuildSource(std::string& out) {
     out += "!!ARBfp1.0\\n";
     out += "TEMP ts0, ts1, ts2, ts3, ts4, ts5, ts6, ts7;\\n";
     out += "TEMP coord, tmp, color;\\n";
-    out += "MOV color, fragment.color.primary;\\n";
 
-    // Parameter declarations must precede instructions in ARBfp.
+    // Parameter declarations must precede executable instructions in ARBfp.
     for (unsigned i = 0; i < kNearTextureShaderUnits; ++i) {
         const NearTextureShaderUnitState& st = g_nearTextureShaderState.units[i];
         if (st.op == GL_NONE)
@@ -7655,6 +7654,8 @@ static bool nearTextureShaderBuildSource(std::string& out) {
         nearTextureShaderAppendParam(out, "sb" + std::to_string(i),
                                      st.scale, st.bias, 0.0f, 0.0f);
     }
+
+    out += "MOV color, fragment.color.primary;\\n";
 
     bool any = false;
     for (unsigned i = 0; i < kNearTextureShaderUnits; ++i) {
