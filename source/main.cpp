@@ -469,9 +469,9 @@ static int run_farcry(LoadedSo* game_so) {
     // the detail-overlay fallback as a source of garbled texture patterns; keep
     // the equivalent detail path disabled until real detail shaders are available.
     std::snprintf(arg12, sizeof(arg12), "\"r_DetailTextures 0\"");
-    // Disable render-buffer merging for one A/B run. The original CryEngine
-    // merge path rewrites vertex/index data in mfFillRB(), so this forces
-    // merge-specific geometry corruption without changing the GL stream path.
+    // Force render-buffer merging for the geometry A/B run. The original
+    // CryEngine merge path rewrites vertex/index data in mfFillRB(), so this
+    // deliberately routes mergeable render elements through that path.
     std::snprintf(arg13, sizeof(arg13), "\"r_rb_merge 4096\"");
     // CryEngine applies +CVar post-commands after renderer/system initialization.
     // ui_BackGroundVideo is created later by CUISystem::CreateCVars(), so a
