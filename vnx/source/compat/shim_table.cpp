@@ -5269,9 +5269,29 @@ static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void
     ++g_nearDrawElementsDiagCalls;
 
     nearLogWaterDrawState();
+
+    // DrawElements normally interprets indices as an offset when an element
+    // VBO is bound. Legacy client-array paths can still pass a real CPU pointer,
+    // especially special NV_vertex_program paths. Detect that case and record
+    // the draw with ELEMENT_ARRAY_BUFFER=0, then restore the previous binding.
+    GLint savedElementBuffer = 0;
+    glGetIntegerv(0x8895 /* GL_ELEMENT_ARRAY_BUFFER_BINDING */, &savedElementBuffer);
+    const bool clientIndices =
+        savedElementBuffer != 0 && nearLooksLikeClientPointer(indices);
+    if (clientIndices)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
     const bool emu = nearPrepareTextureShaderEmulation();
     glDrawElements(mode, count, type, indices);
     if (emu) nearFinishTextureShaderEmulation();
+
+    if (clientIndices) {
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)savedElementBuffer);
+        compatLogFmt(
+            "GL DRAW ELEMENTS CLIENT FIX: mode=0x%x count=%d type=0x%x ptr=%p savedIbo=%d",
+            (unsigned)mode, (int)count, (unsigned)type,
+            indices, (int)savedElementBuffer);
+    }
 }
 
 static void w_glClear(GLbitfield mask) {
@@ -8767,6 +8787,24 @@ static bool nearNvVertexAttribArray(GLenum array, GLuint& index) {
     return true;
 }
 
+// Legacy client-array pointers are real process addresses on Switch. A VBO
+// offset is a small integer (0, 0x324, ...), while a client pointer is a
+// normal high virtual address. Keep the distinction explicit when translating
+// old desktop-OpenGL calls to the modern core entry points.
+static bool nearLooksLikeClientPointer(const void* pointer) {
+    if (!pointer)
+        return false;
+
+    const uintptr_t value = reinterpret_cast<uintptr_t>(pointer);
+    // Switch guest/compatibility heap pointers are well above this range;
+    // practical VBO offsets used by Far Cry are tiny.
+    return value > 0x00100000u;
+}
+
+// NV_vertex_program specifies VertexAttribPointerNV as an entirely client-side
+// command. It must NOT inherit the current ARRAY_BUFFER binding. The Android
+// renderer passes pointers into CPU-generated arrays here, so bind ARRAY_BUFFER=0
+// while recording the generic attribute state, then restore the previous binding.
 static void shim_glVertexAttribPointerNV(GLuint index, GLint fsize, GLenum type,
                                          GLsizei stride, const void* pointer) {
     if (index >= 16 || fsize <= 0 || fsize > 4) {
@@ -8774,7 +8812,22 @@ static void shim_glVertexAttribPointerNV(GLuint index, GLint fsize, GLenum type,
                      (unsigned)index, (int)fsize);
         return;
     }
-    glVertexAttribPointer(index, fsize, type, GL_FALSE, stride, pointer);
+
+    GLint savedArrayBuffer = 0;
+    glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &savedArrayBuffer);
+
+    if (savedArrayBuffer != 0) {
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glVertexAttribPointer(index, fsize, type, GL_FALSE, stride, pointer);
+        glBindBuffer(GL_ARRAY_BUFFER, (GLuint)savedArrayBuffer);
+        compatLogFmt(
+            "GL NV VERTEX ATTR CLIENT FIX: index=%u size=%d type=0x%x stride=%d ptr=%p savedVbo=%d",
+            (unsigned)index, (int)fsize, (unsigned)type, (int)stride,
+            pointer, (int)savedArrayBuffer);
+    } else {
+        glVertexAttribPointer(index, fsize, type, GL_FALSE, stride, pointer);
+    }
+
     compatPakLog("GL NV VERTEX ATTR: pointer index=%u size=%d type=0x%x stride=%d ptr=%p",
                  (unsigned)index, (int)fsize, (unsigned)type, (int)stride, pointer);
 }
@@ -8805,15 +8858,30 @@ static void shim_glVertexPointerCompat(GLint size, GLenum type, GLsizei stride,
                                         const void* pointer) {
     GLint buffer = 0;
     glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &buffer);
-    if (buffer != 0 && (g_nearVertexPointerDiagCalls < 16)) {
+
+    // Far Cry has both true VBO-offset calls and legacy client-array calls.
+    // If a real client pointer arrives while some unrelated VBO is still bound,
+    // core OpenGL/Zink would interpret that address as a giant byte offset into
+    // the VBO and the affected mesh would acquire bogus vertex coordinates.
+    if (buffer != 0 && nearLooksLikeClientPointer(pointer)) {
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glVertexPointer(size, type, stride, pointer);
+        glBindBuffer(GL_ARRAY_BUFFER, (GLuint)buffer);
         compatLogFmt(
-            "GL VERTEX POINTER[%u]: buffer=%d size=%d type=0x%x stride=%d offset=0x%llx",
-            g_nearVertexPointerDiagCalls + 1, (int)buffer, (int)size,
-            (unsigned)type, (int)stride,
-            (unsigned long long)(uintptr_t)pointer);
+            "GL VERTEX POINTER CLIENT FIX: size=%d type=0x%x stride=%d ptr=%p savedVbo=%d",
+            (int)size, (unsigned)type, (int)stride, pointer, (int)buffer);
+    } else {
+        if (buffer != 0 && (g_nearVertexPointerDiagCalls < 16)) {
+            compatLogFmt(
+                "GL VERTEX POINTER[%u]: buffer=%d size=%d type=0x%x stride=%d offset=0x%llx",
+                g_nearVertexPointerDiagCalls + 1, (int)buffer, (int)size,
+                (unsigned)type, (int)stride,
+                (unsigned long long)(uintptr_t)pointer);
+        }
+        glVertexPointer(size, type, stride, pointer);
     }
+
     ++g_nearVertexPointerDiagCalls;
-    glVertexPointer(size, type, stride, pointer);
 }
 
 static void shim_glActiveStencilFaceEXT(GLenum) {}
