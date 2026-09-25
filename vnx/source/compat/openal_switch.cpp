@@ -94,6 +94,7 @@ unsigned g_play_log_count=0;
 unsigned g_unqueue_log_count=0;
 unsigned g_listener_log_count=0;
 unsigned g_mix_log_count=0;
+unsigned g_output_log_count=0;
 
 Buffer* getBuffer(ALuint id) {
     return id<kMaxBuffers && id ? (g_buffers[id].used ? &g_buffers[id] : nullptr) : nullptr;
@@ -115,7 +116,7 @@ void mixSource(Source& s, float* dst, size_t frames) {
     // decoder delivers valid PCM, but the decoded track is substantially quieter
     // than regular game audio on the Switch path. Apply a targeted gain only to
     // this movie source; all other OpenAL sources keep the game's requested gain.
-    const float movie_boost = (&s == &g_sources[32]) ? 4.0f : 1.0f;
+    const float movie_boost = (&s == &g_sources[32]) ? 16.0f : 1.0f;
 
     for(size_t o=0;o<frames;o++) {
         while(s.current<s.queue.size()) {
@@ -232,8 +233,22 @@ void mixBlock(int16_t* out) {
     }
     mutexUnlock(&g_audio.lock);
 
-    for(size_t i=0;i<kFrames*2;i++)
-        out[i]=static_cast<int16_t>(std::lrintf(std::clamp(mix[i],-1.0f,1.0f)*32767.0f));
+    int peak=0;
+    int64_t accum=0;
+    for(size_t i=0;i<kFrames*2;i++) {
+        const int sample=static_cast<int>(std::lrintf(std::clamp(mix[i],-1.0f,1.0f)*32767.0f));
+        out[i]=static_cast<int16_t>(sample);
+        const int a=std::abs(sample);
+        if(a>peak) peak=a;
+        accum+=a;
+    }
+    if(g_output_log_count<32) {
+        compatLogFmt("AUDIO: audout-ready[%u] peak=%d avg=%d bytes=%zu",
+                     g_output_log_count, peak,
+                     static_cast<int>(accum/static_cast<int64_t>(kFrames*2)),
+                     sizeof(g_audio.pcm[0]));
+        ++g_output_log_count;
+    }
 }
 
 void audioThread(void*) {
@@ -248,9 +263,12 @@ void audioThread(void*) {
         }
         if(!released_count || !released) continue;
         mixBlock(static_cast<int16_t*>(released->buffer));
-        if(R_FAILED(audoutAppendAudioOutBuffer(released)) &&
-           !g_audio.stop.load(std::memory_order_relaxed))
-            svcSleepThread(1000000);
+        const Result append_rc=audoutAppendAudioOutBuffer(released);
+        if(R_FAILED(append_rc)) {
+            compatLogFmt("AUDIO: audoutAppend FAILED rc=0x%08x", static_cast<unsigned>(append_rc));
+            if(!g_audio.stop.load(std::memory_order_relaxed))
+                svcSleepThread(1000000);
+        }
     }
     g_audio.started.store(false,std::memory_order_relaxed);
 }
