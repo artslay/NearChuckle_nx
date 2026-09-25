@@ -173,6 +173,30 @@ static bool suppressCompatNoise(const char* msg) {
          normalized.find("/gui/map_unknown.") != std::string::npos ||
          normalized.find("/textures/gui/map_unknown.") != std::string::npos);
 
+    // Low-value loader/graphics diagnostics. Keep actual failures/warnings,
+    // but hide successful per-ELF bookkeeping and per-draw buffer chatter.
+    const bool elfBookkeeping =
+        normalized.find("elf: loading ") == 0 ||
+        normalized.find("elf: stage alloc ok") == 0 ||
+        normalized.find("elf: stage zeroed") == 0 ||
+        normalized.find("elf: seg[") == 0 ||
+        normalized.find("elf: dyn:") == 0 ||
+        normalized.find("elf: so built ") == 0 ||
+        normalized.find("elf: registered") == 0 ||
+        normalized.find("elf: rela ") == 0 ||
+        normalized.find("elf: jmprel ") == 0 ||
+        normalized.find("elf: strtab/symtab copied") == 0 ||
+        normalized.find("elf: dt_init fn deferred") == 0 ||
+        normalized.find("elf: ") == 0 &&
+            (normalized.find("constructors deferred") != std::string::npos ||
+             normalized.find("loaded ok ") != std::string::npos ||
+             normalized.find("process-code copy complete") != std::string::npos);
+
+    const bool glDrawNoise =
+        normalized.find("gl buffer data") == 0 ||
+        normalized.find("gl vertex upload") == 0 ||
+        normalized.find("gl draw") == 0;
+
     return normalized.find("pak mem trace") == 0 ||
            normalized.find("farcry getfilesize") == 0 ||
            normalized.find("opendir ") == 0 ||
@@ -181,6 +205,8 @@ static bool suppressCompatNoise(const char* msg) {
            normalized.find("sdl: swap heartbeat[") == 0 ||
            normalized.find("pak caf hit:") == 0 ||
            normalized.find("texture format '.tga' is deprecated") != std::string::npos ||
+           elfBookkeeping ||
+           glDrawNoise ||
            optionalMapTextureMiss;
 }
 
