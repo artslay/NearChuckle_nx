@@ -472,7 +472,7 @@ static int run_farcry(LoadedSo* game_so) {
     // Disable render-buffer merging for one A/B run. The original CryEngine
     // merge path rewrites vertex/index data in mfFillRB(), so this forces
     // merge-specific geometry corruption without changing the GL stream path.
-    std::snprintf(arg13, sizeof(arg13), "\"r_rb_merge 0\"");
+    std::snprintf(arg13, sizeof(arg13), "\"r_rb_merge 4096\"");
     // CryEngine applies +CVar post-commands after renderer/system initialization.
     // ui_BackGroundVideo is created later by CUISystem::CreateCVars(), so a
     // startup command cannot override its default value of 1 reliably.
