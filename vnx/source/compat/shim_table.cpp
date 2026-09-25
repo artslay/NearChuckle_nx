@@ -8137,10 +8137,58 @@ static void nearLogWaterDrawState() {
     const GLboolean fragmentEnabled = glIsEnabled(0x8804); // GL_FRAGMENT_PROGRAM_ARB
     const GLboolean vertexEnabled = glIsEnabled(0x8620);  // GL_VERTEX_PROGRAM_ARB
 
-    const GLint units = std::max(0, std::min(maxUnits, 32));
-    bool foundWater = false;
+    // Capture the fixed-function/client-array state exactly as it exists at the
+    // affected draw. This is the important part for selective mesh displacement:
+    // the position stream can be correct while the normal/tangent streams point
+    // at the wrong VBO or stale offset.
+    GLint vertexSize = 0, vertexType = 0, vertexStride = 0;
+    GLint normalType = 0, normalStride = 0;
+    GLint colorSize = 0, colorType = 0, colorStride = 0;
+    void* vertexPtr = nullptr;
+    void* normalPtr = nullptr;
+    void* colorPtr = nullptr;
 
-    for (GLint unit = 0; unit < units; ++unit) {
+    glGetIntegerv(0x807A /* GL_VERTEX_ARRAY_SIZE */, &vertexSize);
+    glGetIntegerv(0x807B /* GL_VERTEX_ARRAY_TYPE */, &vertexType);
+    glGetIntegerv(0x807C /* GL_VERTEX_ARRAY_STRIDE */, &vertexStride);
+    glGetIntegerv(0x807E /* GL_NORMAL_ARRAY_TYPE */, &normalType);
+    glGetIntegerv(0x807F /* GL_NORMAL_ARRAY_STRIDE */, &normalStride);
+    glGetIntegerv(0x8081 /* GL_COLOR_ARRAY_SIZE */, &colorSize);
+    glGetIntegerv(0x8082 /* GL_COLOR_ARRAY_TYPE */, &colorType);
+    glGetIntegerv(0x8083 /* GL_COLOR_ARRAY_STRIDE */, &colorStride);
+
+    glGetPointerv(0x808E /* GL_VERTEX_ARRAY_POINTER */, &vertexPtr);
+    glGetPointerv(0x808F /* GL_NORMAL_ARRAY_POINTER */, &normalPtr);
+    glGetPointerv(0x8090 /* GL_COLOR_ARRAY_POINTER */, &colorPtr);
+
+    const GLint arrayBufferBefore =
+        []() -> GLint {
+            GLint v = 0;
+            glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &v);
+            return v;
+        }();
+
+    compatPakLog(
+        "GL AFFECTED DRAW ARRAYS: program=%d vertex_prog=%d vertex_en=%d "
+        "array_vbo=%d pos=%p pos_size=%d pos_type=0x%x pos_stride=%d "
+        "normal=%p normal_type=0x%x normal_stride=%d "
+        "color=%p color_size=%d color_type=0x%x color_stride=%d",
+        program, vertexProgram, vertexEnabled ? 1 : 0,
+        arrayBufferBefore,
+        vertexPtr, vertexSize, (unsigned)vertexType, vertexStride,
+        normalPtr, (unsigned)normalType, normalStride,
+        colorPtr, colorSize, (unsigned)colorType, colorStride);
+
+    const GLint maxLogUnits = std::max(0, std::min(maxUnits, 4));
+    const GLenum savedClientActive =
+        (GLenum)[]() -> GLint {
+            GLint v = (GLint)GL_TEXTURE0;
+            glGetIntegerv(0x84E1 /* GL_CLIENT_ACTIVE_TEXTURE */, &v);
+            return v;
+        }();
+
+    bool foundAffected = false;
+    for (GLint unit = 0; unit < maxLogUnits; ++unit) {
         GLint texture = 0;
         glGetIntegeri_v(GL_TEXTURE_BINDING_2D, (GLuint)unit, &texture);
         if (!texture)
@@ -8150,36 +8198,36 @@ static void nearLogWaterDrawState() {
         if (name.empty())
             continue;
 
-        // Query state belonging to the same texture unit. The active unit at
-        // draw time may legitimately be a different unit.
-        const GLenum savedActive = (GLenum)activeTexture;
-        const GLenum unitEnum = GL_TEXTURE0 + (GLenum)unit;
-        GLint enabled = 0;
-        GLint envMode = 0;
-        glActiveTexture(unitEnum);
-        enabled = glIsEnabled(GL_TEXTURE_2D) ? 1 : 0;
-        if (enabled)
-            glGetTexEnviv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, &envMode);
-        glActiveTexture(savedActive);
+        foundAffected = true;
 
-        foundWater = true;
+        const GLenum unitEnum = GL_TEXTURE0 + (GLenum)unit;
+        glClientActiveTexture(unitEnum);
+
+        GLint texArraySize = 0, texArrayType = 0, texArrayStride = 0;
+        void* texPtr = nullptr;
+        glGetIntegerv(0x8088 /* GL_TEXTURE_COORD_ARRAY_SIZE */, &texArraySize);
+        glGetIntegerv(0x8089 /* GL_TEXTURE_COORD_ARRAY_TYPE */, &texArrayType);
+        glGetIntegerv(0x808A /* GL_TEXTURE_COORD_ARRAY_STRIDE */, &texArrayStride);
+        glGetPointerv(0x8092 /* GL_TEXTURE_COORD_ARRAY_POINTER */, &texPtr);
+
+        GLint enabled = glIsEnabled(GL_TEXTURE_COORD_ARRAY) ? 1 : 0;
         compatPakLog(
-            "GL TEX DRAW DIAG: program=%d unit=%d texture=%d name=%s "
-            "active=0x%x current_texture=%d unit_tex2d=%d unit_texenv=0x%x "
-            "vertex_program=%d vertex_enabled=%d fragment_program=%d fragment_enabled=%d",
-            program, unit, texture, name.c_str(),
-            (unsigned)activeTexture, currentTexture,
-            enabled, (unsigned)envMode,
-            vertexProgram, vertexEnabled ? 1 : 0,
-            fragmentProgram, fragmentEnabled ? 1 : 0);
+            "GL AFFECTED TEXARRAY: unit=%d texture=%d name=%s enabled=%d "
+            "ptr=%p size=%d type=0x%x stride=%d",
+            unit, texture, name.c_str(), enabled,
+            texPtr, texArraySize, (unsigned)texArrayType, texArrayStride);
     }
 
-    if (!foundWater) 
+    glClientActiveTexture(savedClientActive);
+
+    if (!foundAffected) {
+        g_waterDrawDiagCalls.fetch_add(1, std::memory_order_relaxed);
         return;
+    }
 
     g_waterDrawDiagCalls.fetch_add(1, std::memory_order_relaxed);
 
-    // Sampler uniforms are only meaningful for a core/GLSL program.
+    // Keep the existing sampler diagnostics for a core/GLSL program.
     if (!program)
         return;
 
@@ -9162,6 +9210,32 @@ static GLboolean shim_glIsProgramARB(GLuint program) {
 static void shim_glProgramStringARB(GLenum target, GLenum format,
                                     GLsizei len, const void* string) {
     static PFN_glProgramStringARB fn = resolveGLProc<PFN_glProgramStringARB>("glProgramStringARB");
+
+    // Fingerprint the vertex programs before handing them to Mesa. This lets
+    // us distinguish a real cached/generated ARBvp program from the tiny
+    // embedded fallback used when a CGV shader cannot be found.
+    bool likelyEmbeddedFallback = false;
+    bool hasPositionAttr0 = false;
+    bool hasBaseTcAttr8 = false;
+    bool hasModelViewProj = false;
+    if (target == 0x8620 && string && len > 0 && len <= 1024 * 1024) {
+        const char* text = reinterpret_cast<const char*>(string);
+        std::string src(text, text + len);
+        hasPositionAttr0 =
+            src.find("vertex.attrib[0]") != std::string::npos ||
+            src.find("$vin.ATTR0") != std::string::npos;
+        hasBaseTcAttr8 =
+            src.find("vertex.attrib[8]") != std::string::npos ||
+            src.find("$vin.ATTR8") != std::string::npos;
+        hasModelViewProj = src.find("ModelViewProj") != std::string::npos;
+        likelyEmbeddedFallback =
+            hasPositionAttr0 && hasBaseTcAttr8 &&
+            src.find("program.env[0]") != std::string::npos &&
+            src.find("program.env[3]") != std::string::npos &&
+            src.find("result.position") != std::string::npos &&
+            src.find("result.color") != std::string::npos;
+    }
+
     if (fn) fn(target, format, len, string);
 
     if ((target == 0x8620 || target == 0x8804) &&
@@ -9179,9 +9253,14 @@ static void shim_glProgramStringARB(GLenum target, GLenum format,
         }
         compatPakLog(
             "GL ARB PROG: event=string target=0x%x(%s) binding=%d "
-            "input_len=%d stored_len=%d error_pos=%d",
+            "input_len=%d stored_len=%d error_pos=%d "
+            "fallback=%d pos_attr0=%d base_tc_attr8=%d modelviewproj=%d",
             (unsigned)target, nearArbProgramTargetName(target),
-            binding, len, length, errorPos);
+            binding, len, length, errorPos,
+            likelyEmbeddedFallback ? 1 : 0,
+            hasPositionAttr0 ? 1 : 0,
+            hasBaseTcAttr8 ? 1 : 0,
+            hasModelViewProj ? 1 : 0);
     }
 }
 static void shim_glProgramEnvParameter4fARB(GLenum target, GLuint index,
