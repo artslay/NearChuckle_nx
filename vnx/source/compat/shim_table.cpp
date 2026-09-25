@@ -11746,14 +11746,23 @@ static const ShimEntry g_unity_fallback_shims[] = {
 
 static constexpr size_t NUM_SHIMS = sizeof(g_shims)/sizeof(g_shims[0]) - 1;
 
-// ─── shimResolve — linear scan (fast enough for N < 400) ──────────────────────
+// ─── shimResolve ──────────────────────────────────────────────────────────────
+// Relocation binding calls this for every imported symbol. Build the table once
+// on first use so repeated lookups are O(1) instead of scanning every shim.
 void* shimResolve(const char* name) {
     if (!name) return nullptr;
-    for (size_t i = 0; i < NUM_SHIMS; i++) {
-        if (strcmp(g_shims[i].name, name) == 0)
-            return g_shims[i].ptr;
+
+    static std::unordered_map<std::string, void*> index;
+    static bool initialized = false;
+    if (!initialized) {
+        index.reserve(NUM_SHIMS * 2);
+        for (size_t i = 0; i < NUM_SHIMS; ++i)
+            index.emplace(g_shims[i].name, g_shims[i].ptr);
+        initialized = true;
     }
-    return nullptr;
+
+    auto it = index.find(name);
+    return it != index.end() ? it->second : nullptr;
 }
 
 // Fallback resolver — checked only AFTER the game's own libraries (see
