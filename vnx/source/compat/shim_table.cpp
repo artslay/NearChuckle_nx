@@ -8772,6 +8772,23 @@ static void shim_glDisableClientStateCompat(GLenum array) {
     glDisableClientState(array);
 }
 
+static unsigned g_nearVertexPointerDiagCalls = 0;
+
+static void shim_glVertexPointerCompat(GLint size, GLenum type, GLsizei stride,
+                                        const void* pointer) {
+    GLint buffer = 0;
+    glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &buffer);
+    if (buffer != 0 && (g_nearVertexPointerDiagCalls < 16)) {
+        compatLogFmt(
+            "GL VERTEX POINTER[%u]: buffer=%d size=%d type=0x%x stride=%d offset=0x%llx",
+            g_nearVertexPointerDiagCalls + 1, (int)buffer, (int)size,
+            (unsigned)type, (int)stride,
+            (unsigned long long)(uintptr_t)pointer);
+    }
+    ++g_nearVertexPointerDiagCalls;
+    glVertexPointer(size, type, stride, pointer);
+}
+
 static void shim_glActiveStencilFaceEXT(GLenum) {}
 static void shim_glBindBufferARB(GLenum target, GLuint buffer) { glBindBuffer(target, buffer); }
 
@@ -10826,6 +10843,7 @@ static const ShimEntry g_shims[] = {
     {"glStencilFuncSeparateATI", (void*)shim_glStencilFuncSeparateATI},
     {"glStencilOpSeparateATI", (void*)shim_glStencilOpSeparateATI},
     {"glTestFenceNV", (void*)shim_glTestFenceNV},
+    {"glVertexPointer", (void*)shim_glVertexPointerCompat},
     {"glTexCoord2f", (void*)glTexCoord2f},
     {"glTexCoord3f", (void*)glTexCoord3f},
     {"glTexCoordPointer", (void*)glTexCoordPointer},
