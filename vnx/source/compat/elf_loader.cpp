@@ -2421,7 +2421,7 @@ static void applyRela(LoadedSo* so, const Elf64_Rela* relas, size_t count,
         if (r.r_offset < so->min_vaddr) continue;
         uint8_t* target_ptr = write_base + r.r_offset;
         if (target_ptr < write_alloc || target_ptr + 8 > write_alloc + alloc_size) {
-            compatLogFmt("%s[%zu/%zu] WARN target 0x%llx out of stage bounds — skipped",
+            compatLogFmt("%s[%zu/%zu] WARN target 0x%llx out of backing-image bounds — skipped",
                          tag, i + 1, count, (unsigned long long)r.r_offset);
             continue;
         }
@@ -2519,40 +2519,76 @@ static void applyRela(LoadedSo* so, const Elf64_Rela* relas, size_t count,
 LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     compatLogFmt("ELF: loading %s", path);
 
-    // Read the entire file
+    // Read only the ELF header and program-header table up front. The loader
+    // only needs PT_LOAD bytes for the runtime image, so do not malloc/read
+    // the entire shared object just to copy a subset of it.
     FILE* f = fopen(path, "rb");
     if (!f) { compatLog("ELF: fopen failed"); return nullptr; }
 
-    fseek(f, 0, SEEK_END);
-    size_t fsize = (size_t)ftell(f);
-    rewind(f);
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        compatLog("ELF: fseek end failed");
+        return nullptr;
+    }
+    const long file_end = ftell(f);
+    if (file_end < 0) {
+        fclose(f);
+        compatLog("ELF: ftell failed");
+        return nullptr;
+    }
+    const size_t fsize = (size_t)file_end;
+    if (fsize < sizeof(Elf64_Ehdr)) {
+        fclose(f);
+        compatLog("ELF: file is smaller than ELF header");
+        return nullptr;
+    }
 
-    uint8_t* file_data = (uint8_t*)malloc(fsize);
-    if (!file_data) { fclose(f); compatLog("ELF: OOM"); return nullptr; }
-    fread(file_data, 1, fsize, f);
-    fclose(f);
+    rewind(f);
+    Elf64_Ehdr ehdr_storage = {};
+    if (fread(&ehdr_storage, 1, sizeof(ehdr_storage), f) != sizeof(ehdr_storage)) {
+        fclose(f);
+        compatLog("ELF: failed to read ELF header");
+        return nullptr;
+    }
+    const Elf64_Ehdr* ehdr = &ehdr_storage;
 
     // Validate ELF header
-    const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)file_data;
-    if (fsize < sizeof(Elf64_Ehdr) ||
-        memcmp(ehdr->e_ident, "\x7f" "ELF", 4) ||
-        ehdr->e_ident[4] != 2 ||           // ELFCLASS64
-        ehdr->e_ident[5] != 1 ||           // ELFDATA2LSB
-        ehdr->e_machine  != EM_AARCH64 ||
-        ehdr->e_type     != ET_DYN) {
-        free(file_data);
+    if (memcmp(ehdr->e_ident, "\x7f" "ELF", 4) ||
+        ehdr->e_ident[4] != 2 ||
+        ehdr->e_ident[5] != 1 ||
+        ehdr->e_machine != EM_AARCH64 ||
+        ehdr->e_type != ET_DYN) {
+        fclose(f);
         compatLog("ELF: not an ARM64 shared lib");
         return nullptr;
     }
 
-    if (ehdr->e_phoff == 0 || ehdr->e_phnum == 0) {
-        free(file_data);
-        compatLog("ELF: no program headers");
+    if (ehdr->e_phoff == 0 || ehdr->e_phnum == 0 ||
+        ehdr->e_phentsize != sizeof(Elf64_Phdr)) {
+        fclose(f);
+        compatLog("ELF: invalid or unsupported program-header table");
+        return nullptr;
+    }
+
+    const uint64_t phdr_bytes =
+        (uint64_t)ehdr->e_phnum * (uint64_t)ehdr->e_phentsize;
+    if (ehdr->e_phoff > fsize ||
+        phdr_bytes > (uint64_t)fsize - (uint64_t)ehdr->e_phoff) {
+        fclose(f);
+        compatLog("ELF: program-header table is outside file bounds");
+        return nullptr;
+    }
+
+    std::vector<Elf64_Phdr> phdrs(ehdr->e_phnum);
+    if (fseek(f, (long)ehdr->e_phoff, SEEK_SET) != 0 ||
+        fread(phdrs.data(), sizeof(Elf64_Phdr), ehdr->e_phnum, f) != ehdr->e_phnum) {
+        fclose(f);
+        compatLog("ELF: failed to read program headers");
         return nullptr;
     }
 
     // Walk PT_LOAD segments to find the virtual address span and first data segment
-    const Elf64_Phdr* phdrs = (const Elf64_Phdr*)(file_data + ehdr->e_phoff);
+    // Program headers were copied into an owned vector above.
     uint64_t min_vaddr      = UINT64_MAX, max_vaddr = 0;
     uint64_t data_seg_vaddr = UINT64_MAX;  // vaddr of first writable (PF_W) segment
     int      load_count = 0, exec_seg_count = 0, writable_seg_count = 0;
@@ -2568,7 +2604,7 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
             data_seg_vaddr = phdrs[i].p_vaddr;
     }
     if (min_vaddr == UINT64_MAX) {
-        free(file_data);
+        if (f) { fclose(f); f = nullptr; }
         compatLog("ELF: no PT_LOAD segments");
         return nullptr;
     }
@@ -2603,13 +2639,13 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
                  envIsSyscallHinted(0x73) ? 1 : 0);
     if (process_handle == INVALID_HANDLE || !have_map_syscalls) {
         compatLog("ProcessMap: required process-code syscalls are unavailable");
-        free(file_data);
+        if (f) { fclose(f); f = nullptr; }
         return nullptr;
     }
 
     uint8_t* backing = (uint8_t*)memalign(0x1000, alloc_size);
     if (!backing) {
-        free(file_data);
+        if (f) { fclose(f); f = nullptr; }
         compatLog("ProcessMap: heap backing allocation failed");
         return nullptr;
     }
@@ -2622,7 +2658,7 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     virtmemUnlock();
     if (!process_code_rv) {
         free(backing);
-        free(file_data);
+        if (f) { fclose(f); f = nullptr; }
         compatLog("ProcessMap: unable to reserve code-region VA");
         return nullptr;
     }
@@ -2644,7 +2680,7 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     uint8_t* stage_base = stage - min_vaddr;
     uint8_t* exec_base  = code_exec - min_vaddr;
 
-    // ── Copy PT_LOAD segments into staging buffer ────────────────────────────
+    // ── Read PT_LOAD segments directly into backing image ────────────────────────────
     for (int i = 0; i < ehdr->e_phnum; i++) {
         const Elf64_Phdr& ph = phdrs[i];
         if (ph.p_type != PT_LOAD || ph.p_filesz == 0) continue;
@@ -2660,10 +2696,18 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
         compatLogFmt("ELF: seg[%d] vaddr=0x%llx filesz=0x%llx memsz=0x%llx flags=0x%x",
                      i, (unsigned long long)ph.p_vaddr, (unsigned long long)ph.p_filesz,
                      (unsigned long long)ph.p_memsz, ph.p_flags);
-        memcpy(seg_dst, file_data + ph.p_offset, ph.p_filesz);
+        if (fseek(f, (long)ph.p_offset, SEEK_SET) != 0) {
+            compatLogFmt("ELF: seg[%d] WARN seek to file offset failed — skipped", i);
+            continue;
+        }
+        if (fread(seg_dst, 1, ph.p_filesz, f) != ph.p_filesz) {
+            compatLogFmt("ELF: seg[%d] WARN short segment read — skipped", i);
+            continue;
+        }
     }
     elfHeapCanaryCheck("segment copy");
     compatLog("ELF: PT_LOAD segments copied to backing image");
+    if (f) { fclose(f); f = nullptr; }
     {
         uint32_t s0 = *(volatile uint32_t*)stage;
         compatLogFmt("ELF: backing[0]=0x%08x after segs copy", s0);
@@ -2799,7 +2843,7 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     if (R_FAILED(map_rc)) {
         compatLogFmt("ProcessMap: svcMapProcessCodeMemory FAILED 0x%08x", (uint32_t)map_rc);
         free(backing);
-        free(file_data);
+        if (f) { fclose(f); f = nullptr; }
         g_loaded_sos.pop_back();
         delete so;
         return nullptr;
@@ -2852,7 +2896,7 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
                                   (uint64_t)backing,
                                   alloc_size);
         free(backing);
-        free(file_data);
+        if (f) { fclose(f); f = nullptr; }
         g_loaded_sos.pop_back();
         delete so;
         return nullptr;
@@ -2883,7 +2927,7 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
                      so->init_arr_count, (void*)so->init_arr);
     }
 
-    free(file_data);
+    if (f) { fclose(f); f = nullptr; }
     compatLogFmt("ELF: loaded OK code_exec=%p data_exec=%p sym_count=%u unresolved=%d",
                  (void*)code_exec, (void*)data_exec,
                  so->sym_count, g_unresolved_count);
