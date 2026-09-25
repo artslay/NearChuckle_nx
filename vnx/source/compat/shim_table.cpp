@@ -5411,8 +5411,8 @@ static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
         // remains valid without moving the existing declarations.
         using NearGetProgramEnvParameterfvARB = void (*)(GLenum, GLuint, GLfloat*);
         static NearGetProgramEnvParameterfvARB getEnv =
-            resolveGLProc<NearGetProgramEnvParameterfvARB>(
-                "glGetProgramEnvParameterfvARB");
+            reinterpret_cast<NearGetProgramEnvParameterfvARB>(
+                eglGetProcAddress("glGetProgramEnvParameterfvARB"));
         if (getEnv) {
             GLfloat env[4] = {};
             for (GLuint envIndex = 0; envIndex < 8; ++envIndex) {
