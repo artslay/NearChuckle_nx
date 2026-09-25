@@ -8706,6 +8706,49 @@ static void shim_glTexSubImage2D(GLenum target, GLint level,
                     format, type, pixels);
 }
 
+// NV_vertex_program vertex-attrib compatibility.
+// Far Cry's Android ocean renderer feeds its generated vertex data through
+// glVertexAttribPointerNV(0/1/2) and enables GL_VERTEX_ATTRIB_ARRAY{0,1,2}_NV.
+// Mesa/Zink exposes the same storage through core generic vertex attributes.
+static bool nearNvVertexAttribArray(GLenum array, GLuint& index) {
+    if (array < 0x8650 || array > 0x865F)
+        return false;
+    index = (GLuint)(array - 0x8650); // GL_VERTEX_ATTRIB_ARRAY0_NV .. 15_NV
+    return true;
+}
+
+static void shim_glVertexAttribPointerNV(GLuint index, GLint fsize, GLenum type,
+                                         GLsizei stride, const void* pointer) {
+    if (index >= 16 || fsize <= 0 || fsize > 4) {
+        compatPakLog("GL NV VERTEX ATTR: rejected index=%u size=%d",
+                     (unsigned)index, (int)fsize);
+        return;
+    }
+    glVertexAttribPointer(index, fsize, type, GL_FALSE, stride, pointer);
+    compatPakLog("GL NV VERTEX ATTR: pointer index=%u size=%d type=0x%x stride=%d ptr=%p",
+                 (unsigned)index, (int)fsize, (unsigned)type, (int)stride, pointer);
+}
+
+static void shim_glEnableClientStateCompat(GLenum array) {
+    GLuint index = 0;
+    if (nearNvVertexAttribArray(array, index)) {
+        glEnableVertexAttribArray(index);
+        compatPakLog("GL NV VERTEX ATTR: enable index=%u", (unsigned)index);
+        return;
+    }
+    glEnableClientState(array);
+}
+
+static void shim_glDisableClientStateCompat(GLenum array) {
+    GLuint index = 0;
+    if (nearNvVertexAttribArray(array, index)) {
+        glDisableVertexAttribArray(index);
+        compatPakLog("GL NV VERTEX ATTR: disable index=%u", (unsigned)index);
+        return;
+    }
+    glDisableClientState(array);
+}
+
 static void shim_glActiveStencilFaceEXT(GLenum) {}
 static void shim_glBindBufferARB(GLenum target, GLuint buffer) { glBindBuffer(target, buffer); }
 static void shim_glBufferDataARB(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
@@ -10616,6 +10659,7 @@ static const ShimEntry g_shims[] = {
     {"glProgramLocalParameter4fvARB", (void*)shim_glProgramLocalParameter4fvARB},
     {"glProgramStringARB", (void*)shim_glProgramStringARB},
     {"glVertexAttribPointerARB", (void*)shim_glVertexAttribPointerARB},
+    {"glVertexAttribPointerNV", (void*)shim_glVertexAttribPointerNV},
     {"glEnableVertexAttribArrayARB", (void*)shim_glEnableVertexAttribArrayARB},
     {"glDisableVertexAttribArrayARB", (void*)shim_glDisableVertexAttribArrayARB},
     {"glClearDepth", (void*)glClearDepth},
@@ -10629,9 +10673,9 @@ static const ShimEntry g_shims[] = {
     {"glCompressedTexImage2DARB", (void*)shim_glCompressedTexImage2DARB},
     {"glCompressedTexSubImage2DARB", (void*)shim_glCompressedTexSubImage2DARB},
     {"glDepthRange", (void*)glDepthRange},
-    {"glDisableClientState", (void*)glDisableClientState},
+    {"glDisableClientState", (void*)shim_glDisableClientStateCompat},
     {"glDrawBuffer", (void*)glDrawBuffer},
-    {"glEnableClientState", (void*)glEnableClientState},
+    {"glEnableClientState", (void*)shim_glEnableClientStateCompat},
     {"glEnd", (void*)glEnd},
     {"glFinishFenceNV", (void*)shim_glFinishFenceNV},
     {"glFogf", (void*)glFogf},
