@@ -9021,14 +9021,86 @@ static GLboolean shim_glUnmapBufferARB(GLenum target) {
     }
     return ok;
 }
+static unsigned g_nearBufferDataDiagCalls = 0;
+static unsigned g_nearVertexUploadDiagCalls = 0;
+static unsigned g_nearIndexUploadDiagCalls = 0;
+
 static void shim_glBufferDataARB(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
     glBufferData(target, size, data, usage);
+
+    const bool vertexTarget = (target == 0x8892 /* GL_ARRAY_BUFFER */);
+    const bool indexTarget = (target == 0x8893 /* GL_ELEMENT_ARRAY_BUFFER */);
+    if ((vertexTarget || indexTarget) && g_nearBufferDataDiagCalls < 32) {
+        GLint buffer = 0;
+        glGetIntegerv(vertexTarget ? 0x8894 /* GL_ARRAY_BUFFER_BINDING */
+                                   : 0x8895 /* GL_ELEMENT_ARRAY_BUFFER_BINDING */,
+                      &buffer);
+        compatLogFmt(
+            "GL BUFFER DATA[%u]: target=0x%x buffer=%d size=%lld usage=0x%x initialData=%p",
+            g_nearBufferDataDiagCalls + 1, (unsigned)target, (int)buffer,
+            (long long)size, (unsigned)usage, data);
+        ++g_nearBufferDataDiagCalls;
+    }
 }
 static void shim_glGenBuffersARB(GLsizei n, GLuint* buffers) {
     glGenBuffers(n, buffers);
 }
 static void shim_glBufferSubDataARB(GLenum target, GLintptr offset, GLsizeiptr size, const void* data) {
     glBufferSubData(target, offset, size, data);
+
+    const bool vertexTarget = (target == 0x8892 /* GL_ARRAY_BUFFER */);
+    const bool indexTarget = (target == 0x8893 /* GL_ELEMENT_ARRAY_BUFFER */);
+
+    if (vertexTarget && data && size >= 12 && g_nearVertexUploadDiagCalls < 64) {
+        GLint buffer = 0;
+        GLint totalSize = 0;
+        glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &buffer);
+        glGetBufferParameteriv(GL_ARRAY_BUFFER, 0x8764 /* GL_BUFFER_SIZE */, &totalSize);
+
+        const float* p = reinterpret_cast<const float*>(data);
+        compatLogFmt(
+            "GL VERTEX UPLOAD[%u]: buffer=%d offset=%lld size=%lld total=%d "
+            "XYZ0=%g,%g,%g XYZ1=%g,%g,%g",
+            g_nearVertexUploadDiagCalls + 1, (int)buffer,
+            (long long)offset, (long long)size, (int)totalSize,
+            (double)p[0], (double)p[1], (double)p[2],
+            size >= 24 ? (double)p[3] : 0.0,
+            size >= 24 ? (double)p[4] : 0.0,
+            size >= 24 ? (double)p[5] : 0.0);
+        ++g_nearVertexUploadDiagCalls;
+    }
+
+    if (indexTarget && data && size >= 2 && g_nearIndexUploadDiagCalls < 16) {
+        GLint buffer = 0;
+        GLint totalSize = 0;
+        glGetIntegerv(0x8895 /* GL_ELEMENT_ARRAY_BUFFER_BINDING */, &buffer);
+        glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, 0x8764 /* GL_BUFFER_SIZE */, &totalSize);
+
+        const size_t count = std::min<size_t>((size_t)size / sizeof(uint16_t), 1024);
+        const uint16_t* p = reinterpret_cast<const uint16_t*>(data);
+        uint16_t minIndex = 0xFFFF;
+        uint16_t maxIndex = 0;
+        for (size_t i = 0; i < count; ++i) {
+            minIndex = std::min(minIndex, p[i]);
+            maxIndex = std::max(maxIndex, p[i]);
+        }
+
+        compatLogFmt(
+            "GL INDEX UPLOAD[%u]: buffer=%d offset=%lld size=%lld total=%d "
+            "count16=%u min=%u max=%u first=%u,%u,%u,%u,%u,%u,%u,%u",
+            g_nearIndexUploadDiagCalls + 1, (int)buffer,
+            (long long)offset, (long long)size, (int)totalSize,
+            (unsigned)count, (unsigned)minIndex, (unsigned)maxIndex,
+            count > 0 ? (unsigned)p[0] : 0u,
+            count > 1 ? (unsigned)p[1] : 0u,
+            count > 2 ? (unsigned)p[2] : 0u,
+            count > 3 ? (unsigned)p[3] : 0u,
+            count > 4 ? (unsigned)p[4] : 0u,
+            count > 5 ? (unsigned)p[5] : 0u,
+            count > 6 ? (unsigned)p[6] : 0u,
+            count > 7 ? (unsigned)p[7] : 0u);
+        ++g_nearIndexUploadDiagCalls;
+    }
 }
 static void shim_glColorTableEXT(GLenum target, GLenum internalformat, GLsizei width,
                                  GLenum format, GLenum type, const void* table) {
