@@ -8779,8 +8779,10 @@ static void shim_glBindBufferARB(GLenum target, GLuint buffer) { glBindBuffer(ta
 // The Android renderer maps VBO storage with glMapBufferARB(), modifies the
 // vertex coordinates in-place, then releases it with glUnmapBufferARB().
 // Route the legacy ARB names to Mesa/Zink's core map/unmap entry points.
-static unsigned g_nearVboMapDiagCalls = 0;
-static unsigned g_nearVboUnmapDiagCalls = 0;
+static unsigned g_nearArrayMapDiagCalls = 0;
+static unsigned g_nearArrayUnmapDiagCalls = 0;
+static unsigned g_nearIndexMapDiagCalls = 0;
+static unsigned g_nearIndexUnmapDiagCalls = 0;
 
 static void* shim_glMapBufferARB(GLenum target, GLenum access) {
     // devkitA64 headers expose glMapBufferRange(), but not desktop glMapBuffer().
@@ -8813,27 +8815,54 @@ static void* shim_glMapBufferARB(GLenum target, GLenum access) {
     }
 
     void* p = glMapBufferRange(target, 0, (GLsizeiptr)size, flags);
-    if (g_nearVboMapDiagCalls < 8 || !p) {
-        GLint buffer = 0;
-        glGetIntegerv(target, &buffer);
-        compatLogFmt(
-            "GL DEFORM MAP[%u]: target=0x%x access=0x%x buffer=%d size=%d flags=0x%x ptr=%p",
-            g_nearVboMapDiagCalls + 1, (unsigned)target, (unsigned)access,
-            (int)buffer, (int)size, (unsigned)flags, p);
+    const bool vertexTarget = (target == 0x8892 /* GL_ARRAY_BUFFER */);
+    const bool indexTarget = (target == 0x8893 /* GL_ELEMENT_ARRAY_BUFFER */);
+
+    if (vertexTarget) {
+        if (g_nearArrayMapDiagCalls < 8 || !p) {
+            GLint buffer = 0;
+            glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &buffer);
+            compatLogFmt(
+                "GL DEFORM MAP[%u]: target=ARRAY_BUFFER buffer=%d access=0x%x size=%d flags=0x%x ptr=%p",
+                g_nearArrayMapDiagCalls + 1, (int)buffer, (unsigned)access,
+                (int)size, (unsigned)flags, p);
+        }
+        ++g_nearArrayMapDiagCalls;
+    } else if (indexTarget) {
+        if (g_nearIndexMapDiagCalls < 2 || !p) {
+            GLint buffer = 0;
+            glGetIntegerv(0x8895 /* GL_ELEMENT_ARRAY_BUFFER_BINDING */, &buffer);
+            compatLogFmt(
+                "GL INDEX MAP[%u]: buffer=%d access=0x%x size=%d flags=0x%x ptr=%p",
+                g_nearIndexMapDiagCalls + 1, (int)buffer, (unsigned)access,
+                (int)size, (unsigned)flags, p);
+        }
+        ++g_nearIndexMapDiagCalls;
     }
-    ++g_nearVboMapDiagCalls;
     return p;
 }
 static GLboolean shim_glUnmapBufferARB(GLenum target) {
     const GLboolean ok = glUnmapBuffer(target);
-    if (g_nearVboUnmapDiagCalls < 8 || !ok) {
-        GLint buffer = 0;
-        glGetIntegerv(target, &buffer);
-        compatLogFmt("GL DEFORM UNMAP[%u]: target=0x%x buffer=%d ok=%d",
-                     g_nearVboUnmapDiagCalls + 1, (unsigned)target,
-                     (int)buffer, (int)ok);
+    const bool vertexTarget = (target == 0x8892 /* GL_ARRAY_BUFFER */);
+    const bool indexTarget = (target == 0x8893 /* GL_ELEMENT_ARRAY_BUFFER */);
+
+    if (vertexTarget) {
+        if (g_nearArrayUnmapDiagCalls < 8 || !ok) {
+            GLint buffer = 0;
+            glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &buffer);
+            compatLogFmt("GL DEFORM UNMAP[%u]: target=ARRAY_BUFFER buffer=%d ok=%d",
+                         g_nearArrayUnmapDiagCalls + 1, (int)buffer, (int)ok);
+        }
+        ++g_nearArrayUnmapDiagCalls;
+    } else if (indexTarget) {
+        if (g_nearIndexUnmapDiagCalls < 2 || !ok) {
+            GLint buffer = 0;
+            glGetIntegerv(0x8895 /* GL_ELEMENT_ARRAY_BUFFER_BINDING */, &buffer);
+            compatLogFmt("GL INDEX UNMAP[%u]: buffer=%d ok=%d",
+                         g_nearIndexUnmapDiagCalls + 1, (int)buffer, (int)ok);
+        }
+        ++g_nearIndexUnmapDiagCalls;
     }
-    ++g_nearVboUnmapDiagCalls;
     return ok;
 }
 static void shim_glBufferDataARB(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
