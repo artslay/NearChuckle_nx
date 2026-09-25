@@ -43,6 +43,7 @@ static bool skip_android_helper(const char* name) {
     if (!name) return false;
 
     static const char* const skip[] = {
+        "libopenal.so",
         "libdriverloader.so",
         "libGL.so",
         "libXRenderNULL.so",
@@ -147,14 +148,9 @@ static void setup_environment() {
     setenv("LOGNAME", "FarCryPlayer", 1);
     setenv("TMPDIR", config.data_root, 1);
 
-    // The Android libopenal shipped with Far Cry was built with the OpenSL
-    // backend. There is no OpenSL ES service on Switch, and the game's
-    // alcOpenDevice() path treats that backend's initialization failure as a
-    // fatal exception rather than falling back. Force OpenAL's null backend
-    // for this probe so the game can continue past sound initialization;
-    // native Switch audio can be added separately without restoring OpenSL.
-    setenv("ALSOFT_DRIVERS", "null", 1);
-
+    // Far Cry's Android OpenAL library targets OpenSL ES, which is not present
+    // on Switch. Do not force the guest library's null backend: the wrapper
+    // supplies OpenAL entry points backed by libnx audout instead.
     if (config.mesa_driver[0]) {
         setenv("MESA_LOADER_DRIVER_OVERRIDE", config.mesa_driver, 1);
         setenv("GALLIUM_DRIVER", config.mesa_driver, 1);

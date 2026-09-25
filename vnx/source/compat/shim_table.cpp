@@ -10566,11 +10566,117 @@ struct ShimEntry { const char* name; void* ptr; };
 extern "C" void near_openal_tls_local_context_init();
 extern "C" int near_openal_cxa_thread_atexit(void (*dtor)(void*), void* obj, void* dso);
 
+// Switch-native OpenAL compatibility backend (libnx audout).
+extern "C" {
+    struct ALCdevice;
+    struct ALCcontext;
+    ALCdevice* alcOpenDevice(const ALCchar*);
+    ALCboolean alcCloseDevice(ALCdevice*);
+    ALCcontext* alcCreateContext(ALCdevice*, const ALCint*);
+    ALCboolean alcMakeContextCurrent(ALCcontext*);
+    void alcDestroyContext(ALCcontext*);
+    ALCcontext* alcGetCurrentContext(void);
+    ALCdevice* alcGetContextsDevice(ALCcontext*);
+    ALCenum alcGetError(ALCdevice*);
+    const ALCchar* alcGetString(ALCdevice*, ALCenum);
+    void alcGetIntegerv(ALCdevice*, ALCenum, ALCsizei, ALCint*);
+    ALCboolean alcIsExtensionPresent(ALCdevice*, const ALCchar*);
+    void* alcGetProcAddress(ALCdevice*, const ALCchar*);
+
+    ALenum alGetError(void);
+    const ALchar* alGetString(ALenum);
+    ALboolean alIsExtensionPresent(const ALchar*);
+    void alGenBuffers(ALsizei, ALuint*);
+    void alDeleteBuffers(ALsizei, const ALuint*);
+    ALboolean alIsBuffer(ALuint);
+    void alBufferData(ALuint, ALenum, const ALvoid*, ALsizei, ALsizei);
+    void alGetBufferi(ALuint, ALenum, ALint*);
+    void alGenSources(ALsizei, ALuint*);
+    void alDeleteSources(ALsizei, const ALuint*);
+    ALboolean alIsSource(ALuint);
+    void alSourcePlay(ALuint);
+    void alSourcePause(ALuint);
+    void alSourceStop(ALuint);
+    void alSourceRewind(ALuint);
+    void alSourcei(ALuint, ALenum, ALint);
+    void alSourcef(ALuint, ALenum, ALfloat);
+    void alSource3f(ALuint, ALenum, ALfloat, ALfloat, ALfloat);
+    void alSourcefv(ALuint, ALenum, const ALfloat*);
+    void alSourceQueueBuffers(ALuint, ALsizei, const ALuint*);
+    void alSourceUnqueueBuffers(ALuint, ALsizei, ALuint*);
+    void alGetSourcei(ALuint, ALenum, ALint*);
+    void alGetSourcef(ALuint, ALenum, ALfloat*);
+    void alListenerf(ALenum, ALfloat);
+    void alListener3f(ALenum, ALfloat, ALfloat, ALfloat);
+    void alListenerfv(ALenum, const ALfloat*);
+    void alDistanceModel(ALenum);
+    void alDopplerFactor(ALfloat);
+    void alDopplerVelocity(ALfloat);
+    void alSpeedOfSound(ALfloat);
+    ALenum alGetEnumValue(const ALchar*);
+    void* alGetProcAddress(const ALchar*);
+    ALboolean alIsEnabled(ALenum);
+    void alEnable(ALenum);
+    void alDisable(ALenum);
+    void alFinish(void);
+    void alFlush(void);
+}
+
 
 static const ShimEntry g_shims[] = {
     // ── OpenAL Soft Android TLS ABI fallbacks ─────────────────────────────
     {"_ZTHN10ALCcontext13sLocalContextE", (void*)near_openal_tls_local_context_init},
     {"__cxa_thread_atexit_impl", (void*)near_openal_cxa_thread_atexit},
+    // ── Switch-native OpenAL core ─────────────────────────────────────────
+    {"alcOpenDevice", (void*)alcOpenDevice},
+    {"alcCloseDevice", (void*)alcCloseDevice},
+    {"alcCreateContext", (void*)alcCreateContext},
+    {"alcMakeContextCurrent", (void*)alcMakeContextCurrent},
+    {"alcDestroyContext", (void*)alcDestroyContext},
+    {"alcGetCurrentContext", (void*)alcGetCurrentContext},
+    {"alcGetContextsDevice", (void*)alcGetContextsDevice},
+    {"alcGetError", (void*)alcGetError},
+    {"alcGetString", (void*)alcGetString},
+    {"alcGetIntegerv", (void*)alcGetIntegerv},
+    {"alcIsExtensionPresent", (void*)alcIsExtensionPresent},
+    {"alcGetProcAddress", (void*)alcGetProcAddress},
+    {"alGetError", (void*)alGetError},
+    {"alGetString", (void*)alGetString},
+    {"alIsExtensionPresent", (void*)alIsExtensionPresent},
+    {"alGenBuffers", (void*)alGenBuffers},
+    {"alDeleteBuffers", (void*)alDeleteBuffers},
+    {"alIsBuffer", (void*)alIsBuffer},
+    {"alBufferData", (void*)alBufferData},
+    {"alGetBufferi", (void*)alGetBufferi},
+    {"alGenSources", (void*)alGenSources},
+    {"alDeleteSources", (void*)alDeleteSources},
+    {"alIsSource", (void*)alIsSource},
+    {"alSourcePlay", (void*)alSourcePlay},
+    {"alSourcePause", (void*)alSourcePause},
+    {"alSourceStop", (void*)alSourceStop},
+    {"alSourceRewind", (void*)alSourceRewind},
+    {"alSourcei", (void*)alSourcei},
+    {"alSourcef", (void*)alSourcef},
+    {"alSource3f", (void*)alSource3f},
+    {"alSourcefv", (void*)alSourcefv},
+    {"alSourceQueueBuffers", (void*)alSourceQueueBuffers},
+    {"alSourceUnqueueBuffers", (void*)alSourceUnqueueBuffers},
+    {"alGetSourcei", (void*)alGetSourcei},
+    {"alGetSourcef", (void*)alGetSourcef},
+    {"alListenerf", (void*)alListenerf},
+    {"alListener3f", (void*)alListener3f},
+    {"alListenerfv", (void*)alListenerfv},
+    {"alDistanceModel", (void*)alDistanceModel},
+    {"alDopplerFactor", (void*)alDopplerFactor},
+    {"alDopplerVelocity", (void*)alDopplerVelocity},
+    {"alSpeedOfSound", (void*)alSpeedOfSound},
+    {"alGetEnumValue", (void*)alGetEnumValue},
+    {"alGetProcAddress", (void*)alGetProcAddress},
+    {"alIsEnabled", (void*)alIsEnabled},
+    {"alEnable", (void*)alEnable},
+    {"alDisable", (void*)alDisable},
+    {"alFinish", (void*)alFinish},
+    {"alFlush", (void*)alFlush},
     // ── zlib (linked; games decompress their own assets with it) ───────────
     {"inflate",         (void*)inflate},
     {"inflateEnd",      (void*)inflateEnd},
