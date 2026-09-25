@@ -1999,27 +1999,28 @@ static bool patchFarCrySetVariableMissingCVar(LoadedSo* so, uint8_t* stage_base,
     }
 
     const uint64_t fn_off = static_cast<uint64_t>(fn_addr - image_base);
-    const size_t scan_bytes = std::min<size_t>(0x400, alloc_size - fn_off);
-    uint8_t* code = stage_base + min_vaddr + fn_off;
 
-    // Locate the literal used by the exact missing-CVar diagnostic:
-    //   "SetVariable invalid variable name \"%s\": no such variable found"
-    // The release Android binary keeps this string in the image, and the
-    // compiler materializes its address with ADRP+ADD immediately before the
-    // RaiseError call.
-    constexpr char kNeedle[] = "SetVariable invalid variable name";
-    const size_t needle_len = sizeof(kNeedle) - 1;
+    // Do not assume the diagnostic string is close to the function. On this
+    // build .rodata can be separated substantially from .text, and the old
+    // 0x400-byte window made the patch silently miss the real xref.
+    const size_t scan_bytes = std::min<size_t>(0x2000, alloc_size - fn_off);
+    uint8_t* code = stage_base + min_vaddr + fn_off;
     uint8_t* image = stage_base + min_vaddr;
+
+    // Exact diagnostic emitted by CScriptObjectGame::SetVariable():
+    //   SetVariable invalid variable name "%s": no such variable found
+    constexpr char kPrefix[] = "SetVariable invalid variable name";
+    constexpr char kSuffix[] = "no such variable found";
+    const size_t prefix_len = sizeof(kPrefix) - 1;
     size_t string_off = SIZE_MAX;
 
-    for (size_t i = 0; i + needle_len + 1 <= alloc_size; ++i) {
-        if (std::memcmp(image + i, kNeedle, needle_len) == 0) {
-            // Prefer the full diagnostic literal, not another unrelated prefix.
-            if (std::strstr(reinterpret_cast<const char*>(image + i),
-                            "no such variable found") != nullptr) {
-                string_off = i;
-                break;
-            }
+    for (size_t i = 0; i + prefix_len + 1 <= alloc_size; ++i) {
+        if (std::memcmp(image + i, kPrefix, prefix_len) != 0)
+            continue;
+        const char* s = reinterpret_cast<const char*>(image + i);
+        if (std::strstr(s, kSuffix) != nullptr) {
+            string_off = i;
+            break;
         }
     }
 
@@ -2041,6 +2042,14 @@ static bool patchFarCrySetVariableMissingCVar(LoadedSo* so, uint8_t* stage_base,
         return (w & 0xffc00000u) == 0x91000000u;
     };
 
+    auto is_adr = [](uint32_t w) {
+        return (w & 0x9f000000u) == 0x10000000u;
+    };
+
+    auto is_ldr_x_imm = [](uint32_t w) {
+        return (w & 0xffc00000u) == 0xf9400000u;
+    };
+
     auto is_bl = [](uint32_t w) {
         return (w & 0xfc000000u) == 0x94000000u;
     };
@@ -2048,54 +2057,110 @@ static bool patchFarCrySetVariableMissingCVar(LoadedSo* so, uint8_t* stage_base,
     const uintptr_t image_addr = reinterpret_cast<uintptr_t>(image);
     const uintptr_t string_addr = image_addr + string_off;
 
-    for (size_t off = 0; off + 12 <= scan_bytes; off += 4) {
-        const uint32_t adrp = *reinterpret_cast<const uint32_t*>(code + off);
-        const uint32_t add  = *reinterpret_cast<const uint32_t*>(code + off + 4);
-        if (!is_adrp(adrp) || !is_add_imm(add))
-            continue;
-
-        const unsigned rd  = adrp & 31u;
-        const unsigned rn  = (add >> 5) & 31u;
-        if (rd != rn)
-            continue;
-
-        const uint64_t imm21 =
-            (((uint64_t)((adrp >> 5) & 0x7ffffu)) << 2) |
-            ((uint64_t)((adrp >> 29) & 0x3u));
-        const int64_t page_delta = sign_extend(imm21, 21) << 12;
-        const uintptr_t pc = reinterpret_cast<uintptr_t>(code + off);
-        const uintptr_t page = pc & ~static_cast<uintptr_t>(0xfff);
-        const uintptr_t target_page =
-            static_cast<uintptr_t>(static_cast<int64_t>(page) + page_delta);
-        const uint64_t imm12 = (add >> 10) & 0xfffu;
-        const uintptr_t literal_addr = target_page + imm12;
-
-        if (literal_addr != string_addr)
-            continue;
-
-        // The first BL after loading the diagnostic string is the
-        // CScriptSystem::RaiseError() call in the missing-CVar block.
-        for (size_t boff = off + 8; boff + 4 <= scan_bytes && boff <= off + 0x40; boff += 4) {
+    auto patchNextRaiseError = [&](size_t ref_off, const char* mode) -> bool {
+        // The diagnostic address setup is immediately before the error call.
+        // Keep the window deliberately local so we cannot accidentally patch an
+        // unrelated BL later in SetVariable().
+        const size_t end_off = std::min(scan_bytes, ref_off + 0x80);
+        for (size_t boff = ref_off + 4; boff + 4 <= end_off; boff += 4) {
             uint32_t* call = reinterpret_cast<uint32_t*>(code + boff);
             if (!is_bl(*call))
                 continue;
 
             const uint32_t old = *call;
-            *call = 0xd503201fu; // NOP — keep the existing EndFunctionNull() path.
+            *call = 0xd503201fu; // NOP; EndFunctionNull() remains unchanged.
             armICacheInvalidate(call, 4);
 
             compatLogFmt(
                 "FARCRY SETVARIABLE: suppressed missing-CVar RaiseError at +0x%llx "
-                "(SetVariable +0x%llx) old=%08x new=%08x target_literal=+0x%llx",
+                "(SetVariable +0x%llx, ref=%s) old=%08x new=%08x literal=+0x%llx",
                 (unsigned long long)(fn_off + boff),
                 (unsigned long long)boff,
+                mode,
                 old, *call,
                 (unsigned long long)string_off);
             return true;
         }
+        return false;
+    };
+
+    // Resolve a nearby literal-address producer. Cover the forms emitted by
+    // clang/gcc for PIC AArch64 code:
+    //   ADRP + ADD   => address of local .rodata
+    //   ADRP + LDR   => pointer through GOT
+    //   ADR          => nearby literal
+    for (size_t off = 0; off + 8 <= scan_bytes; off += 4) {
+        const uint32_t a = *reinterpret_cast<const uint32_t*>(code + off);
+        const uint32_t b = *reinterpret_cast<const uint32_t*>(code + off + 4);
+
+        // ADRP; ADD Xn, Xn, #imm
+        if (is_adrp(a) && is_add_imm(b)) {
+            const unsigned rd = a & 31u;
+            const unsigned rn = (b >> 5) & 31u;
+            if (rd == rn) {
+                const uint64_t imm21 =
+                    (((uint64_t)((a >> 5) & 0x7ffffu)) << 2) |
+                    ((uint64_t)((a >> 29) & 0x3u));
+                const int64_t page_delta = sign_extend(imm21, 21) << 12;
+                const uintptr_t pc = reinterpret_cast<uintptr_t>(code + off);
+                const uintptr_t page = pc & ~static_cast<uintptr_t>(0xfff);
+                const uintptr_t target_page =
+                    static_cast<uintptr_t>(static_cast<int64_t>(page) + page_delta);
+                const uint64_t imm12 = (b >> 10) & 0xfffu;
+                const uintptr_t literal_addr = target_page + imm12;
+
+                if (literal_addr == string_addr &&
+                    patchNextRaiseError(off, "ADRP+ADD"))
+                    return true;
+            }
+        }
+
+        // ADRP; LDR Xn, [Xn, #imm] — load a pointer from a GOT slot.
+        if (is_adrp(a) && is_ldr_x_imm(b)) {
+            const unsigned rd = a & 31u;
+            const unsigned rn = (b >> 5) & 31u;
+            if (rd == rn) {
+                const uint64_t imm21 =
+                    (((uint64_t)((a >> 5) & 0x7ffffu)) << 2) |
+                    ((uint64_t)((a >> 29) & 0x3u));
+                const int64_t page_delta = sign_extend(imm21, 21) << 12;
+                const uintptr_t pc = reinterpret_cast<uintptr_t>(code + off);
+                const uintptr_t page = pc & ~static_cast<uintptr_t>(0xfff);
+                const uintptr_t target_page =
+                    static_cast<uintptr_t>(static_cast<int64_t>(page) + page_delta);
+                const uint64_t imm12 = (b >> 10) & 0xfffu;
+                const uintptr_t got_addr = target_page + (imm12 << 3);
+
+                if (got_addr >= image_addr &&
+                    got_addr + sizeof(uint64_t) <= image_addr + alloc_size) {
+                    const uint64_t loaded = *reinterpret_cast<const uint64_t*>(got_addr);
+                    if (loaded == string_addr &&
+                        patchNextRaiseError(off, "ADRP+LDR"))
+                        return true;
+                }
+            }
+        }
+
+        // ADR Xn, label — direct PC-relative address of a nearby literal.
+        if (is_adr(a)) {
+            const uint64_t imm21 =
+                (((uint64_t)((a >> 5) & 0x7ffffu)) << 2) |
+                ((uint64_t)((a >> 29) & 0x3u));
+            const int64_t delta = sign_extend(imm21, 21);
+            const uintptr_t pc = reinterpret_cast<uintptr_t>(code + off);
+            const uintptr_t literal_addr =
+                static_cast<uintptr_t>(static_cast<int64_t>(pc) + delta);
+
+            if (literal_addr == string_addr &&
+                patchNextRaiseError(off, "ADR"))
+                return true;
+        }
     }
 
-    compatLog("FARCRY SETVARIABLE: diagnostic string found, but RaiseError call was not located");
+    compatLogFmt(
+        "FARCRY SETVARIABLE: diagnostic string found at +0x%llx, "
+        "but no code reference/RaiseError was located in SetVariable",
+        (unsigned long long)string_off);
     return false;
 }
 
