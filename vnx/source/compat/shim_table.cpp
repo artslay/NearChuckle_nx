@@ -5229,6 +5229,7 @@ static void w_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
     glScissor(x + p.content_x, y + p.content_y, w, h);
 }
 
+static bool nearLooksLikeClientPointer(const void* pointer);
 static void nearLogWaterDrawState();
 static bool nearPrepareTextureShaderEmulation();
 static void nearFinishTextureShaderEmulation();
