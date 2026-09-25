@@ -5241,6 +5241,17 @@ static void w_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
     if (emu) nearFinishTextureShaderEmulation();
 }
 
+struct NearVertexPointerState {
+    GLint size = 0;
+    GLenum type = 0;
+    GLsizei stride = 0;
+    uintptr_t pointer = 0;
+    GLint buffer = 0;
+    bool clientPointer = false;
+};
+
+static NearVertexPointerState g_nearVertexPointerState;
+
 static unsigned g_nearDrawElementsDiagCalls = 0;
 static unsigned g_nearDrawContentDiagCalls = 0;
 
@@ -9077,17 +9088,6 @@ static void shim_glDisableClientStateCompat(GLenum array) {
 }
 
 static unsigned g_nearVertexPointerDiagCalls = 0;
-
-struct NearVertexPointerState {
-    GLint size = 0;
-    GLenum type = 0;
-    GLsizei stride = 0;
-    uintptr_t pointer = 0;
-    GLint buffer = 0;
-    bool clientPointer = false;
-};
-
-static NearVertexPointerState g_nearVertexPointerState;
 
 static void shim_glVertexPointerCompat(GLint size, GLenum type, GLsizei stride,
                                         const void* pointer) {
