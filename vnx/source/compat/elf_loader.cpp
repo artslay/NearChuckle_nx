@@ -231,6 +231,7 @@ static int g_unresolved_count = 0;
 // dlopen may provide them, and the existing resolver's lookup semantics must
 // remain unchanged.
 static std::unordered_map<std::string, void*> g_symbol_cache;
+static std::unordered_map<std::string, void*> g_exported_symbols;
 int elfGetUnresolvedCount() { return g_unresolved_count; }
 
 // Poison value written into any relocation slot whose symbol we couldn't
@@ -480,7 +481,6 @@ void elfRunCtors(LoadedSo* so, ProgressCb cb) {
 
 // All successfully loaded .so files (for cross-library symbol resolution)
 static std::vector<LoadedSo*> g_loaded_sos;
-static std::unordered_map<std::string, void*> g_exported_symbols;
 
 
 // Describe an arbitrary code address as "<so> +0x<off> sym=<name>" (or mark it
