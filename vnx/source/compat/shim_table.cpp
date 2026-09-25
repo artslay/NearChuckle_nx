@@ -7572,27 +7572,6 @@ struct NearTextureShaderDrawRestore {
 
 static thread_local NearTextureShaderDrawRestore g_nearTextureShaderDrawRestore;
 
-// Far Cry's Android OpenGL renderer gates its NV texture-shader path on the
-// extension string, not merely RFT_HW_TS. Mesa/Zink does not expose the legacy
-// GL_NV_texture_shader extension, but the compatibility layer implements the
-// texture-shader entry points below. Advertise only the base extension so the
-// renderer actually executes that path; do not claim NV_texture_shader2/3.
-static const GLubyte* shim_glGetStringCompat(GLenum name) {
-    const GLubyte* real = glGetString(name);
-    if (name != GL_EXTENSIONS || !real)
-        return real;
-
-    static thread_local std::string extensions;
-    extensions.assign(reinterpret_cast<const char*>(real));
-    const char* ext = "GL_NV_texture_shader";
-    if (extensions.find(ext) == std::string::npos) {
-        if (!extensions.empty() && extensions.back() != ' ')
-            extensions.push_back(' ');
-        extensions += ext;
-    }
-    compatLog("GL compat: advertising GL_NV_texture_shader to CryRenderer");
-    return reinterpret_cast<const GLubyte*>(extensions.c_str());
-}
 
 static int nearTextureShaderActiveUnit() {
     GLint active = (GLint)GL_TEXTURE0;
@@ -10063,7 +10042,7 @@ static const ShimEntry g_shims[] = {
     {"glGetShaderInfoLog",  (void*)glGetShaderInfoLog},
     {"glGetShaderPrecisionFormat",(void*)glGetShaderPrecisionFormat},
     {"glGetShaderSource",   (void*)glGetShaderSource},
-    {"glGetString",         (void*)shim_glGetStringCompat},
+    {"glGetString",         (void*)glGetString},
     {"glGetTexParameterfv", (void*)glGetTexParameterfv},
     {"glGetTexParameteriv", (void*)glGetTexParameteriv},
     {"glGetUniformfv",      (void*)glGetUniformfv},
