@@ -89,6 +89,7 @@ float g_listener_gain=1.0f;
 unsigned g_buffer_log_count=0;
 unsigned g_queue_log_count=0;
 unsigned g_play_log_count=0;
+unsigned g_unqueue_log_count=0;
 
 Buffer* getBuffer(ALuint id) {
     return id<kMaxBuffers && id ? (g_buffers[id].used ? &g_buffers[id] : nullptr) : nullptr;
@@ -164,8 +165,16 @@ void mixSource(Source& s, float* dst, size_t frames) {
         if(s.current>=s.queue.size()) {
             if(s.looping && !s.queue.empty()) {
                 s.current=0; s.processed=0; s.sample_pos=0;
+            } else if(s.queue.empty()) {
+                // True OpenAL streaming semantics: stop only after the
+                // application has actually removed all processed buffers.
+                s.state=AL_STOPPED;
+                s.sample_pos=0;
+                break;
             } else {
-                s.state=AL_STOPPED; s.sample_pos=0;
+                // The movie streamer may be between QueueBuffers and
+                // UnqueueBuffers calls. Keep the source in PLAYING state so
+                // a newly queued buffer can continue without a stop/start gap.
                 break;
             }
         }
@@ -407,9 +416,10 @@ void alSourcePlay(ALuint id){
     if(s->queue.empty()){mutexUnlock(&g_audio.lock);setError(AL_INVALID_OPERATION);return;}
     s->state=AL_PLAYING;
     if(g_play_log_count<16) {
-        compatLogFmt("AUDIO: alSourcePlay[%u] source=%u queued=%u looping=%d",
+        compatLogFmt("AUDIO: alSourcePlay[%u] source=%u queued=%u looping=%d gain=%.3f pitch=%.3f",
                      g_play_log_count, static_cast<unsigned>(id),
-                     static_cast<unsigned>(s->queue.size()), s->looping ? 1 : 0);
+                     static_cast<unsigned>(s->queue.size()), s->looping ? 1 : 0,
+                     s->gain, s->pitch);
         ++g_play_log_count;
     }
     mutexUnlock(&g_audio.lock);
@@ -497,6 +507,12 @@ void alSourceUnqueueBuffers(ALuint id,ALsizei n,ALuint*v){
     Source*s=getSource(id);if(!s||n<0||(!v&&n)){setError(AL_INVALID_VALUE);return;}
     mutexLock(&g_audio.lock);
     const size_t take=std::min(static_cast<size_t>(n),s->processed);
+    if(g_unqueue_log_count<16) {
+        compatLogFmt("AUDIO: alSourceUnqueueBuffers[%u] source=%u requested=%d processed=%u queue=%u",
+                     g_unqueue_log_count, static_cast<unsigned>(id), static_cast<int>(n),
+                     static_cast<unsigned>(s->processed), static_cast<unsigned>(s->queue.size()));
+        ++g_unqueue_log_count;
+    }
     for(size_t i=0;i<take;i++)v[i]=s->queue[i];
     if(take){s->queue.erase(s->queue.begin(),s->queue.begin()+static_cast<ptrdiff_t>(take));s->processed-=take;s->current=s->current>=take?s->current-take:0;}
     mutexUnlock(&g_audio.lock);
