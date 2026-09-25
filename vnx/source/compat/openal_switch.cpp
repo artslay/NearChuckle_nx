@@ -92,6 +92,8 @@ unsigned g_buffer_log_count=0;
 unsigned g_queue_log_count=0;
 unsigned g_play_log_count=0;
 unsigned g_unqueue_log_count=0;
+unsigned g_listener_log_count=0;
+unsigned g_mix_log_count=0;
 
 Buffer* getBuffer(ALuint id) {
     return id<kMaxBuffers && id ? (g_buffers[id].used ? &g_buffers[id] : nullptr) : nullptr;
@@ -201,7 +203,29 @@ void mixBlock(int16_t* out) {
     float mix[kFrames*2]={};
     mutexLock(&g_audio.lock);
     for(auto& s:g_sources) if(s.used) mixSource(s,mix,kFrames);
+
+    if(g_mix_log_count<24) {
+        float peak=0.0f, avg=0.0f;
+        for(size_t i=0;i<kFrames*2;i++) {
+            const float a=std::fabs(mix[i]);
+            peak=std::max(peak,a);
+            avg+=a;
+        }
+        avg/=(kFrames*2);
+        Source& s=g_sources[32];
+        compatLogFmt("AUDIO: mix[%u] peak=%d avg=%d src32 state=%d queue=%u processed=%u current=%u gain=%.3f listener=%.3f",
+                     g_mix_log_count,
+                     static_cast<int>(std::lrintf(peak*32767.0f)),
+                     static_cast<int>(std::lrintf(avg*32767.0f)),
+                     static_cast<int>(s.state),
+                     static_cast<unsigned>(s.queue.size()),
+                     static_cast<unsigned>(s.processed),
+                     static_cast<unsigned>(s.current),
+                     s.gain, g_listener_gain);
+        ++g_mix_log_count;
+    }
     mutexUnlock(&g_audio.lock);
+
     for(size_t i=0;i<kFrames*2;i++)
         out[i]=static_cast<int16_t>(std::lrintf(std::clamp(mix[i],-1.0f,1.0f)*32767.0f));
 }
@@ -570,7 +594,15 @@ void alGetSourcef(ALuint id,ALenum p,ALfloat*v){
     else {mutexUnlock(&g_audio.lock);setError(AL_INVALID_ENUM);return;}
     mutexUnlock(&g_audio.lock);
 }
-void alListenerf(ALenum p,ALfloat v){if(p==AL_GAIN)g_listener_gain=std::max(0.0f,v);else setError(AL_INVALID_ENUM);}
+void alListenerf(ALenum p,ALfloat v){
+    if(p==AL_GAIN) {
+        g_listener_gain=std::max(0.0f,v);
+        if(g_listener_log_count<8) {
+            compatLogFmt("AUDIO: alListenerf gain=%.3f", g_listener_gain);
+            ++g_listener_log_count;
+        }
+    } else setError(AL_INVALID_ENUM);
+}
 void alListener3f(ALenum p,ALfloat a,ALfloat b,ALfloat c){
     if(p==AL_POSITION){g_listener_pos[0]=a;g_listener_pos[1]=b;g_listener_pos[2]=c;}
     else if(p!=AL_VELOCITY&&p!=AL_DIRECTION) setError(AL_INVALID_ENUM);
