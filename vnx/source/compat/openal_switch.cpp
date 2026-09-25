@@ -6,6 +6,8 @@
 #include <cstring>
 #include <vector>
 
+extern void compatLogFmt(const char* fmt, ...);
+
 struct ALCdevice {};
 struct ALCcontext { ALCdevice* device; };
 
@@ -195,7 +197,15 @@ void audioThread(void*) {
 bool startAudio() {
     if(g_audio.started.load(std::memory_order_relaxed)) return true;
     Result rc=audoutInitialize();
-    if(R_FAILED(rc)) { setAlcError(ALC_INVALID_DEVICE); return false; }
+    if(R_FAILED(rc)) {
+        compatLogFmt("AUDIO: audoutInitialize FAILED rc=0x%08x", static_cast<unsigned>(rc));
+        setAlcError(ALC_INVALID_DEVICE);
+        return false;
+    }
+
+    compatLogFmt("AUDIO: audout initialized rate=%u channels=%u format=%d",
+                 audoutGetSampleRate(), audoutGetChannelCount(),
+                 static_cast<int>(audoutGetPcmFormat()));
 
     std::memset(g_audio.pcm,0,sizeof(g_audio.pcm));
     for(size_t i=0;i<kOutBuffers;i++) {
@@ -207,7 +217,13 @@ bool startAudio() {
         if(R_FAILED(rc)) { audoutExit(); setAlcError(ALC_INVALID_DEVICE); return false; }
     }
     rc=audoutStartAudioOut();
-    if(R_FAILED(rc)) { audoutExit(); setAlcError(ALC_INVALID_DEVICE); return false; }
+    if(R_FAILED(rc)) {
+        compatLogFmt("AUDIO: audoutStartAudioOut FAILED rc=0x%08x", static_cast<unsigned>(rc));
+        audoutExit();
+        setAlcError(ALC_INVALID_DEVICE);
+        return false;
+    }
+    compatLog("AUDIO: audout playback started");
 
     g_audio.stop.store(false,std::memory_order_relaxed);
     rc=threadCreate(&g_audio.thread,audioThread,nullptr,nullptr,0x4000,0x2B,-2);
