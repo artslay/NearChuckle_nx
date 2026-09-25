@@ -3810,8 +3810,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (videoIo)
             g_near_video_open_failed = 1;
 
-        if (!shaderIo)
-            compatLogFmt("fopen FAIL: %s (mode=%s)",
+        if (videoIo)
+            compatLogFmt("VIDEO OPEN FAIL: %s (mode=%s)",
                          ioPath ? ioPath : "?", mode ? mode : "?");
         return f;
     }
@@ -8438,15 +8438,15 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
         format == GL_RGBA &&
         type == GL_BYTE &&
         pixels) {
-        compatLogFmt(
-            "GL COMPAT: DSDT byte texture %s %dx%d -> RGB8_SNORM "
-            "(RGBA source stride)",
-            traceName.c_str(), width, height);
+        // Keep routine DSDT compatibility silent; GL errors are logged below.
 
         glTexImage2D(target, level, (GLint)GL_RGB8_SNORM,
                      width, height, border,
                      GL_RGBA, GL_BYTE, pixels);
         const GLenum uploadError = glGetError();
+        if (uploadError != GL_NO_ERROR)
+            compatLogFmt("GL COMPAT ERROR: DSDT byte texture %s glerr=0x%x",
+                         traceName.c_str(), (unsigned)uploadError);
         nearRememberTextureDiagName((GLuint)textureBinding, traceName);
         if (traceThis) {
             compatPakLog(
@@ -8471,13 +8471,14 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
         const GLenum mappedInternal = mag ? GL_RGB32F : GL_RG32F;
         const GLenum mappedFormat = mag ? GL_RGB : GL_RG;
 
-        compatLogFmt("GL COMPAT: DSDT float texture %s %dx%d -> internal=0x%x format=0x%x",
-                     mag ? "MAG" : "DSDT", width, height,
-                     (unsigned)mappedInternal, (unsigned)mappedFormat);
+        // Keep routine DSDT compatibility silent; GL errors are logged below.
 
         glTexImage2D(target, level, (GLint)mappedInternal, width, height, border,
                      mappedFormat, type, pixels);
         const GLenum uploadError = glGetError();
+        if (uploadError != GL_NO_ERROR)
+            compatLogFmt("GL COMPAT ERROR: DSDT float texture %s glerr=0x%x",
+                         traceName.c_str(), (unsigned)uploadError);
         nearRememberTextureDiagName((GLuint)textureBinding, traceName);
         if (traceThis) {
             compatPakLog(
@@ -8546,19 +8547,10 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
     }
 
     if (convertedPixels) {
-        const unsigned normalizeIndex =
-            g_legacyTextureNormalizeCalls.fetch_add(
-                1, std::memory_order_relaxed) + 1;
-        if (normalizeIndex <= 128) {
-            compatLogFmt(
-                "GL COMPAT: legacy texture normalized[%u] name=%s "
-                "original_internal=0x%x original_format=0x%x "
-                "mapped_internal=0x%x mapped_format=0x%x size=%dx%d err=0x%x",
-                normalizeIndex, traceName.c_str(),
-                (unsigned)(GLenum)internalformat, (unsigned)format,
-                (unsigned)GL_RGBA8, (unsigned)GL_RGBA,
-                width, height, (unsigned)uploadError);
-        }
+        g_legacyTextureNormalizeCalls.fetch_add(1, std::memory_order_relaxed);
+        if (uploadError != GL_NO_ERROR)
+            compatLogFmt("GL COMPAT ERROR: legacy texture normalization name=%s glerr=0x%x",
+                         traceName.c_str(), (unsigned)uploadError);
         std::free(convertedPixels);
         convertedPixels = nullptr;
     }
