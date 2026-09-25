@@ -26,6 +26,59 @@ static bool g_log_initialized = false;
 static bool g_log_closed = false;
 static LoadedSo* g_game_so = nullptr;
 
+static u64 g_startup_timer_tick = 0;
+static bool g_startup_timing_fs = false;
+static bool g_startup_timing_stream = false;
+static bool g_startup_timing_script = false;
+static bool g_startup_timing_renderer = false;
+static bool g_startup_timing_main_loop = false;
+
+void compatStartupTimerBegin() {
+    g_startup_timer_tick = armGetSystemTick();
+    g_startup_timing_fs = false;
+    g_startup_timing_stream = false;
+    g_startup_timing_script = false;
+    g_startup_timing_renderer = false;
+    g_startup_timing_main_loop = false;
+}
+
+static void startupTimingMaybeLog(const char* msg) {
+    if (!g_startup_timer_tick || !msg)
+        return;
+
+    const char* label = nullptr;
+    bool* once = nullptr;
+
+    if (!g_startup_timing_fs && std::strstr(msg, "File System Initialization")) {
+        label = "File System Initialization";
+        once = &g_startup_timing_fs;
+    } else if (!g_startup_timing_stream && std::strstr(msg, "Stream Engine Initialization")) {
+        label = "Stream Engine Initialization";
+        once = &g_startup_timing_stream;
+    } else if (!g_startup_timing_script && std::strstr(msg, "Script System Initialization")) {
+        label = "Script System Initialization";
+        once = &g_startup_timing_script;
+    } else if (!g_startup_timing_renderer && std::strstr(msg, "InitRenderer")) {
+        label = "InitRenderer";
+        once = &g_startup_timing_renderer;
+    } else if (!g_startup_timing_main_loop && std::strstr(msg, "CXGame::Run: entered main game loop")) {
+        label = "CXGame::Run: entered main game loop";
+        once = &g_startup_timing_main_loop;
+    }
+
+    if (!label || !once)
+        return;
+
+    *once = true;
+    const u64 elapsed_ms =
+        (armGetSystemTick() - g_startup_timer_tick) * 1000 / armGetSystemTickFreq();
+
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), "STARTUP TIMING: %s = %llu ms",
+                  label, static_cast<unsigned long long>(elapsed_ms));
+    log_write(buf, label[0] != 'C');
+}
+
 static bool g_boot_console = false;
 static const devoptab_t* g_boot_stdout_dotab = nullptr;
 static unsigned g_boot_ui_pending_lines = 0;
@@ -536,6 +589,11 @@ void compatLog(const char* msg) {
                 std::strncmp(msg, "GL PIXELSTORE", 13) == 0);
 
     mutexLock(&g_log_lock);
+
+    // Emit a one-time elapsed timestamp for the important CryEngine startup
+    // milestones. This runs inside the existing logger lock and adds no I/O
+    // beyond the same buffered log write path.
+    startupTimingMaybeLog(msg);
 
     // High-frequency compatibility diagnostics are omitted from both the
     // startup console and file log, but the underlying operations still run.
