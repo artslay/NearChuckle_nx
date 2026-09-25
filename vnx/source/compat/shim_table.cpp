@@ -6796,13 +6796,6 @@ static inline bool isNearDsdtFormat(GLenum format) {
     return format == kNearGL_DSDT_NV || format == kNearGL_DSDT_MAG_NV;
 }
 
-static inline bool isNearS3tcInternalFormat(GLenum format) {
-    return format == GL_COMPRESSED_RGB_S3TC_DXT1_EXT ||
-           format == GL_COMPRESSED_RGBA_S3TC_DXT1_EXT ||
-           format == GL_COMPRESSED_RGBA_S3TC_DXT3_EXT ||
-           format == GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
-}
-
 static inline bool isNearDdsDdtTextureName(const std::string& name) {
     return name.find("_ddt") != std::string::npos;
 }
@@ -7856,72 +7849,6 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
                 (unsigned)legacyHilo.format,
                 (unsigned)legacyHilo.type, (unsigned)err);
         return;
-    }
-
-    // Some Android CryEngine paths ask for an S3TC internal format while
-    // passing the already-decoded 8-bit image as BGRA/RGBA. That is valid in
-    // the Android/gl4es path, but it is not the compressed upload representation
-    // we want to expose to Zink here. Preserve the pixels as RGBA8 instead.
-    if (isNearS3tcInternalFormat((GLenum)internalformat) &&
-        type == GL_UNSIGNED_BYTE &&
-        unpackBuffer == 0 &&
-        pixels &&
-        width > 0 && height > 0 &&
-        (format == GL_RGBA || format == GL_BGRA ||
-         format == GL_RGB || format == GL_BGR)) {
-        const GLint savedAlignment = g_glUnpackAlignment;
-        const GLint savedRowLength = g_glUnpackRowLength;
-        const GLint savedSkipPixels = g_glUnpackSkipPixels;
-        const GLint savedSkipRows = g_glUnpackSkipRows;
-
-        void* convertedPixels = nullptr;
-        GLenum mappedFormat = format;
-        if (nearPrepareLegacyRgbaPixels(
-                width, height, format, type, pixels, unpackBuffer,
-                convertedPixels, mappedFormat)) {
-            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-#if defined(GL_UNPACK_ROW_LENGTH)
-            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-#endif
-#if defined(GL_UNPACK_SKIP_PIXELS)
-            glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-#endif
-#if defined(GL_UNPACK_SKIP_ROWS)
-            glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
-#endif
-
-            glTexImage2D(target, level, (GLint)GL_RGBA8,
-                         width, height, border,
-                         mappedFormat, GL_UNSIGNED_BYTE, convertedPixels);
-            const GLenum uploadError = glGetError();
-            nearUploadUnpackReset(savedAlignment, savedRowLength,
-                                  savedSkipPixels, savedSkipRows);
-
-            compatLogFmt(
-                "GL COMPAT: uncompressed pixels for S3TC internal=0x%x "
-                "mapped to RGBA8 format=0x%x size=%dx%d err=0x%x",
-                (unsigned)(GLenum)internalformat,
-                (unsigned)mappedFormat, width, height,
-                (unsigned)uploadError);
-
-            std::free(convertedPixels);
-            nearRememberTextureDiagName((GLuint)textureBinding, traceName);
-            if (traceThis) {
-                compatPakLog(
-                    "GL TEX RESULT[%u]: name=%s path=S3TC-uncompressed->RGBA8 "
-                    "internal=0x%x format=0x%x type=0x%x glerr=0x%x",
-                    traceIndex, traceName.c_str(),
-                    (unsigned)GL_RGBA8, (unsigned)mappedFormat,
-                    (unsigned)GL_UNSIGNED_BYTE, (unsigned)uploadError);
-            }
-            nearVerifyUploadedTexture(
-                traceName, target, level, width, height,
-                mappedFormat, GL_UNSIGNED_BYTE, nullptr, unpackBuffer,
-                uploadError);
-            return;
-        }
-        nearUploadUnpackReset(savedAlignment, savedRowLength,
-                              savedSkipPixels, savedSkipRows);
     }
 
     // DSDT_MAG fallback from the Android renderer stores three signed
