@@ -384,69 +384,66 @@ void elfRunCtors(LoadedSo* so, ProgressCb cb) {
             ok++;
         } else {
             g_in_recover = false;
-            char sym_buf[160];
-            uint64_t fault_vaddr = g_recover_pc - (uint64_t)so->base;
-            elfNearestSym(so, fault_vaddr, sym_buf, sizeof(sym_buf));
-            // The PC is inside our own newlib (_free_r), so the question that
-            // matters is who called it — x30 at fault time answers that, and
-            // elfDescribePc resolves it against whichever module it lands in.
-            // Without this the caller is unknowable: the shim's free() logged
-            // nothing, so either it was bypassed or its checks passed, and the
-            // return address is what tells the two apart.
-            char lr_buf[192];
-            elfDescribePc(g_recover_lr, lr_buf, sizeof(lr_buf));
 
-            // The block being freed. Between-constructor walks come back clean
-            // with full coverage, so the damage is made and consumed inside one
-            // constructor and only exists at this instant — this is the one
-            // moment it can be looked at.
-            char blk[220] = "";
-            uint64_t mem = g_recover_freearg;
-            if (mem && (mem & 15) == 0 && strcmp(shimAddrRegion(mem), "heap") == 0) {
-                const uint64_t* h = (const uint64_t*)(mem - 16);
-                uint64_t psz = h[0], szf = h[1];
-                snprintf(blk, sizeof(blk),
-                         " | freeing %p: prev_size=0x%llx size=0x%llx PREV_INUSE=%d",
-                         (void*)mem, (unsigned long long)psz,
-                         (unsigned long long)(szf & ~7ULL), (int)(szf & 1));
-            } else if (mem) {
-                snprintf(blk, sizeof(blk), " | freeing %p (%s)",
-                         (void*)mem, shimAddrRegion(mem));
-            }
-            compatLogFmt("ELF: ctor[%zu/%zu] FAULT sig=%d esr=0x%08x pc=%p far=%p sym=%s "
-                         "lr=%p (%s) x0=%p x6=%p(%s) x8=%p — skipped",
-                         k + 1, n, g_recover_sig, g_recover_esr,
-                         (void*)g_recover_pc, (void*)g_recover_far, sym_buf,
-                         (void*)g_recover_lr, lr_buf,
-                         (void*)g_recover_x0,
-                         (void*)g_recover_x6, shimAddrRegion(g_recover_x6),
-                         (void*)g_recover_x8);
-            if (blk[0]) compatLog(blk);
-            // Once only: if the freed address is the end of the heap, this is
-            // exhaustion rather than damage, and every fix aimed at corruption
-            // has been aimed at the wrong thing.
-            static bool logged_extent = false;
-            if (!logged_extent) {
-                logged_extent = true;
-                uint64_t lo = 0, hi = 0, brk = 0;
-                shimHeapExtent(&lo, &hi, &brk);
-                compatLogFmt("ELF:  | heap region %p..%p (%llu MB), break %p, "
-                             "%lld MB left; freed ptr %s the end",
-                             (void*)lo, (void*)hi,
-                             (unsigned long long)((hi - lo) / 1048576),
-                             (void*)brk,
-                             (long long)((int64_t)(hi - brk) / 1048576),
-                             (mem == hi) ? "IS" : "is not");
-                compatLogFlush();
-            }
-            // Only the first few: 155 identical faults would bury the log, and
-            // they all come from the same place.
-            if (g_ctor_faults <= 3) logFaultBacktrace();
+            // A constructor fault is already recovered and the constructor is
+            // skipped. Detailed symbol/stack/heap forensics are extremely
+            // expensive when a broken Android library produces dozens or
+            // hundreds of identical faults during startup. Preserve the first
+            // three complete reports; after that only count the failure.
+            if (g_ctor_faults <= 3) {
+                char sym_buf[160];
+                uint64_t fault_vaddr = g_recover_pc - (uint64_t)so->base;
+                elfNearestSym(so, fault_vaddr, sym_buf, sizeof(sym_buf));
 
-            // Dump surrounding instructions to diagnose root cause
-            const uint32_t* insn = (const uint32_t*)(uintptr_t)g_recover_pc;
-            compatLogFmt("ELF: INSN: [pc-12]=%08x [pc-8]=%08x [pc-4]=%08x [pc]=%08x [pc+4]=%08x",
-                         insn[-3], insn[-2], insn[-1], insn[0], insn[1]);
+                char lr_buf[192];
+                elfDescribePc(g_recover_lr, lr_buf, sizeof(lr_buf));
+
+                char blk[220] = "";
+                uint64_t mem = g_recover_freearg;
+                if (mem && (mem & 15) == 0 && strcmp(shimAddrRegion(mem), "heap") == 0) {
+                    const uint64_t* h = (const uint64_t*)(mem - 16);
+                    uint64_t psz = h[0], szf = h[1];
+                    snprintf(blk, sizeof(blk),
+                             " | freeing %p: prev_size=0x%llx size=0x%llx PREV_INUSE=%d",
+                             (void*)mem, (unsigned long long)psz,
+                             (unsigned long long)(szf & ~7ULL), (int)(szf & 1));
+                } else if (mem) {
+                    snprintf(blk, sizeof(blk), " | freeing %p (%s)",
+                             (void*)mem, shimAddrRegion(mem));
+                }
+
+                compatLogFmt("ELF: ctor[%zu/%zu] FAULT sig=%d esr=0x%08x pc=%p far=%p sym=%s "
+                             "lr=%p (%s) x0=%p x6=%p(%s) x8=%p — skipped",
+                             k + 1, n, g_recover_sig, g_recover_esr,
+                             (void*)g_recover_pc, (void*)g_recover_far, sym_buf,
+                             (void*)g_recover_lr, lr_buf,
+                             (void*)g_recover_x0,
+                             (void*)g_recover_x6, shimAddrRegion(g_recover_x6),
+                             (void*)g_recover_x8);
+                if (blk[0]) compatLog(blk);
+
+                static bool logged_extent = false;
+                if (!logged_extent) {
+                    logged_extent = true;
+                    uint64_t lo = 0, hi = 0, brk = 0;
+                    shimHeapExtent(&lo, &hi, &brk);
+                    compatLogFmt("ELF:  | heap region %p..%p (%llu MB), break %p, "
+                                 "%lld MB left; freed ptr %s the end",
+                                 (void*)lo, (void*)hi,
+                                 (unsigned long long)((hi - lo) / 1048576),
+                                 (void*)brk,
+                                 (long long)((int64_t)(hi - brk) / 1048576),
+                                 (mem == hi) ? "IS" : "is not");
+                    compatLogFlush();
+                }
+
+                if (g_ctor_faults <= 3)
+                    logFaultBacktrace();
+
+                const uint32_t* insn = (const uint32_t*)(uintptr_t)g_recover_pc;
+                compatLogFmt("ELF: INSN: [pc-12]=%08x [pc-8]=%08x [pc-4]=%08x [pc]=%08x [pc+4]=%08x",
+                             insn[-3], insn[-2], insn[-1], insn[0], insn[1]);
+            }
             failed++;
         }
 
