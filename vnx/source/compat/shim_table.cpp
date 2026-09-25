@@ -5391,6 +5391,44 @@ static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
         }
     }
 
+    GLint vertexProgram = 0;
+    GLint fragmentProgram = 0;
+    const GLboolean vertexProgramEnabled = glIsEnabled(0x8620);   // GL_VERTEX_PROGRAM_ARB
+    const GLboolean fragmentProgramEnabled = glIsEnabled(0x8804); // GL_FRAGMENT_PROGRAM_ARB
+    glGetIntegerv(0x864A, &vertexProgram);   // GL_VERTEX_PROGRAM_BINDING_ARB
+    glGetIntegerv(0x8873, &fragmentProgram); // GL_FRAGMENT_PROGRAM_BINDING_ARB
+
+    compatLogFmt(
+        "GL DRAW VP STATE[%u]: vertex_enabled=%d vertex_program=%d "
+        "fragment_enabled=%d fragment_program=%d",
+        g_nearDrawContentDiagCalls + 1,
+        vertexProgramEnabled ? 1 : 0, (int)vertexProgram,
+        fragmentProgramEnabled ? 1 : 0, (int)fragmentProgram);
+
+    if (vertexProgramEnabled && vertexProgram > 0) {
+        static PFN_glGetProgramEnvParameterfvARB getEnv =
+            resolveGLProc<PFN_glGetProgramEnvParameterfvARB>(
+                "glGetProgramEnvParameterfvARB");
+        if (getEnv) {
+            GLfloat env[4] = {};
+            for (GLuint envIndex = 0; envIndex < 8; ++envIndex) {
+                getEnv(0x8620 /* GL_VERTEX_PROGRAM_ARB */, envIndex, env);
+                compatLogFmt(
+                    "GL DRAW VP ENV[%u]: program=%d env=%u %g,%g,%g,%g",
+                    g_nearDrawContentDiagCalls + 1, (int)vertexProgram,
+                    (unsigned)envIndex,
+                    (double)env[0], (double)env[1],
+                    (double)env[2], (double)env[3]);
+            }
+        } else {
+            compatLog("GL DRAW VP ENV: glGetProgramEnvParameterfvARB unavailable");
+        }
+    }
+
+    const GLenum drawGlError = glGetError();
+    compatLogFmt("GL DRAW VP STATE[%u]: gl_error_before_draw=0x%x",
+                 g_nearDrawContentDiagCalls + 1, (unsigned)drawGlError);
+
     compatLogFmt(
         "GL DRAW CONTENT[%u]: vbo=%d verts=%zu stride=%d ptrOff=0x%llx "
         "ibo=%d indices=%zu/%d indexOff=0x%llx min=%u max=%u bad=%u "
