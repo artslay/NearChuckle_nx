@@ -4379,6 +4379,8 @@ static void* fake_dlsym(void* handle, const char* sym) {
         strcmp(sym, "glCompressedTexImage2DARB") == 0 ||
         strcmp(sym, "glCompressedTexSubImage2DARB") == 0 ||
         strcmp(sym, "glVertexAttribPointerNV") == 0 ||
+        strcmp(sym, "glMapBufferARB") == 0 ||
+        strcmp(sym, "glUnmapBufferARB") == 0 ||
         strcmp(sym, "glEnableClientState") == 0 ||
         strcmp(sym, "glDisableClientState") == 0) {
         void* forced = shimResolve(sym);
@@ -4547,6 +4549,14 @@ static void* w_eglGetProcAddress(const char* name) {
     if (strcmp(name, "glVertexAttribPointerNV") == 0) {
         compatLog("EGL: eglGetProcAddress(glVertexAttribPointerNV) -> NV vertex attrib shim");
         return reinterpret_cast<void*>(shim_glVertexAttribPointerNV);
+    }
+    if (strcmp(name, "glMapBufferARB") == 0) {
+        compatLog("EGL: eglGetProcAddress(glMapBufferARB) -> VBO deformation shim");
+        return reinterpret_cast<void*>(shim_glMapBufferARB);
+    }
+    if (strcmp(name, "glUnmapBufferARB") == 0) {
+        compatLog("EGL: eglGetProcAddress(glUnmapBufferARB) -> VBO deformation shim");
+        return reinterpret_cast<void*>(shim_glUnmapBufferARB);
     }
     if (strcmp(name, "glEnableClientState") == 0) {
         compatLog("EGL: eglGetProcAddress(glEnableClientState) -> client-state shim");
