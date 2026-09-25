@@ -5265,7 +5265,7 @@ static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
                                        GLint vertexBufferSize, GLint indexBufferSize,
                                        GLenum type, GLsizei count, const void* indices) {
     if (g_nearDrawContentDiagCalls >= 8 || arrayBuffer <= 0 || elementBuffer <= 0 ||
-        vertexBufferSize <= 0 || indexBufferSize <= 0 || !indices)
+        vertexBufferSize <= 0 || indexBufferSize <= 0)
         return;
 
     const uintptr_t indexOffset = reinterpret_cast<uintptr_t>(indices);
