@@ -5199,15 +5199,21 @@ static void w_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
 }
 
 static void nearLogWaterDrawState();
+static bool nearPrepareTextureShaderEmulation();
+static void nearFinishTextureShaderEmulation();
 
 static void w_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
     nearLogWaterDrawState();
+    const bool emu = nearPrepareTextureShaderEmulation();
     glDrawArrays(mode, first, count);
+    if (emu) nearFinishTextureShaderEmulation();
 }
 
 static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
     nearLogWaterDrawState();
+    const bool emu = nearPrepareTextureShaderEmulation();
     glDrawElements(mode, count, type, indices);
+    if (emu) nearFinishTextureShaderEmulation();
 }
 
 static void w_glClear(GLbitfield mask) {
@@ -6006,7 +6012,6 @@ static DIR* stub_opendir(const char* path) {
         }
     }
 
-    if (path && ioPathStorage != path)
     // Shader directories are often present as empty loose mount points while
     // their real children live in FCData PAKs. Prefer the merged virtual view
     // for shader paths so the engine sees both sources, like Android CryPak.
@@ -7486,16 +7491,542 @@ static void shim_glTexParameterfv(GLenum target, GLenum pname, const GLfloat* pa
 
 static const char* nearArbProgramTargetName(GLenum target);
 
+// GL_NV_texture_shader compatibility state. Mesa/Zink exposes the
+// legacy ARB program path used by Far Cry but not the original NVIDIA texture
+// shader extension. Keep the extension state locally and emulate the common
+// bump/EMBM operations in a small ARB fragment program at draw time.
+static constexpr GLenum kNearGL_TEXTURE_SHADER_NV = 0x86DE;
+static constexpr GLenum kNearGL_SHADER_OPERATION_NV = 0x86DF;
+static constexpr GLenum kNearGL_CULL_MODES_NV = 0x86E0;
+static constexpr GLenum kNearGL_OFFSET_TEXTURE_MATRIX_NV = 0x86E1;
+static constexpr GLenum kNearGL_OFFSET_TEXTURE_SCALE_NV = 0x86E2;
+static constexpr GLenum kNearGL_OFFSET_TEXTURE_BIAS_NV = 0x86E3;
+static constexpr GLenum kNearGL_PREVIOUS_TEXTURE_INPUT_NV = 0x86E4;
+static constexpr GLenum kNearGL_CONST_EYE_NV = 0x86E5;
+static constexpr GLenum kNearGL_PASS_THROUGH_NV = 0x86E6;
+static constexpr GLenum kNearGL_CULL_FRAGMENT_NV = 0x86E7;
+static constexpr GLenum kNearGL_OFFSET_TEXTURE_2D_NV = 0x86E8;
+static constexpr GLenum kNearGL_DEPENDENT_AR_TEXTURE_2D_NV = 0x86E9;
+static constexpr GLenum kNearGL_DEPENDENT_GB_TEXTURE_2D_NV = 0x86EA;
+static constexpr GLenum kNearGL_DOT_PRODUCT_NV = 0x86EC;
+static constexpr GLenum kNearGL_DOT_PRODUCT_DEPTH_REPLACE_NV = 0x86ED;
+static constexpr GLenum kNearGL_DOT_PRODUCT_TEXTURE_2D_NV = 0x86EE;
+static constexpr GLenum kNearGL_DOT_PRODUCT_TEXTURE_3D_NV = 0x86EF;
+static constexpr GLenum kNearGL_DOT_PRODUCT_TEXTURE_CUBE_MAP_NV = 0x86F0;
+static constexpr GLenum kNearGL_DOT_PRODUCT_DIFFUSE_CUBE_MAP_NV = 0x86F1;
+static constexpr GLenum kNearGL_DOT_PRODUCT_REFLECT_CUBE_MAP_NV = 0x86F2;
+static constexpr GLenum kNearGL_DOT_PRODUCT_CONST_EYE_REFLECT_CUBE_MAP_NV = 0x86F3;
+static constexpr GLenum kNearGL_OFFSET_TEXTURE_RECTANGLE_NV = 0x864C;
+static constexpr GLenum kNearGL_OFFSET_TEXTURE_RECTANGLE_SCALE_NV = 0x864D;
+static constexpr GLenum kNearGL_DOT_PRODUCT_TEXTURE_RECTANGLE_NV = 0x864E;
+static constexpr GLenum kNearGL_TEXTURE_RECTANGLE_NV = 0x84F5;
+static constexpr GLenum kNearGL_OFFSET_PROJECTIVE_TEXTURE_2D_NV = 0x8850;
+static constexpr GLenum kNearGL_OFFSET_PROJECTIVE_TEXTURE_2D_SCALE_NV = 0x8851;
+static constexpr GLenum kNearGL_OFFSET_PROJECTIVE_TEXTURE_RECTANGLE_NV = 0x8852;
+static constexpr GLenum kNearGL_OFFSET_PROJECTIVE_TEXTURE_RECTANGLE_SCALE_NV = 0x8853;
+static constexpr GLenum kNearGL_RGBA_UNSIGNED_DOT_PRODUCT_MAPPING_NV = 0x86D9;
+static constexpr GLenum kNearGL_PREVIOUS_TEXTURE_INPUT_BASE = 0x84C0;
+static constexpr GLenum kNearGL_FRAGMENT_PROGRAM_ARB = 0x8804;
+static constexpr GLenum kNearGL_VERTEX_PROGRAM_ARB = 0x8620;
+static constexpr GLenum kNearGL_FRAGMENT_PROGRAM_BINDING_ARB = 0x8873;
+static constexpr GLenum kNearGL_PROGRAM_FORMAT_ASCII_ARB = 0x8875;
+static constexpr GLenum kNearGL_PROGRAM_ERROR_POSITION_ARB = 0x864B;
+
+static constexpr GLint kNearGL_UNSIGNED_IDENTITY_NV = 0x8536;
+static constexpr GLint kNearGL_EXPAND_NORMAL_NV = 0x8538;
+static constexpr unsigned kNearTextureShaderUnits = 8;
+
+struct NearTextureShaderUnitState {
+    GLenum op = GL_NONE;
+    GLint previous = 0;
+    GLfloat offset[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    GLfloat scale = 1.0f;
+    GLfloat bias = 0.0f;
+    GLfloat cullModes[4] = {
+        (GLfloat)GL_GEQUAL, (GLfloat)GL_GEQUAL,
+        (GLfloat)GL_GEQUAL, (GLfloat)GL_GEQUAL
+    };
+    GLfloat constEye[4] = {0.0f, 0.0f, 1.0f, 0.0f};
+    GLint dotMapping = kNearGL_UNSIGNED_IDENTITY_NV;
+};
+
+static thread_local GLint g_nearTextureEnvModes[kNearTextureShaderUnits] = {
+    GL_MODULATE, GL_MODULATE, GL_MODULATE, GL_MODULATE,
+    GL_MODULATE, GL_MODULATE, GL_MODULATE, GL_MODULATE
+};
+
+struct NearTextureShaderState {
+    NearTextureShaderUnitState units[kNearTextureShaderUnits];
+    bool enabled = false;
+    GLuint program = 0;
+    std::string source;
+};
+
+static thread_local NearTextureShaderState g_nearTextureShaderState;
+
+struct NearTextureShaderDrawRestore {
+    bool active = false;
+    GLboolean fragmentEnabled = GL_FALSE;
+    GLint fragmentBinding = 0;
+};
+
+static thread_local NearTextureShaderDrawRestore g_nearTextureShaderDrawRestore;
+
+static int nearTextureShaderActiveUnit() {
+    GLint active = (GLint)GL_TEXTURE0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+    const GLint unit = active - (GLint)GL_TEXTURE0;
+    return (unit >= 0 && unit < (GLint)kNearTextureShaderUnits) ? unit : -1;
+}
+
+static bool nearTextureShaderHasStage() {
+    if (!g_nearTextureShaderState.enabled)
+        return false;
+    for (unsigned i = 0; i < kNearTextureShaderUnits; ++i)
+        if (g_nearTextureShaderState.units[i].op != GL_NONE)
+            return true;
+    return false;
+}
+
+static const char* nearTextureShaderStageName(unsigned i) {
+    static const char* kNames[kNearTextureShaderUnits] =
+        {"ts0","ts1","ts2","ts3","ts4","ts5","ts6","ts7"};
+    return kNames[i];
+}
+
+static const char* nearTextureShaderTexTarget(GLenum op) {
+    switch (op) {
+    case GL_TEXTURE_1D: return "1D";
+    case GL_TEXTURE_3D: return "3D";
+    case GL_TEXTURE_CUBE_MAP:
+    case kNearGL_DOT_PRODUCT_TEXTURE_CUBE_MAP_NV:
+    case kNearGL_DOT_PRODUCT_DIFFUSE_CUBE_MAP_NV:
+    case kNearGL_DOT_PRODUCT_REFLECT_CUBE_MAP_NV:
+    case kNearGL_DOT_PRODUCT_CONST_EYE_REFLECT_CUBE_MAP_NV:
+        return "CUBE";
+    case kNearGL_TEXTURE_RECTANGLE_NV:
+    case kNearGL_OFFSET_TEXTURE_RECTANGLE_NV:
+    case kNearGL_OFFSET_TEXTURE_RECTANGLE_SCALE_NV:
+    case kNearGL_OFFSET_PROJECTIVE_TEXTURE_RECTANGLE_NV:
+    case kNearGL_OFFSET_PROJECTIVE_TEXTURE_RECTANGLE_SCALE_NV:
+    case kNearGL_DOT_PRODUCT_TEXTURE_RECTANGLE_NV:
+        return "RECT";
+    default:
+        return "2D";
+    }
+}
+
+static void nearTextureShaderAppendFloat(std::string& s, GLfloat v) {
+    char b[48];
+    std::snprintf(b, sizeof(b), "%.9g", (double)v);
+    s += b;
+}
+
+static void nearTextureShaderAppendParam(std::string& s, const std::string& name,
+                                         GLfloat a, GLfloat b, GLfloat c, GLfloat d) {
+    s += "PARAM ";
+    s += name;
+    s += " = { ";
+    nearTextureShaderAppendFloat(s, a); s += ", ";
+    nearTextureShaderAppendFloat(s, b); s += ", ";
+    nearTextureShaderAppendFloat(s, c); s += ", ";
+    nearTextureShaderAppendFloat(s, d);
+    s += " };\\n";
+}
+
+static bool nearTextureShaderBuildSource(std::string& out) {
+    if (!nearTextureShaderHasStage())
+        return false;
+
+    out.clear();
+    out += "!!ARBfp1.0\\n";
+    out += "TEMP ts0, ts1, ts2, ts3, ts4, ts5, ts6, ts7;\\n";
+    out += "TEMP coord, tmp, color;\\n";
+    out += "MOV color, fragment.color.primary;\\n";
+
+    // Parameter declarations must precede instructions in ARBfp.
+    for (unsigned i = 0; i < kNearTextureShaderUnits; ++i) {
+        const NearTextureShaderUnitState& st = g_nearTextureShaderState.units[i];
+        if (st.op == GL_NONE)
+            continue;
+        nearTextureShaderAppendParam(out, "m" + std::to_string(i),
+                                     st.offset[0], st.offset[1],
+                                     st.offset[2], st.offset[3]);
+        nearTextureShaderAppendParam(out, "sb" + std::to_string(i),
+                                     st.scale, st.bias, 0.0f, 0.0f);
+    }
+
+    bool any = false;
+    for (unsigned i = 0; i < kNearTextureShaderUnits; ++i) {
+        const NearTextureShaderUnitState& st = g_nearTextureShaderState.units[i];
+        if (st.op == GL_NONE)
+            continue;
+        any = true;
+
+        const unsigned p = (unsigned)std::max(
+            0, std::min(st.previous, (GLint)kNearTextureShaderUnits - 1));
+        const char* dst = nearTextureShaderStageName(i);
+        const char* prevName = nearTextureShaderStageName(p);
+
+        switch (st.op) {
+        case GL_TEXTURE_1D:
+        case GL_TEXTURE_2D:
+        case GL_TEXTURE_3D:
+        case GL_TEXTURE_CUBE_MAP:
+            out += "TEX " + std::string(dst) + ", fragment.texcoord[" +
+                   std::to_string(i) + "], texture[" + std::to_string(i) +
+                   "], " + nearTextureShaderTexTarget(st.op) + ";\\n";
+            break;
+
+        case kNearGL_PASS_THROUGH_NV:
+            out += "MOV " + std::string(dst) + ", fragment.texcoord[" +
+                   std::to_string(i) + "];\\n";
+            break;
+
+        case kNearGL_OFFSET_TEXTURE_2D_NV:
+        case kNearGL_OFFSET_TEXTURE_SCALE_NV:
+        case kNearGL_OFFSET_TEXTURE_RECTANGLE_NV:
+        case kNearGL_OFFSET_TEXTURE_RECTANGLE_SCALE_NV:
+        case kNearGL_OFFSET_PROJECTIVE_TEXTURE_2D_NV:
+        case kNearGL_OFFSET_PROJECTIVE_TEXTURE_2D_SCALE_NV:
+        case kNearGL_OFFSET_PROJECTIVE_TEXTURE_RECTANGLE_NV:
+        case kNearGL_OFFSET_PROJECTIVE_TEXTURE_RECTANGLE_SCALE_NV: {
+            const bool projective =
+                st.op == kNearGL_OFFSET_PROJECTIVE_TEXTURE_2D_NV ||
+                st.op == kNearGL_OFFSET_PROJECTIVE_TEXTURE_2D_SCALE_NV ||
+                st.op == kNearGL_OFFSET_PROJECTIVE_TEXTURE_RECTANGLE_NV ||
+                st.op == kNearGL_OFFSET_PROJECTIVE_TEXTURE_RECTANGLE_SCALE_NV;
+
+            out += "MOV coord, fragment.texcoord[" + std::to_string(i) + "];\\n";
+            if (projective) {
+                out += "RCP tmp.x, coord.w;\\n";
+                out += "MUL coord.x, coord.x, tmp.x;\\n";
+                out += "MUL coord.y, coord.y, tmp.x;\\n";
+            }
+
+            out += "MUL tmp.x, " + std::string(prevName) + ".x, m" +
+                   std::to_string(i) + ".x;\\n";
+            out += "MAD tmp.x, " + std::string(prevName) + ".y, m" +
+                   std::to_string(i) + ".z, tmp.x;\\n";
+            out += "ADD coord.x, coord.x, tmp.x;\\n";
+
+            out += "MUL tmp.x, " + std::string(prevName) + ".x, m" +
+                   std::to_string(i) + ".y;\\n";
+            out += "MAD tmp.x, " + std::string(prevName) + ".y, m" +
+                   std::to_string(i) + ".w, tmp.x;\\n";
+            out += "ADD coord.y, coord.y, tmp.x;\\n";
+
+            out += "TEX " + std::string(dst) + ", coord, texture[" +
+                   std::to_string(i) + "], " +
+                   nearTextureShaderTexTarget(st.op) + ";\\n";
+
+            if (st.op == kNearGL_OFFSET_TEXTURE_SCALE_NV ||
+                st.op == kNearGL_OFFSET_TEXTURE_RECTANGLE_SCALE_NV ||
+                st.op == kNearGL_OFFSET_PROJECTIVE_TEXTURE_2D_SCALE_NV ||
+                st.op == kNearGL_OFFSET_PROJECTIVE_TEXTURE_RECTANGLE_SCALE_NV) {
+                out += "MAD_SAT " + std::string(dst) + ".xyz, " +
+                       std::string(dst) + ".xyz, sb" + std::to_string(i) +
+                       ".x, sb" + std::to_string(i) + ".y;\\n";
+            }
+            break;
+        }
+
+        case kNearGL_DEPENDENT_AR_TEXTURE_2D_NV:
+            out += "MOV coord.x, " + std::string(prevName) + ".a;\\n";
+            out += "MOV coord.y, " + std::string(prevName) + ".r;\\n";
+            out += "TEX " + std::string(dst) + ", coord, texture[" +
+                   std::to_string(i) + "], 2D;\\n";
+            break;
+
+        case kNearGL_DEPENDENT_GB_TEXTURE_2D_NV:
+            out += "MOV coord.x, " + std::string(prevName) + ".g;\\n";
+            out += "MOV coord.y, " + std::string(prevName) + ".b;\\n";
+            out += "TEX " + std::string(dst) + ", coord, texture[" +
+                   std::to_string(i) + "], 2D;\\n";
+            break;
+
+        case kNearGL_DOT_PRODUCT_NV:
+        case kNearGL_DOT_PRODUCT_TEXTURE_2D_NV:
+        case kNearGL_DOT_PRODUCT_TEXTURE_3D_NV:
+        case kNearGL_DOT_PRODUCT_TEXTURE_CUBE_MAP_NV:
+        case kNearGL_DOT_PRODUCT_TEXTURE_RECTANGLE_NV: {
+            if (st.dotMapping == kNearGL_EXPAND_NORMAL_NV)
+                out += "MAD tmp, " + std::string(prevName) + ", 2.0, -1.0;\\n";
+            else
+                out += "MOV tmp, " + std::string(prevName) + ";\\n";
+            out += "DP3 " + std::string(dst) + ".x, fragment.texcoord[" +
+                   std::to_string(i) + "], tmp;\\n";
+            out += "MOV " + std::string(dst) + ".yzw, " +
+                   std::string(dst) + ".xxxx;\\n";
+
+            if (st.op != kNearGL_DOT_PRODUCT_NV) {
+                out += "MOV coord.xy, " + std::string(dst) + ".xx;\\n";
+                out += "TEX " + std::string(dst) + ", coord, texture[" +
+                       std::to_string(i) + "], " +
+                       nearTextureShaderTexTarget(st.op) + ";\\n";
+            }
+            break;
+        }
+
+        case kNearGL_DOT_PRODUCT_DEPTH_REPLACE_NV:
+            if (st.dotMapping == kNearGL_EXPAND_NORMAL_NV)
+                out += "MAD tmp, " + std::string(prevName) + ", 2.0, -1.0;\\n";
+            else
+                out += "MOV tmp, " + std::string(prevName) + ";\\n";
+            out += "DP3 " + std::string(dst) + ".x, fragment.texcoord[" +
+                   std::to_string(i) + "], tmp;\\n";
+            out += "MOV " + std::string(dst) + ".yzw, " +
+                   std::string(dst) + ".xxxx;\\n";
+            break;
+
+        default:
+            compatPakLog("GL TS EMU: unsupported operation 0x%x on unit %u -> passthrough",
+                         (unsigned)st.op, i);
+            out += "MOV " + std::string(dst) +
+                   ", fragment.texcoord[" + std::to_string(i) + "];\\n";
+            break;
+        }
+
+        const GLint envMode = g_nearTextureEnvModes[i];
+        if (envMode == GL_REPLACE) {
+            out += "MOV color, " + std::string(dst) + ";\\n";
+        } else if (envMode == GL_ADD) {
+            out += "ADD color, color, " + std::string(dst) + ";\\n";
+        } else if (envMode == GL_DECAL) {
+            out += "LRP color.xyz, " + std::string(dst) + ".a, " +
+                   std::string(dst) + ", color;\\n";
+        } else {
+            out += "MUL color, color, " + std::string(dst) + ";\\n";
+        }
+    }
+
+    if (!any)
+        return false;
+
+    out += "MOV result.color, color;\\n";
+    out += "END\\n";
+    return true;
+}
+
+using NearTsGenFn = void (*)(GLsizei, GLuint*);
+using NearTsBindFn = void (*)(GLenum, GLuint);
+using NearTsDeleteFn = void (*)(GLsizei, const GLuint*);
+using NearTsStringFn = void (*)(GLenum, GLenum, GLsizei, const void*);
+
+static bool nearTextureShaderCompileProgram() {
+    std::string source;
+    if (!nearTextureShaderBuildSource(source))
+        return false;
+
+    if (g_nearTextureShaderState.program &&
+        source == g_nearTextureShaderState.source)
+        return true;
+
+    static NearTsGenFn gen =
+        reinterpret_cast<NearTsGenFn>(eglGetProcAddress("glGenProgramsARB"));
+    static NearTsBindFn bind =
+        reinterpret_cast<NearTsBindFn>(eglGetProcAddress("glBindProgramARB"));
+    static NearTsDeleteFn del =
+        reinterpret_cast<NearTsDeleteFn>(eglGetProcAddress("glDeleteProgramsARB"));
+    static NearTsStringFn stringFn =
+        reinterpret_cast<NearTsStringFn>(eglGetProcAddress("glProgramStringARB"));
+
+    if (!gen || !bind || !stringFn) {
+        compatPakLog("GL TS EMU: ARB fragment program entry points unavailable");
+        return false;
+    }
+
+    if (!g_nearTextureShaderState.program) {
+        gen(1, &g_nearTextureShaderState.program);
+        if (!g_nearTextureShaderState.program)
+            return false;
+    }
+
+    bind(kNearGL_FRAGMENT_PROGRAM_ARB, g_nearTextureShaderState.program);
+    stringFn(kNearGL_FRAGMENT_PROGRAM_ARB, kNearGL_PROGRAM_FORMAT_ASCII_ARB,
+             (GLsizei)source.size(), source.c_str());
+
+    const GLenum err = glGetError();
+    GLint errorPos = -1;
+    glGetIntegerv(kNearGL_PROGRAM_ERROR_POSITION_ARB, &errorPos);
+    if (err != GL_NO_ERROR || errorPos >= 0) {
+        compatPakLog("GL TS EMU: ARBfp compile FAILED err=0x%x error_pos=%d",
+                     (unsigned)err, errorPos);
+        if (del) {
+            del(1, &g_nearTextureShaderState.program);
+            g_nearTextureShaderState.program = 0;
+        }
+        return false;
+    }
+
+    g_nearTextureShaderState.source = source;
+    compatPakLog("GL TS EMU: ARBfp program ready id=%u", (unsigned)g_nearTextureShaderState.program);
+    return true;
+}
+
+static bool nearPrepareTextureShaderEmulation() {
+    if (!nearTextureShaderHasStage())
+        return false;
+
+    if (g_nearTextureShaderDrawRestore.active)
+        return false;
+
+    GLint currentProgram = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
+    if (currentProgram != 0)
+        return false;
+
+    const GLboolean fragmentEnabled = glIsEnabled(kNearGL_FRAGMENT_PROGRAM_ARB);
+    if (fragmentEnabled)
+        return false;
+
+    if (!nearTextureShaderCompileProgram())
+        return false;
+
+    glGetIntegerv(kNearGL_FRAGMENT_PROGRAM_BINDING_ARB,
+                  &g_nearTextureShaderDrawRestore.fragmentBinding);
+    g_nearTextureShaderDrawRestore.fragmentEnabled = fragmentEnabled;
+    g_nearTextureShaderDrawRestore.active = true;
+
+    static NearTsBindFn bind =
+        reinterpret_cast<NearTsBindFn>(eglGetProcAddress("glBindProgramARB"));
+    if (!bind) {
+        g_nearTextureShaderDrawRestore.active = false;
+        return false;
+    }
+
+    bind(kNearGL_FRAGMENT_PROGRAM_ARB, g_nearTextureShaderState.program);
+    glEnable(kNearGL_FRAGMENT_PROGRAM_ARB);
+    return true;
+}
+
+static void nearFinishTextureShaderEmulation() {
+    if (!g_nearTextureShaderDrawRestore.active)
+        return;
+
+    static NearTsBindFn bind =
+        reinterpret_cast<NearTsBindFn>(eglGetProcAddress("glBindProgramARB"));
+    if (bind)
+        bind(kNearGL_FRAGMENT_PROGRAM_ARB,
+             (GLuint)g_nearTextureShaderDrawRestore.fragmentBinding);
+
+    if (g_nearTextureShaderDrawRestore.fragmentEnabled)
+        glEnable(kNearGL_FRAGMENT_PROGRAM_ARB);
+    else
+        glDisable(kNearGL_FRAGMENT_PROGRAM_ARB);
+
+    g_nearTextureShaderDrawRestore = {};
+}
+
+static GLboolean shim_glIsEnabledCompat(GLenum cap) {
+    if (cap == kNearGL_TEXTURE_SHADER_NV)
+        return g_nearTextureShaderState.enabled ? GL_TRUE : GL_FALSE;
+    return glIsEnabled(cap);
+}
+
+static void shim_glTexEnviCompat(GLenum target, GLenum pname, GLint param) {
+    if (target == kNearGL_TEXTURE_SHADER_NV) {
+        const int unit = nearTextureShaderActiveUnit();
+        if (unit < 0)
+            return;
+
+        NearTextureShaderUnitState& st = g_nearTextureShaderState.units[unit];
+        switch (pname) {
+        case kNearGL_SHADER_OPERATION_NV:
+            st.op = (GLenum)param;
+            compatPakLog("GL TS EMU: unit=%d op=0x%x", unit, (unsigned)st.op);
+            break;
+        case kNearGL_PREVIOUS_TEXTURE_INPUT_NV:
+            st.previous = (int)param - (int)kNearGL_PREVIOUS_TEXTURE_INPUT_BASE;
+            break;
+        case kNearGL_RGBA_UNSIGNED_DOT_PRODUCT_MAPPING_NV:
+            st.dotMapping = param;
+            break;
+        default:
+            compatPakLog("GL TS EMU: unhandled TexEnvi pname=0x%x param=0x%x",
+                         (unsigned)pname, (unsigned)param);
+            break;
+        }
+        return;
+    }
+
+    if (target == GL_TEXTURE_ENV && pname == GL_TEXTURE_ENV_MODE) {
+        const int unit = nearTextureShaderActiveUnit();
+        if (unit >= 0)
+            g_nearTextureEnvModes[unit] = param;
+    }
+
+    glTexEnvi(target, pname, param);
+}
+
+static void shim_glTexEnvfCompat(GLenum target, GLenum pname, GLfloat param) {
+    if (target == kNearGL_TEXTURE_SHADER_NV) {
+        const int unit = nearTextureShaderActiveUnit();
+        if (unit < 0)
+            return;
+        NearTextureShaderUnitState& st = g_nearTextureShaderState.units[unit];
+        if (pname == kNearGL_OFFSET_TEXTURE_SCALE_NV)
+            st.scale = param;
+        else if (pname == kNearGL_OFFSET_TEXTURE_BIAS_NV)
+            st.bias = param;
+        else
+            compatPakLog("GL TS EMU: unhandled TexEnvf pname=0x%x value=%g",
+                         (unsigned)pname, (double)param);
+        return;
+    }
+    glTexEnvf(target, pname, param);
+}
+
+static void shim_glTexEnvfvCompat(GLenum target, GLenum pname, const GLfloat* params) {
+    if (target == kNearGL_TEXTURE_SHADER_NV) {
+        const int unit = nearTextureShaderActiveUnit();
+        if (unit < 0 || !params)
+            return;
+        NearTextureShaderUnitState& st = g_nearTextureShaderState.units[unit];
+        if (pname == kNearGL_OFFSET_TEXTURE_MATRIX_NV)
+            std::memcpy(st.offset, params, sizeof(st.offset));
+        else if (pname == kNearGL_CULL_MODES_NV)
+            std::memcpy(st.cullModes, params, sizeof(st.cullModes));
+        else if (pname == kNearGL_CONST_EYE_NV)
+            std::memcpy(st.constEye, params, sizeof(st.constEye));
+        else
+            compatPakLog("GL TS EMU: unhandled TexEnvfv pname=0x%x",
+                         (unsigned)pname);
+        return;
+    }
+    glTexEnvfv(target, pname, params);
+}
+
+static void shim_glTexEnvivCompat(GLenum target, GLenum pname, const GLint* params) {
+    if (target == kNearGL_TEXTURE_SHADER_NV) {
+        if (!params)
+            return;
+        shim_glTexEnviCompat(target, pname, *params);
+        return;
+    }
+    glTexEnviv(target, pname, params);
+}
+
 static void shim_glEnableCompat(GLenum cap) {
+    if (cap == kNearGL_TEXTURE_SHADER_NV) {
+        g_nearTextureShaderState.enabled = true;
+        compatPakLog("GL TS EMU: enable");
+        return;
+    }
     glEnable(cap);
-    if (cap == 0x8620 || cap == 0x8804)
+    if (cap == kNearGL_VERTEX_PROGRAM_ARB || cap == kNearGL_FRAGMENT_PROGRAM_ARB)
         compatPakLog("GL ARB PROG: event=enable cap=0x%x(%s)",
                      (unsigned)cap, nearArbProgramTargetName(cap));
 }
 
 static void shim_glDisableCompat(GLenum cap) {
+    if (cap == kNearGL_TEXTURE_SHADER_NV) {
+        g_nearTextureShaderState.enabled = false;
+        compatPakLog("GL TS EMU: disable");
+        return;
+    }
     glDisable(cap);
-    if (cap == 0x8620 || cap == 0x8804)
+    if (cap == kNearGL_VERTEX_PROGRAM_ARB || cap == kNearGL_FRAGMENT_PROGRAM_ARB)
         compatPakLog("GL ARB PROG: event=disable cap=0x%x(%s)",
                      (unsigned)cap, nearArbProgramTargetName(cap));
 }
