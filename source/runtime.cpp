@@ -79,6 +79,10 @@ static void startupTimingMaybeLog(const char* msg) {
     log_write(buf, label[0] != 'C');
 }
 
+// Forward declaration: startupTimingMaybeLog() is defined before the
+// logger implementation so it can timestamp milestones from inside compatLog().
+static void log_write(const char* text, bool force_flush);
+
 static bool g_boot_console = false;
 static const devoptab_t* g_boot_stdout_dotab = nullptr;
 static unsigned g_boot_ui_pending_lines = 0;
