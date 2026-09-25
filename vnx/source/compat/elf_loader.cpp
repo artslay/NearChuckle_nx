@@ -2480,7 +2480,9 @@ static void applyRela(LoadedSo* so, const Elf64_Rela* relas, size_t count,
 
         // Push a throttled on-screen update AND trigger a render via cb so
         // the progress screen visibly scrolls instead of looking frozen.
-        if ((i & 511) == 0 || i + 1 == count) {
+        // Updating the overlay every 4096 relocations is enough to show
+        // progress without turning the relocation loop into a UI workload.
+        if ((i & 4095) == 0 || i + 1 == count) {
             char ub[64];
             snprintf(ub, sizeof(ub), "%s %zu/%zu", tag, i + 1, count);
             compatUiLog(ub);
@@ -2888,7 +2890,6 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     }
     elfHeapCanaryCheck("strtab/symtab copy");
     compatLog("ELF: strtab/symtab copied");
-    compatLogFlush();
 
     // The complete ELF image is contiguous at one load bias, so local data
     // pointers and ADRP targets already refer to their final runtime addresses.
