@@ -5406,8 +5406,12 @@ static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
         fragmentProgramEnabled ? 1 : 0, (int)fragmentProgram);
 
     if (vertexProgramEnabled && vertexProgram > 0) {
-        static PFN_glGetProgramEnvParameterfvARB getEnv =
-            resolveGLProc<PFN_glGetProgramEnvParameterfvARB>(
+        // This diagnostic function is above the shared ARB typedef block below.
+        // Keep a local ABI-equivalent function pointer type here so the file
+        // remains valid without moving the existing declarations.
+        using NearGetProgramEnvParameterfvARB = void (*)(GLenum, GLuint, GLfloat*);
+        static NearGetProgramEnvParameterfvARB getEnv =
+            resolveGLProc<NearGetProgramEnvParameterfvARB>(
                 "glGetProgramEnvParameterfvARB");
         if (getEnv) {
             GLfloat env[4] = {};
