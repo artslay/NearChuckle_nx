@@ -4519,6 +4519,8 @@ static void shim_glVertexAttribPointerNV(GLuint index, GLint fsize, GLenum type,
                                          GLsizei stride, const void* pointer);
 static void shim_glEnableClientStateCompat(GLenum array);
 static void shim_glDisableClientStateCompat(GLenum array);
+static void* shim_glMapBufferARB(GLenum target, GLenum access);
+static GLboolean shim_glUnmapBufferARB(GLenum target);
 
 static void* w_eglGetProcAddress(const char* name) {
     if (!name || !*name)
