@@ -38,6 +38,7 @@ constexpr ALenum AL_SEC_OFFSET=0x1024, AL_SAMPLE_OFFSET=0x1025, AL_BYTE_OFFSET=0
 constexpr ALenum AL_REFERENCE_DISTANCE=0x1020, AL_ROLLOFF_FACTOR=0x1021, AL_MAX_DISTANCE=0x1023;
 constexpr ALenum AL_FORMAT_MONO8=0x1100, AL_FORMAT_MONO16=0x1101;
 constexpr ALenum AL_FORMAT_STEREO8=0x1102, AL_FORMAT_STEREO16=0x1103;
+constexpr ALenum AL_FORMAT_MONO_FLOAT32=0x10010, AL_FORMAT_STEREO_FLOAT32=0x10011;
 constexpr ALenum AL_NO_ERROR=0, AL_INVALID_NAME=0xA001, AL_INVALID_ENUM=0xA002;
 constexpr ALenum AL_INVALID_VALUE=0xA003, AL_INVALID_OPERATION=0xA004, AL_OUT_OF_MEMORY=0xA005;
 constexpr ALCenum ALC_FALSE=0, ALC_TRUE=1;
@@ -85,6 +86,9 @@ ALuint g_next_buffer=1, g_next_source=1;
 thread_local ALenum g_al_error=AL_NO_ERROR;
 thread_local ALCenum g_alc_error=ALC_NO_ERROR;
 float g_listener_gain=1.0f;
+unsigned g_buffer_log_count=0;
+unsigned g_queue_log_count=0;
+unsigned g_play_log_count=0;
 
 Buffer* getBuffer(ALuint id) {
     return id<kMaxBuffers && id ? (g_buffers[id].used ? &g_buffers[id] : nullptr) : nullptr;
@@ -301,10 +305,10 @@ const ALchar* alGetString(ALenum p) {
     if(p==0xB001) return "NearChuckle_nx";
     if(p==0xB002) return "1.1";
     if(p==0xB003) return "Nintendo Switch OpenAL backend";
-    if(p==0xB004) return "";
+    if(p==0xB004) return "AL_EXT_FLOAT32";
     setError(AL_INVALID_ENUM); return "";
 }
-ALboolean alIsExtensionPresent(const ALchar*) { return AL_FALSE; }
+ALboolean alIsExtensionPresent(const ALchar* name) { return (name && std::strcmp(name,"AL_EXT_FLOAT32")==0) ? AL_TRUE : AL_FALSE; }
 
 void alGenBuffers(ALsizei n,ALuint* ids) {
     if(n<0 || !ids){setError(AL_INVALID_VALUE);return;}
@@ -329,15 +333,40 @@ ALboolean alIsBuffer(ALuint id) { return getBuffer(id) ? AL_TRUE : AL_FALSE; }
 void alBufferData(ALuint id,ALenum fmt,const ALvoid* data,ALsizei size,ALsizei freq) {
     if(size<0 || freq<=0 || !data){setError(AL_INVALID_VALUE);return;}
     ALsizei ch=0,bytes=0;
+    bool is_float=false;
     if(fmt==AL_FORMAT_MONO8||fmt==AL_FORMAT_STEREO8){bytes=1;ch=(fmt==AL_FORMAT_MONO8)?1:2;}
     else if(fmt==AL_FORMAT_MONO16||fmt==AL_FORMAT_STEREO16){bytes=2;ch=(fmt==AL_FORMAT_MONO16)?1:2;}
-    else {setError(AL_INVALID_ENUM);return;}
-    const size_t samples=(static_cast<size_t>(size)/bytes)*ch;
+    else if(fmt==AL_FORMAT_MONO_FLOAT32||fmt==AL_FORMAT_STEREO_FLOAT32){bytes=4;ch=(fmt==AL_FORMAT_MONO_FLOAT32)?1:2;is_float=true;}
+    else {
+        if(g_buffer_log_count<16)
+            compatLogFmt("AUDIO: unsupported alBufferData format=0x%x bytes=%d rate=%d",
+                         static_cast<unsigned>(fmt), static_cast<int>(size), static_cast<int>(freq));
+        setError(AL_INVALID_ENUM);
+        return;
+    }
+
+    // size is the complete byte count. Do not multiply by channels again:
+    // for stereo PCM the channel count is already part of the byte count.
+    const size_t samples=static_cast<size_t>(size)/static_cast<size_t>(bytes);
     std::vector<int16_t> pcm(samples);
     const uint8_t* src=static_cast<const uint8_t*>(data);
-    if(bytes==1) {
-        for(size_t i=0;i<samples;i++) pcm[i]=static_cast<int16_t>((static_cast<int>(src[i])-128)<<8);
-    } else std::memcpy(pcm.data(),src,samples*sizeof(int16_t));
+    if(is_float) {
+        const float* fsrc=static_cast<const float*>(data);
+        for(size_t i=0;i<samples;i++)
+            pcm[i]=static_cast<int16_t>(std::lrintf(std::clamp(fsrc[i],-1.0f,1.0f)*32767.0f));
+    } else if(bytes==1) {
+        for(size_t i=0;i<samples;i++)
+            pcm[i]=static_cast<int16_t>((static_cast<int>(src[i])-128)<<8);
+    } else {
+        std::memcpy(pcm.data(),src,samples*sizeof(int16_t));
+    }
+
+    if(g_buffer_log_count<16) {
+        compatLogFmt("AUDIO: alBufferData[%u] fmt=0x%x bytes=%d rate=%d channels=%d",
+                     g_buffer_log_count, static_cast<unsigned>(fmt),
+                     static_cast<int>(size), static_cast<int>(freq), static_cast<int>(ch));
+        ++g_buffer_log_count;
+    }
     mutexLock(&g_audio.lock);
     Buffer* b=getBuffer(id);
     if(!b) { mutexUnlock(&g_audio.lock); setError(AL_INVALID_NAME); return; }
@@ -371,7 +400,18 @@ void alDeleteSources(ALsizei n,const ALuint* ids) {
     mutexUnlock(&g_audio.lock);
 }
 ALboolean alIsSource(ALuint id){return getSource(id)?AL_TRUE:AL_FALSE;}
-void alSourcePlay(ALuint id){Source*s=getSource(id);if(!s){setError(AL_INVALID_NAME);return;}if(s->queue.empty()){setError(AL_INVALID_OPERATION);return;}s->state=AL_PLAYING;}
+void alSourcePlay(ALuint id){
+    Source*s=getSource(id);
+    if(!s){setError(AL_INVALID_NAME);return;}
+    if(s->queue.empty()){setError(AL_INVALID_OPERATION);return;}
+    s->state=AL_PLAYING;
+    if(g_play_log_count<16) {
+        compatLogFmt("AUDIO: alSourcePlay[%u] source=%u queued=%u looping=%d",
+                     g_play_log_count, static_cast<unsigned>(id),
+                     static_cast<unsigned>(s->queue.size()), s->looping ? 1 : 0);
+        ++g_play_log_count;
+    }
+}
 void alSourcePause(ALuint id){Source*s=getSource(id);if(!s){setError(AL_INVALID_NAME);return;}if(s->state==AL_PLAYING)s->state=AL_PAUSED;}
 void alSourceStop(ALuint id){Source*s=getSource(id);if(!s){setError(AL_INVALID_NAME);return;}s->state=AL_STOPPED;s->current=0;s->processed=0;s->sample_pos=0;}
 void alSourceRewind(ALuint id){Source*s=getSource(id);if(!s){setError(AL_INVALID_NAME);return;}s->state=AL_INITIAL;s->current=0;s->processed=0;s->sample_pos=0;}
@@ -404,7 +444,16 @@ void alSourcefv(ALuint id,ALenum p,const ALfloat*v){
 void alSourceQueueBuffers(ALuint id,ALsizei n,const ALuint*v){
     Source*s=getSource(id);if(!s||n<0||(!v&&n)){setError(AL_INVALID_VALUE);return;}
     mutexLock(&g_audio.lock);
-    for(ALsizei i=0;i<n;i++){if(!getBuffer(v[i])){setError(AL_INVALID_NAME);break;}s->queue.push_back(v[i]);}
+    for(ALsizei i=0;i<n;i++){
+        if(!getBuffer(v[i])){setError(AL_INVALID_NAME);break;}
+        s->queue.push_back(v[i]);
+    }
+    if(g_queue_log_count<16) {
+        compatLogFmt("AUDIO: alSourceQueueBuffers[%u] source=%u n=%d total=%u",
+                     g_queue_log_count, static_cast<unsigned>(id), static_cast<int>(n),
+                     static_cast<unsigned>(s->queue.size()));
+        ++g_queue_log_count;
+    }
     mutexUnlock(&g_audio.lock);
 }
 void alSourceUnqueueBuffers(ALuint id,ALsizei n,ALuint*v){
