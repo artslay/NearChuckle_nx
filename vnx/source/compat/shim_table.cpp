@@ -7148,7 +7148,12 @@ static bool nearIsWaterTextureDiagName(const std::string& name) {
 
     return s.find("caust") != std::string::npos ||
            s.find("causq") != std::string::npos ||
-           s.find("water_") != std::string::npos;
+           s.find("water_") != std::string::npos ||
+           s.find("oldforest_trunk_moss") != std::string::npos ||
+           s.find("rust") != std::string::npos ||
+           s.find("_ddn") != std::string::npos ||
+           s.find("_ddp") != std::string::npos ||
+           s.find("/moss") != std::string::npos;
 }
 
 static uint64_t nearFnv1a64(const unsigned char* data, size_t size) {
@@ -7547,7 +7552,7 @@ static void nearLogWaterDrawState() {
 
         foundWater = true;
         compatPakLog(
-            "GL TEX DRAW: program=%d unit=%d texture=%d name=%s "
+            "GL TEX DRAW DIAG: program=%d unit=%d texture=%d name=%s "
             "active=0x%x current_texture=%d unit_tex2d=%d unit_texenv=0x%x "
             "vertex_program=%d vertex_enabled=%d fragment_program=%d fragment_enabled=%d",
             program, unit, texture, name.c_str(),
