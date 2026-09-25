@@ -371,9 +371,18 @@ void alBufferData(ALuint id,ALenum fmt,const ALvoid* data,ALsizei size,ALsizei f
     }
 
     if(g_buffer_log_count<16) {
-        compatLogFmt("AUDIO: alBufferData[%u] fmt=0x%x bytes=%d rate=%d channels=%d",
+        int16_t peak=0;
+        int64_t accum=0;
+        for(size_t i=0;i<samples;i++) {
+            const int v=std::abs(static_cast<int>(pcm[i]));
+            if(v>peak) peak=static_cast<int16_t>(std::min(v,32767));
+            accum+=static_cast<int64_t>(v);
+        }
+        const unsigned avg = samples ? static_cast<unsigned>(accum / samples) : 0;
+        compatLogFmt("AUDIO: alBufferData[%u] fmt=0x%x bytes=%d rate=%d channels=%d peak=%d avg=%u",
                      g_buffer_log_count, static_cast<unsigned>(fmt),
-                     static_cast<int>(size), static_cast<int>(freq), static_cast<int>(ch));
+                     static_cast<int>(size), static_cast<int>(freq), static_cast<int>(ch),
+                     static_cast<int>(peak), avg);
         ++g_buffer_log_count;
     }
     mutexLock(&g_audio.lock);
