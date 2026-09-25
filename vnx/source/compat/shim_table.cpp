@@ -4377,7 +4377,10 @@ static void* fake_dlsym(void* handle, const char* sym) {
         strcmp(sym, "glPixelStorei") == 0 ||
         strcmp(sym, "glTexSubImage2D") == 0 ||
         strcmp(sym, "glCompressedTexImage2DARB") == 0 ||
-        strcmp(sym, "glCompressedTexSubImage2DARB") == 0) {
+        strcmp(sym, "glCompressedTexSubImage2DARB") == 0 ||
+        strcmp(sym, "glVertexAttribPointerNV") == 0 ||
+        strcmp(sym, "glEnableClientState") == 0 ||
+        strcmp(sym, "glDisableClientState") == 0) {
         void* forced = shimResolve(sym);
         compatLogFmt("dlsym: %s -> forced shim %p", sym, forced);
         if (forced)
@@ -4510,6 +4513,10 @@ static void shim_glCompressedTexSubImage2DARB(GLenum target, GLint level,
                                               GLsizei width, GLsizei height,
                                               GLenum format, GLsizei imageSize,
                                               const void* data);
+static void shim_glVertexAttribPointerNV(GLuint index, GLint fsize, GLenum type,
+                                         GLsizei stride, const void* pointer);
+static void shim_glEnableClientStateCompat(GLenum array);
+static void shim_glDisableClientStateCompat(GLenum array);
 
 static void* w_eglGetProcAddress(const char* name) {
     if (!name || !*name)
@@ -4536,6 +4543,18 @@ static void* w_eglGetProcAddress(const char* name) {
     if (strcmp(name, "glCompressedTexSubImage2DARB") == 0) {
         compatLog("EGL: eglGetProcAddress(glCompressedTexSubImage2DARB) -> Switch compressed-texture shim");
         return reinterpret_cast<void*>(shim_glCompressedTexSubImage2DARB);
+    }
+    if (strcmp(name, "glVertexAttribPointerNV") == 0) {
+        compatLog("EGL: eglGetProcAddress(glVertexAttribPointerNV) -> NV vertex attrib shim");
+        return reinterpret_cast<void*>(shim_glVertexAttribPointerNV);
+    }
+    if (strcmp(name, "glEnableClientState") == 0) {
+        compatLog("EGL: eglGetProcAddress(glEnableClientState) -> client-state shim");
+        return reinterpret_cast<void*>(shim_glEnableClientStateCompat);
+    }
+    if (strcmp(name, "glDisableClientState") == 0) {
+        compatLog("EGL: eglGetProcAddress(glDisableClientState) -> client-state shim");
+        return reinterpret_cast<void*>(shim_glDisableClientStateCompat);
     }
 
     if (strcmp(name, "eglSwapBuffers") == 0) {
