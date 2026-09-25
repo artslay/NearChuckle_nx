@@ -1957,6 +1957,148 @@ static bool patchFarCryVirtualPakStreaming(LoadedSo* so, uint8_t* stage_base,
 }
 
 
+// A/B compatibility fix for the Far Cry multiplayer menu.
+// CreateServer.lua calls Game:SetVariable("sv_punkbuster", 0/1), but the
+// Android build does not register sv_punkbuster as a CVar.  The original
+// CScriptObjectGame::SetVariable() reports that as a Lua error and returns
+// through EndFunctionNull(), which aborts the CreateServer path before the
+// server can load the selected level.
+//
+// Keep the engine's normal SetVariable implementation for every registered
+// variable.  For the missing-variable error path only, suppress RaiseError
+// and leave the existing EndFunctionNull() return intact.  This makes a
+// missing optional CVar a no-op instead of a script error without bypassing
+// any valid CVar writes.
+static bool patchFarCrySetVariableMissingCVar(LoadedSo* so, uint8_t* stage_base,
+                                              uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* path = so->path.c_str();
+    const char* base = std::strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (std::strcmp(base, "libCryGame.so") != 0)
+        return false;
+
+    constexpr const char* kSym =
+        "_ZN17CScriptObjectGame11SetVariableEP16IFunctionHandler";
+
+    void* fn = so->findSym(kSym);
+    if (!fn) {
+        compatLogFmt("FARCRY SETVARIABLE: symbol not found: %s", kSym);
+        return false;
+    }
+
+    const uintptr_t image_base = reinterpret_cast<uintptr_t>(so->base);
+    const uintptr_t fn_addr = reinterpret_cast<uintptr_t>(fn);
+    if (fn_addr < image_base || fn_addr - image_base >= alloc_size) {
+        compatLogFmt("FARCRY SETVARIABLE: symbol outside image fn=%p base=%p size=0x%llx",
+                     fn, reinterpret_cast<void*>(image_base),
+                     (unsigned long long)alloc_size);
+        return false;
+    }
+
+    const uint64_t fn_off = static_cast<uint64_t>(fn_addr - image_base);
+    const size_t scan_bytes = std::min<size_t>(0x400, alloc_size - fn_off);
+    uint8_t* code = stage_base + min_vaddr + fn_off;
+
+    // Locate the literal used by the exact missing-CVar diagnostic:
+    //   "SetVariable invalid variable name \"%s\": no such variable found"
+    // The release Android binary keeps this string in the image, and the
+    // compiler materializes its address with ADRP+ADD immediately before the
+    // RaiseError call.
+    constexpr char kNeedle[] = "SetVariable invalid variable name";
+    const size_t needle_len = sizeof(kNeedle) - 1;
+    uint8_t* image = stage_base + min_vaddr;
+    size_t string_off = SIZE_MAX;
+
+    for (size_t i = 0; i + needle_len + 1 <= alloc_size; ++i) {
+        if (std::memcmp(image + i, kNeedle, needle_len) == 0) {
+            // Prefer the full diagnostic literal, not another unrelated prefix.
+            if (std::strstr(reinterpret_cast<const char*>(image + i),
+                            "no such variable found") != nullptr) {
+                string_off = i;
+                break;
+            }
+        }
+    }
+
+    if (string_off == SIZE_MAX) {
+        compatLog("FARCRY SETVARIABLE: missing-CVar diagnostic string not found");
+        return false;
+    }
+
+    auto sign_extend = [](uint64_t value, unsigned bits) -> int64_t {
+        const uint64_t m = 1ULL << (bits - 1);
+        return static_cast<int64_t>((value ^ m) - m);
+    };
+
+    auto is_adrp = [](uint32_t w) {
+        return (w & 0x9f000000u) == 0x90000000u;
+    };
+
+    auto is_add_imm = [](uint32_t w) {
+        return (w & 0xffc00000u) == 0x91000000u;
+    };
+
+    auto is_bl = [](uint32_t w) {
+        return (w & 0xfc000000u) == 0x94000000u;
+    };
+
+    const uintptr_t image_addr = reinterpret_cast<uintptr_t>(image);
+    const uintptr_t string_addr = image_addr + string_off;
+
+    for (size_t off = 0; off + 12 <= scan_bytes; off += 4) {
+        const uint32_t adrp = *reinterpret_cast<const uint32_t*>(code + off);
+        const uint32_t add  = *reinterpret_cast<const uint32_t*>(code + off + 4);
+        if (!is_adrp(adrp) || !is_add_imm(add))
+            continue;
+
+        const unsigned rd  = adrp & 31u;
+        const unsigned rn  = (add >> 5) & 31u;
+        if (rd != rn)
+            continue;
+
+        const uint64_t imm21 =
+            (((uint64_t)((adrp >> 5) & 0x7ffffu)) << 2) |
+            ((uint64_t)((adrp >> 29) & 0x3u));
+        const int64_t page_delta = sign_extend(imm21, 21) << 12;
+        const uintptr_t pc = reinterpret_cast<uintptr_t>(code + off);
+        const uintptr_t page = pc & ~static_cast<uintptr_t>(0xfff);
+        const uintptr_t target_page =
+            static_cast<uintptr_t>(static_cast<int64_t>(page) + page_delta);
+        const uint64_t imm12 = (add >> 10) & 0xfffu;
+        const uintptr_t literal_addr = target_page + imm12;
+
+        if (literal_addr != string_addr)
+            continue;
+
+        // The first BL after loading the diagnostic string is the
+        // CScriptSystem::RaiseError() call in the missing-CVar block.
+        for (size_t boff = off + 8; boff + 4 <= scan_bytes && boff <= off + 0x40; boff += 4) {
+            uint32_t* call = reinterpret_cast<uint32_t*>(code + boff);
+            if (!is_bl(*call))
+                continue;
+
+            const uint32_t old = *call;
+            *call = 0xd503201fu; // NOP — keep the existing EndFunctionNull() path.
+            armICacheInvalidate(call, 4);
+
+            compatLogFmt(
+                "FARCRY SETVARIABLE: suppressed missing-CVar RaiseError at +0x%llx "
+                "(SetVariable +0x%llx) old=%08x new=%08x target_literal=+0x%llx",
+                (unsigned long long)(fn_off + boff),
+                (unsigned long long)boff,
+                old, *call,
+                (unsigned long long)string_off);
+            return true;
+        }
+    }
+
+    compatLog("FARCRY SETVARIABLE: diagnostic string found, but RaiseError call was not located");
+    return false;
+}
+
 // ─── Per-game binary quirk patches ─────────────────────────────────────────────
 // The actual fixups live in source/compat/games/ (one file per title), reached
 // through compat/games.h, so game-specific patches stay isolated from the shared
@@ -2027,6 +2169,9 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
         // GetPlayerProfilePath() works with the corrected Android dirent ABI.
         // The previous return-0 A/B patch caused "for table must be a table"
         // in scripts/menuscreens/ingame/ingamesingle.lua.
+
+        if (!patchFarCrySetVariableMissingCVar(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY SETVARIABLE: missing-CVar patch not applied");
 
         patchFarCrySkipLoadConfiguration(so, stage_base, min_vaddr, alloc_size);
         return;
