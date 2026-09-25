@@ -2629,41 +2629,15 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
 
     uint8_t* code_exec = (uint8_t*)va;
     uint8_t* data_exec = data_off_pg ? code_exec + data_off_pg : nullptr;
-    // ── Heap staging buffer ───────────────────────────────────────────────────
-    elfHeapCanaryArm();                 // bracket the biggest allocation we make
-    // One staging buffer for the whole process, grown as needed and never
-    // returned to the allocator.
-    //
-    // Each module used to malloc its own — 18.9MB for libunity, ~58MB for
-    // libil2cpp — zero it, and free it again. Three cycles of tens of
-    // megabytes is heavy churn right where the allocator is most fragile, and
-    // a freed block of that size coalesces into the top chunk, which is
-    // precisely the structure that ends up pointing at zeroed memory. Keeping
-    // one buffer removes the churn entirely; the peak footprint is unchanged
-    // because it is only ever as large as the biggest module.
-    static uint8_t* s_stage      = nullptr;
-    static size_t   s_stage_size = 0;
-    if (alloc_size > s_stage_size) {
-        uint8_t* grown = (uint8_t*)realloc(s_stage, alloc_size);
-        if (grown) { s_stage = grown; s_stage_size = alloc_size; }
-        else       { s_stage_size = 0; free(s_stage); s_stage = nullptr; }
-    }
-    uint8_t* stage = s_stage;
-    if (!stage) {
-        compatLog("ELF: malloc staging buffer OOM");
-        virtmemLock();
-        if (process_code_rv) {
-            virtmemRemoveReservation(process_code_rv);
-            process_code_rv = nullptr;
-        }
-        virtmemUnlock();
-        free(backing);
-        free(file_data);
-        return nullptr;
-    }
-    compatLog("ELF: stage alloc OK");
+    // ── Prepare the unified ELF image directly in the final backing buffer ────
+    // The backing allocation remains CPU-writable even after its physical pages
+    // are mapped into the process code region. Relocations and game fixups only
+    // need a writable host pointer, so there is no reason to maintain a second
+    // full-size staging buffer and memcpy the entire image a second time.
+    elfHeapCanaryArm();
+    uint8_t* stage = backing;
     memset(stage, 0, alloc_size);
-    compatLog("ELF: stage zeroed");
+    compatLog("ELF: backing image allocated and zeroed");
 
     // exec_base: used for GOT entries that reference CODE symbols.
     // Data symbols are at data_exec+offset within the same process-code mapping.
@@ -2689,10 +2663,10 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
         memcpy(seg_dst, file_data + ph.p_offset, ph.p_filesz);
     }
     elfHeapCanaryCheck("segment copy");
-    compatLog("ELF: segs copied to stage");
+    compatLog("ELF: PT_LOAD segments copied to backing image");
     {
         uint32_t s0 = *(volatile uint32_t*)stage;
-        compatLogFmt("ELF: stage[0]=0x%08x after segs copy", s0);
+        compatLogFmt("ELF: backing[0]=0x%08x after segs copy", s0);
     }
 
     // ── Parse PT_DYNAMIC from staging buffer ─────────────────────────────────
@@ -2810,8 +2784,7 @@ LoadedSo* elfLoad(const char* path, ProgressCb cb) {
     // makes it executable. Signature-gated, so a no-op for anything unmatched.
     patchKnownGameQuirks(so, stage_base, min_vaddr, alloc_size, path);
 
-    // ── Copy staged ELF into persistent backing and map it once ─────────────
-    memcpy(backing, stage, alloc_size);
+    // ── Map the already-relocated backing image into process code ────────────
     armDCacheFlush(backing, alloc_size);
 
     virtmemLock();
