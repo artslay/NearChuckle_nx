@@ -351,47 +351,24 @@ void elfRunCtors(LoadedSo* so, ProgressCb cb) {
     compatUiSetPct(60);
 
     const size_t n = so->init_arr_count;
-    // Diagnostic: log first few init_arr values to see if they're populated
-    {
-        size_t nlog = n < 4 ? n : 4;
-        for (size_t di = 0; di < nlog; di++)
-            compatLogFmt("ELF: init_arr[%zu]=%p", di, (void*)(uintptr_t)so->init_arr[di]);
-        compatLogFlush();
-    }
     // Emit a UI update every ~50 ctors and at the end
     const size_t ui_interval = (n > 50) ? (n / 8) : n;
 
-    // Anchor before the first constructor so the walk below covers everything
-    // the game allocates.
+    // Anchor before the constructor pass so the final heap walk still has
+    // the same baseline as the diagnostic build.
     shimHeapAnchor();
-    bool heap_ok = true;
 
     for (size_t k = 0; k < n; k++) {
         LoadedSo::InitFn fn = so->init_arr[k];
         if (!fn || fn == (LoadedSo::InitFn)(uintptr_t)-1) { skipped++; continue; }
 
-        compatLogFmt("ELF: ctor[%zu/%zu] @%p", k+1, n, (void*)fn);
-        compatLogFlush();
         g_cur_ctor   = (int)(k + 1);
         g_cur_module = soname;
         g_recover_owner = threadGetSelf(); g_in_recover = true; g_recover_sig = 0; g_recover_esr = 0; g_recover_far = 0;
         if (setjmp(g_recover_jmp) == 0) {
             fn();
             g_in_recover = false;
-            compatLogFmt("ELF: ctor[%zu/%zu] OK", k + 1, n);
             ok++;
-            // Report only the transition. Once the heap is broken it stays
-            // broken, and 300 identical complaints would bury the one line
-            // that matters — which constructor broke it.
-            if (heap_ok) {
-                char why[400];
-                if (!shimHeapCheck(why, sizeof(why))) {
-                    heap_ok = false;
-                    compatLogFmt("ELF: *** HEAP CORRUPTED BY ctor[%zu/%zu] @%p — %s",
-                                 k + 1, n, (void*)fn, why);
-                    compatLogFlush();
-                }
-            }
         } else {
             g_in_recover = false;
             char sym_buf[160];
@@ -477,8 +454,8 @@ void elfRunCtors(LoadedSo* so, ProgressCb cb) {
     {
         int steps = 0; const char* stop = "?";
         shimHeapWalkStats(&steps, &stop);
-        compatLogFmt("ELF: %s: heap walk covered %d chunks, stopped: %s (%s)",
-                     soname, steps, stop, heap_ok ? "no corruption seen" : "corruption reported");
+        compatLogFmt("ELF: %s: final heap walk covered %d chunks, stopped: %s",
+                     soname, steps, stop);
     }
     compatLogFmt("ELF: %s: ctors done ok=%d failed=%d skipped=%d",
                  soname, ok, failed, skipped);
