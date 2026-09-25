@@ -5624,7 +5624,6 @@ static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void
 
     glDrawElements(mode, count, type, indices);
     const GLenum drawError = glGetError();
-    const GLenum errAfterDrawDiag = drawError;
     if (g_nearDrawElementsDiagCalls <= 24) {
         compatLogFmt(
             "GL DRAW RESULT[%u]: err=0x%x pre_prepare=0x%x "
