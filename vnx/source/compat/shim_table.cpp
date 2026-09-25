@@ -8120,22 +8120,43 @@ static void nearLogWaterDrawState() {
 
     GLint maxUnits = 0;
     GLint program = 0;
-    GLint activeTexture = 0;
-    GLint currentTexture = 0;
     GLint vertexProgram = 0;
     GLint fragmentProgram = 0;
 
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &maxUnits);
     glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &currentTexture);
-
-    // Legacy ARB program state used by Far Cry's OpenGL renderer.
     glGetIntegerv(0x864A, &vertexProgram);   // GL_VERTEX_PROGRAM_BINDING_ARB
     glGetIntegerv(0x8873, &fragmentProgram); // GL_FRAGMENT_PROGRAM_BINDING_ARB
 
     const GLboolean fragmentEnabled = glIsEnabled(0x8804); // GL_FRAGMENT_PROGRAM_ARB
     const GLboolean vertexEnabled = glIsEnabled(0x8620);  // GL_VERTEX_PROGRAM_ARB
+
+    // First identify whether this draw actually uses one of the affected
+    // rust/moss/normal-map textures. Only then spend the diagnostic budget.
+    const GLint maxScanUnits = std::max(0, std::min(maxUnits, 4));
+    GLint affectedUnits[4] = {};
+    GLint affectedTextures[4] = {};
+    std::string affectedNames[4];
+    GLint affectedCount = 0;
+
+    for (GLint unit = 0; unit < maxScanUnits; ++unit) {
+        GLint texture = 0;
+        glGetIntegeri_v(GL_TEXTURE_BINDING_2D, (GLuint)unit, &texture);
+        if (!texture)
+            continue;
+
+        const std::string name = nearBoundTextureDiagName((GLuint)texture);
+        if (name.empty())
+            continue;
+
+        affectedUnits[affectedCount] = unit;
+        affectedTextures[affectedCount] = texture;
+        affectedNames[affectedCount] = name;
+        ++affectedCount;
+    }
+
+    if (!affectedCount)
+        return;
 
     // Capture the fixed-function/client-array state exactly as it exists at the
     // affected draw. This is the important part for selective mesh displacement:
@@ -8161,12 +8182,8 @@ static void nearLogWaterDrawState() {
     glGetPointerv(0x808F /* GL_NORMAL_ARRAY_POINTER */, &normalPtr);
     glGetPointerv(0x8090 /* GL_COLOR_ARRAY_POINTER */, &colorPtr);
 
-    const GLint arrayBufferBefore =
-        []() -> GLint {
-            GLint v = 0;
-            glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &v);
-            return v;
-        }();
+    GLint arrayBufferBefore = 0;
+    glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &arrayBufferBefore);
 
     compatPakLog(
         "GL AFFECTED DRAW ARRAYS: program=%d vertex_prog=%d vertex_en=%d "
@@ -8179,28 +8196,11 @@ static void nearLogWaterDrawState() {
         normalPtr, (unsigned)normalType, normalStride,
         colorPtr, colorSize, (unsigned)colorType, colorStride);
 
-    const GLint maxLogUnits = std::max(0, std::min(maxUnits, 4));
-    const GLenum savedClientActive =
-        (GLenum)[]() -> GLint {
-            GLint v = (GLint)GL_TEXTURE0;
-            glGetIntegerv(0x84E1 /* GL_CLIENT_ACTIVE_TEXTURE */, &v);
-            return v;
-        }();
+    GLint savedClientActive = (GLint)GL_TEXTURE0;
+    glGetIntegerv(0x84E1 /* GL_CLIENT_ACTIVE_TEXTURE */, &savedClientActive);
 
-    bool foundAffected = false;
-    for (GLint unit = 0; unit < maxLogUnits; ++unit) {
-        GLint texture = 0;
-        glGetIntegeri_v(GL_TEXTURE_BINDING_2D, (GLuint)unit, &texture);
-        if (!texture)
-            continue;
-
-        const std::string name = nearBoundTextureDiagName((GLuint)texture);
-        if (name.empty())
-            continue;
-
-        foundAffected = true;
-
-        const GLenum unitEnum = GL_TEXTURE0 + (GLenum)unit;
+    for (GLint i = 0; i < affectedCount; ++i) {
+        const GLenum unitEnum = GL_TEXTURE0 + (GLenum)affectedUnits[i];
         glClientActiveTexture(unitEnum);
 
         GLint texArraySize = 0, texArrayType = 0, texArrayStride = 0;
@@ -8214,20 +8214,15 @@ static void nearLogWaterDrawState() {
         compatPakLog(
             "GL AFFECTED TEXARRAY: unit=%d texture=%d name=%s enabled=%d "
             "ptr=%p size=%d type=0x%x stride=%d",
-            unit, texture, name.c_str(), enabled,
-            texPtr, texArraySize, (unsigned)texArrayType, texArrayStride);
+            affectedUnits[i], affectedTextures[i], affectedNames[i].c_str(),
+            enabled, texPtr, texArraySize, (unsigned)texArrayType, texArrayStride);
     }
 
-    glClientActiveTexture(savedClientActive);
-
-    if (!foundAffected) {
-        g_waterDrawDiagCalls.fetch_add(1, std::memory_order_relaxed);
-        return;
-    }
+    glClientActiveTexture((GLenum)savedClientActive);
 
     g_waterDrawDiagCalls.fetch_add(1, std::memory_order_relaxed);
 
-    // Keep the existing sampler diagnostics for a core/GLSL program.
+    // Sampler uniforms are only meaningful for a core/GLSL program.
     if (!program)
         return;
 
