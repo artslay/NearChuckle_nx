@@ -5492,21 +5492,110 @@ static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
                     has("vertex.normal") || has("vertex.attrib[2]") || has("$vin.ATTR2");
                 const int usesTexcoord =
                     has("vertex.texcoord") || has("vertex.attrib[8]") || has("$vin.ATTR8");
+                const int usesLocalParams = has("program.local");
+                const int usesEnvParams = has("program.env");
+                const int usesTexcoord0 =
+                    has("vertex.texcoord") || has("vertex.texcoord[0]") ||
+                    has("$vin.ATTR8") || has("vertex.attrib[8]");
 
                 compatLogFmt(
                     "GL DRAW VP SOURCE[%u]: program=%d len=%d "
-                    "position=%d normal=%d texcoord=%d attrib0=%d attrib2=%d attrib8=%d "
+                    "position=%d normal=%d texcoord=%d texcoord0=%d "
+                    "attrib0=%d attrib2=%d attrib8=%d local=%d env=%d "
                     "mvp=%d result_pos=%d",
                     g_nearDrawContentDiagCalls + 1, (int)vertexProgram,
                     (int)programLength,
                     usesPosition,
                     usesNormal,
                     usesTexcoord,
+                    usesTexcoord0,
                     has("vertex.attrib[0]") || has("$vin.ATTR0"),
                     has("vertex.attrib[2]") || has("$vin.ATTR2"),
                     has("vertex.attrib[8]") || has("$vin.ATTR8"),
+                    usesLocalParams,
+                    usesEnvParams,
                     has("state.matrix.mvp") || has("ModelViewProj"),
                     has("result.position"));
+
+                std::string compactSource = programSource;
+                for (char& ch : compactSource) {
+                    if (ch == '\\n' || ch == '\\r')
+                        ch = ' ';
+                }
+                compatLogFmt(
+                    "GL DRAW VP TEXT[%u]: program=%d %s",
+                    g_nearDrawContentDiagCalls + 1, (int)vertexProgram,
+                    compactSource.c_str());
+
+                // vertex.texcoord (without [n]) and vertex.texcoord[0] both
+                // consume the conventional texture-coordinate set 0. Capture
+                // that exact client-array state at the same draw.
+                {
+                    GLint savedClientActive = (GLint)GL_TEXTURE0;
+                    glGetIntegerv(0x84E1 /* GL_CLIENT_ACTIVE_TEXTURE */, &savedClientActive);
+                    glClientActiveTexture(GL_TEXTURE0);
+
+                    GLint tcEnabled = glIsEnabled(GL_TEXTURE_COORD_ARRAY) ? 1 : 0;
+                    const GLenum tcEnableError = glGetError();
+                    GLint tcSize = 0, tcType = 0, tcStride = 0, tcBuffer = 0;
+                    void* tcPointer = nullptr;
+                    glGetIntegerv(0x8088 /* GL_TEXTURE_COORD_ARRAY_SIZE */, &tcSize);
+                    glGetIntegerv(0x8089 /* GL_TEXTURE_COORD_ARRAY_TYPE */, &tcType);
+                    glGetIntegerv(0x808A /* GL_TEXTURE_COORD_ARRAY_STRIDE */, &tcStride);
+                    glGetPointerv(0x8092 /* GL_TEXTURE_COORD_ARRAY_POINTER */, &tcPointer);
+                    glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &tcBuffer);
+                    const GLenum tcStateError = glGetError();
+
+                    compatLogFmt(
+                        "GL DRAW TCARRAY[%u]: unit=0 enabled=%d size=%d type=0x%x "
+                        "stride=%d buffer=%d ptr=0x%llx enable_err=0x%x state_err=0x%x",
+                        g_nearDrawContentDiagCalls + 1,
+                        tcEnabled, tcSize, (unsigned)tcType, tcStride, tcBuffer,
+                        (unsigned long long)reinterpret_cast<uintptr_t>(tcPointer),
+                        (unsigned)tcEnableError, (unsigned)tcStateError);
+
+                    glClientActiveTexture((GLenum)savedClientActive);
+                }
+
+                // Local program parameters are persistent per program. Dump a
+                // bounded prefix only when the shader actually references them.
+                if (usesLocalParams) {
+                    using NearGetProgramLocalParameterfvARB =
+                        void (*)(GLenum, GLuint, GLfloat*);
+                    static NearGetProgramLocalParameterfvARB getLocal =
+                        reinterpret_cast<NearGetProgramLocalParameterfvARB>(
+                            eglGetProcAddress("glGetProgramLocalParameterfvARB"));
+                    using NearGetProgramivARBLocal = void (*)(GLenum, GLenum, GLint*);
+                    static NearGetProgramivARBLocal getProgramivLocal =
+                        reinterpret_cast<NearGetProgramivARBLocal>(
+                            eglGetProcAddress("glGetProgramivARB"));
+
+                    GLint parameterCount = -1;
+                    if (getProgramivLocal)
+                        getProgramivLocal(0x8620 /* GL_VERTEX_PROGRAM_ARB */,
+                                          0x88A8 /* GL_PROGRAM_PARAMETERS_ARB */,
+                                          &parameterCount);
+
+                    compatLogFmt(
+                        "GL DRAW VP LOCAL[%u]: program=%d parameters=%d get=%d",
+                        g_nearDrawContentDiagCalls + 1, (int)vertexProgram,
+                        parameterCount, getLocal ? 1 : 0);
+
+                    if (getLocal) {
+                        const GLint lim = std::max(0, std::min(parameterCount, 32));
+                        for (GLint localIndex = 0; localIndex < lim; ++localIndex) {
+                            GLfloat local[4] = {};
+                            getLocal(0x8620 /* GL_VERTEX_PROGRAM_ARB */,
+                                     (GLuint)localIndex, local);
+                            compatLogFmt(
+                                "GL DRAW VP LOCAL[%u]: program=%d local=%d %g,%g,%g,%g",
+                                g_nearDrawContentDiagCalls + 1, (int)vertexProgram,
+                                (int)localIndex,
+                                (double)local[0], (double)local[1],
+                                (double)local[2], (double)local[3]);
+                        }
+                    }
+                }
             }
         } else {
             compatLog("GL DRAW VP SOURCE: ARB program query unavailable");
