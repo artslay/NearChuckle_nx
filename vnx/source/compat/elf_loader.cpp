@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <malloc.h>
 #include <vector>
+#include <unordered_map>
 #include <setjmp.h>
 #include <signal.h>
 #include <switch/arm/thread_context.h>
@@ -242,6 +243,8 @@ uint32_t elfGetLastSvcPermCode() { return g_last_svc_perm_code; }
 void elfResetCounts() {
     g_unresolved_count = 0;
     g_last_svc_perm_code = 0;
+    g_symbol_cache.clear();
+    g_symbol_cache.reserve(4096);
 }
 
 // ─── elfNearestSym ───────────────────────────────────────────────────────────
@@ -468,6 +471,13 @@ void elfRunCtors(LoadedSo* so, ProgressCb cb) {
 
 // All successfully loaded .so files (for cross-library symbol resolution)
 static std::vector<LoadedSo*> g_loaded_sos;
+
+// Relocation symbol lookup is extremely hot during startup. Keep successful
+// name -> address bindings so repeated imports do not rescan every loaded SO's
+// entire dynsym table. Unresolved names are deliberately not cached: a later
+// dlopen may provide them, and the existing resolver's lookup semantics must
+// remain unchanged.
+static std::unordered_map<std::string, void*> g_symbol_cache;
 
 // Describe an arbitrary code address as "<so> +0x<off> sym=<name>" (or mark it
 // as host code). Used for abort()/exit() callers and unrecovered faults.
@@ -778,30 +788,39 @@ static void* resolveSymbol(const char* name) {
     if (!name || !name[0]) return nullptr;
     const bool trace = isAllocSym(name) || isFsTraceSym(name) || isCtypeTraceSym(name);
 
-    // Shim table takes priority — our implementations override any game-library
-    // copies of pthread_*, libc functions, GLES, EGL, libandroid, etc.
+    // Shim table takes priority over guest libraries.
     void* shim = shimResolve(name);
     if (shim) {
         if (trace) compatLogFmt("bind: %s -> shim %p", name, shim);
+        g_symbol_cache.emplace(name, shim);
         return shim;
     }
 
-    // Then the game's own libraries — a game that ships its own libc (cocos2d-x
-    // titles like Hill Climb Racing statically link newlib) MUST keep using it.
+    // Successful bindings are stable for the lifetime of this process under
+    // the resolver's existing first-loaded-definition semantics. A later
+    // dlopen must not replace an already selected earlier definition.
+    auto cached = g_symbol_cache.find(name);
+    if (cached != g_symbol_cache.end()) {
+        if (trace) compatLogFmt("bind: %s -> cached %p", name, cached->second);
+        return cached->second;
+    }
+
+    // Then the game's own libraries — a game that ships its own libc MUST keep
+    // using it.
     for (LoadedSo* so : g_loaded_sos) {
         void* p = so->findSym(name);
         if (p) {
             if (trace) compatLogFmt("bind: %s -> %s %p", name, so->path.c_str(), p);
+            g_symbol_cache.emplace(name, p);
             return p;
         }
     }
 
-    // Last: Unity/IL2CPP libc gap fillers. Only reached when neither the shim
-    // overrides nor any game library provides the symbol — i.e. exactly the
-    // undefined imports of libunity/libil2cpp, never a game's own copies.
+    // Last: Unity/IL2CPP libc gap fillers.
     void* fb = shimResolveFallback(name);
     if (fb) {
         if (trace) compatLogFmt("bind: %s -> fallback %p", name, fb);
+        g_symbol_cache.emplace(name, fb);
         return fb;
     }
 
