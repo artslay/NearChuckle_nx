@@ -187,10 +187,10 @@ static bool suppressCompatNoise(const char* msg) {
         normalized.find("elf: jmprel ") == 0 ||
         normalized.find("elf: strtab/symtab copied") == 0 ||
         normalized.find("elf: dt_init fn deferred") == 0 ||
-        normalized.find("elf: ") == 0 &&
-            (normalized.find("constructors deferred") != std::string::npos ||
-             normalized.find("loaded ok ") != std::string::npos ||
-             normalized.find("process-code copy complete") != std::string::npos);
+        (normalized.find("elf: ") == 0 &&
+         (normalized.find("constructors deferred") != std::string::npos ||
+          normalized.find("loaded ok ") != std::string::npos ||
+          normalized.find("process-code copy complete") != std::string::npos));
 
     const bool glDrawNoise =
         normalized.find("gl buffer data") == 0 ||
