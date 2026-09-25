@@ -116,7 +116,7 @@ void mixSource(Source& s, float* dst, size_t frames) {
     // decoder delivers valid PCM, but the decoded track is substantially quieter
     // than regular game audio on the Switch path. Apply a targeted gain only to
     // this movie source; all other OpenAL sources keep the game's requested gain.
-    const float movie_boost = (&s == &g_sources[32]) ? 16.0f : 1.0f;
+    const float movie_boost = (&s == &g_sources[32]) ? 32.0f : 1.0f;
 
     for(size_t o=0;o<frames;o++) {
         while(s.current<s.queue.size()) {
@@ -208,12 +208,13 @@ void mixSource(Source& s, float* dst, size_t frames) {
 
 void mixBlock(int16_t* out) {
     float mix[kFrames*2]={};
+    bool movie_active=false;
     mutexLock(&g_audio.lock);
     for(auto& s:g_sources) if(s.used) mixSource(s,mix,kFrames);
 
     Source& diag = g_sources[32];
-    if(g_mix_log_count < 24 &&
-       diag.used && diag.state == AL_PLAYING && !diag.queue.empty()) {
+    movie_active = diag.used && diag.state == AL_PLAYING && !diag.queue.empty();
+    if(g_mix_log_count < 24 && movie_active) {
         float peak=0.0f, avg=0.0f;
         for(size_t i=0;i<kFrames*2;i++) {
             const float a=std::fabs(mix[i]);
@@ -242,7 +243,7 @@ void mixBlock(int16_t* out) {
         if(a>peak) peak=a;
         accum+=a;
     }
-    if(g_output_log_count<32) {
+    if(movie_active && g_output_log_count<32) {
         compatLogFmt("AUDIO: audout-ready[%u] peak=%d avg=%d bytes=%zu",
                      g_output_log_count, peak,
                      static_cast<int>(accum/static_cast<int64_t>(kFrames*2)),
@@ -263,6 +264,10 @@ void audioThread(void*) {
         }
         if(!released_count || !released) continue;
         mixBlock(static_cast<int16_t*>(released->buffer));
+        released->next=nullptr;
+        released->data_offset=0;
+        released->buffer_size=sizeof(g_audio.pcm[0]);
+        released->data_size=sizeof(g_audio.pcm[0]);
         const Result append_rc=audoutAppendAudioOutBuffer(released);
         if(R_FAILED(append_rc)) {
             compatLogFmt("AUDIO: audoutAppend FAILED rc=0x%08x", static_cast<unsigned>(append_rc));
@@ -286,12 +291,20 @@ bool startAudio() {
                  audoutGetSampleRate(), audoutGetChannelCount(),
                  static_cast<int>(audoutGetPcmFormat()));
 
+    rc=audoutSetAudioOutVolume(1.0f);
+    if(R_FAILED(rc))
+        compatLogFmt("AUDIO: audoutSetAudioOutVolume FAILED rc=0x%08x", static_cast<unsigned>(rc));
+    else
+        compatLogFmt("%s", "AUDIO: audout volume=1.000");
+
     std::memset(g_audio.pcm,0,sizeof(g_audio.pcm));
     for(size_t i=0;i<kOutBuffers;i++) {
         g_audio.out[i]={};
+        g_audio.out[i].next=nullptr;
         g_audio.out[i].buffer=g_audio.pcm[i];
         g_audio.out[i].buffer_size=sizeof(g_audio.pcm[i]);
         g_audio.out[i].data_size=sizeof(g_audio.pcm[i]);
+        g_audio.out[i].data_offset=0;
         rc=audoutAppendAudioOutBuffer(&g_audio.out[i]);
         if(R_FAILED(rc)) { audoutExit(); setAlcError(ALC_INVALID_DEVICE); return false; }
     }
