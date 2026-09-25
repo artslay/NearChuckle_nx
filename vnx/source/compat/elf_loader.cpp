@@ -224,6 +224,13 @@ void* shimResolve(const char* name);
 
 // Accumulated unresolved symbol count across all elfLoad calls since elfResetCounts()
 static int g_unresolved_count = 0;
+
+// Relocation symbol lookup is extremely hot during startup. Keep successful
+// name -> address bindings so repeated imports do not rescan every loaded SO's
+// entire dynsym table. Unresolved names are deliberately not cached: a later
+// dlopen may provide them, and the existing resolver's lookup semantics must
+// remain unchanged.
+static std::unordered_map<std::string, void*> g_symbol_cache;
 int elfGetUnresolvedCount() { return g_unresolved_count; }
 
 // Poison value written into any relocation slot whose symbol we couldn't
@@ -472,12 +479,6 @@ void elfRunCtors(LoadedSo* so, ProgressCb cb) {
 // All successfully loaded .so files (for cross-library symbol resolution)
 static std::vector<LoadedSo*> g_loaded_sos;
 
-// Relocation symbol lookup is extremely hot during startup. Keep successful
-// name -> address bindings so repeated imports do not rescan every loaded SO's
-// entire dynsym table. Unresolved names are deliberately not cached: a later
-// dlopen may provide them, and the existing resolver's lookup semantics must
-// remain unchanged.
-static std::unordered_map<std::string, void*> g_symbol_cache;
 
 // Describe an arbitrary code address as "<so> +0x<off> sym=<name>" (or mark it
 // as host code). Used for abort()/exit() callers and unrecovered faults.
