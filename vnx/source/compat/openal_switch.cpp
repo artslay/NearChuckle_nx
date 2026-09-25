@@ -23,6 +23,7 @@ using ALvoid = void;
 using ALCboolean = int8_t;
 using ALCchar = char;
 using ALCint = int32_t;
+using ALCsizei = int32_t;
 using ALCenum = int32_t;
 
 namespace {
@@ -39,6 +40,7 @@ constexpr ALenum AL_FORMAT_MONO8=0x1100, AL_FORMAT_MONO16=0x1101;
 constexpr ALenum AL_FORMAT_STEREO8=0x1102, AL_FORMAT_STEREO16=0x1103;
 constexpr ALenum AL_NO_ERROR=0, AL_INVALID_NAME=0xA001, AL_INVALID_ENUM=0xA002;
 constexpr ALenum AL_INVALID_VALUE=0xA003, AL_INVALID_OPERATION=0xA004, AL_OUT_OF_MEMORY=0xA005;
+constexpr ALCenum ALC_FALSE=0, ALC_TRUE=1;
 constexpr ALCenum ALC_NO_ERROR=0, ALC_INVALID_DEVICE=0xA001, ALC_INVALID_CONTEXT=0xA002;
 constexpr ALCenum ALC_INVALID_ENUM=0xA003, ALC_INVALID_VALUE=0xA004;
 constexpr size_t kMaxBuffers=2048, kMaxSources=256, kFrames=1024, kOutBuffers=4;
@@ -223,7 +225,7 @@ bool startAudio() {
         setAlcError(ALC_INVALID_DEVICE);
         return false;
     }
-    compatLog("AUDIO: audout playback started");
+    compatLogFmt("%s", "AUDIO: audout playback started");
 
     g_audio.stop.store(false,std::memory_order_relaxed);
     rc=threadCreate(&g_audio.thread,audioThread,nullptr,nullptr,0x4000,0x2B,-2);
