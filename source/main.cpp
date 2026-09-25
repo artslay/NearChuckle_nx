@@ -556,6 +556,9 @@ int main(int, char**) {
 
     LoadedSo* game_so = nullptr;
 
+    const u64 elf_phase_start = armGetSystemTick();
+    const u64 elf_tick_freq = armGetSystemTickFreq();
+
     log_system_resources("before ELF load");
 
     for (const SoFile& file : libs) {
@@ -563,13 +566,21 @@ int main(int, char**) {
                      file.name.c_str(),
                      static_cast<unsigned long long>(file.size));
 
+        const u64 load_start = armGetSystemTick();
         LoadedSo* so = elfLoad(file.path.c_str(), nullptr);
+        const u64 load_ms =
+            (armGetSystemTick() - load_start) * 1000 / elf_tick_freq;
+
         if (!so) {
-            compatLogFmt("WARN: failed to load %s", file.name.c_str());
+            compatLogFmt("WARN: failed to load %s (%llu ms)", file.name.c_str(),
+                         static_cast<unsigned long long>(load_ms));
             log_system_resources(file.name.c_str());
             continue;
         }
 
+        compatLogFmt("ELF TIMING: load %s = %llu ms",
+                     file.name.c_str(),
+                     static_cast<unsigned long long>(load_ms));
         log_system_resources(file.name.c_str());
 
         if (file.name == "libFarCry.so")
@@ -593,9 +604,19 @@ int main(int, char**) {
             continue;
 
         compatLogFmt("ELF ctors: %s", file.name.c_str());
+        const u64 ctor_start = armGetSystemTick();
         elfRunCtors(so, nullptr);
+        const u64 ctor_ms =
+            (armGetSystemTick() - ctor_start) * 1000 / elf_tick_freq;
+        compatLogFmt("ELF TIMING: ctors %s = %llu ms",
+                     file.name.c_str(),
+                     static_cast<unsigned long long>(ctor_ms));
     }
 
+    const u64 elf_phase_ms =
+        (armGetSystemTick() - elf_phase_start) * 1000 / elf_tick_freq;
+    compatLogFmt("ELF TIMING: total load+ctors = %llu ms",
+                 static_cast<unsigned long long>(elf_phase_ms));
     compatLog("ELF constructors complete");
     compatLogFlush();
 
