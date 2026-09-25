@@ -534,6 +534,8 @@ ALenum alGetEnumValue(const ALchar*n){
     if(!std::strcmp(n,"AL_FORMAT_MONO16"))return AL_FORMAT_MONO16;
     if(!std::strcmp(n,"AL_FORMAT_STEREO8"))return AL_FORMAT_STEREO8;
     if(!std::strcmp(n,"AL_FORMAT_STEREO16"))return AL_FORMAT_STEREO16;
+    if(!std::strcmp(n,"AL_FORMAT_MONO_FLOAT32"))return AL_FORMAT_MONO_FLOAT32;
+    if(!std::strcmp(n,"AL_FORMAT_STEREO_FLOAT32"))return AL_FORMAT_STEREO_FLOAT32;
     return 0;
 }
 void* alGetProcAddress(const ALchar*){return nullptr;}
