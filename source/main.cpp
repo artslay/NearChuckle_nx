@@ -19,6 +19,7 @@ extern void androidTlsInstall();
 extern void vnxSetGameSo(LoadedSo* so);
 extern void compatUiInit();
 extern void compatUiShutdown();
+extern void compatStartupTimerBegin();
 extern void* jniFindRegisteredNative(const char* name, int occurrence);
 
 struct SoFile {
@@ -508,6 +509,7 @@ static int run_farcry(LoadedSo* game_so) {
     compatLog("Far Cry: r_RB_Merge 0 queued for control run without render-buffer merge");
     compatLog("Far Cry: command-line CVars use quoted name + value commands");
 
+    compatStartupTimerBegin();
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
     compatLog("Startup diagnostics complete; waiting for CXGame::Run main-loop marker");
 
