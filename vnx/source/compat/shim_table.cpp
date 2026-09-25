@@ -133,6 +133,28 @@ static bool pakGetMemory(
     bool& cacheHit);
 static bool pakVirtualDirectoryExists(const char* directory);
 static bool isShaderCacheLookupPath(const char* path);
+// These two Android intro movies are not shipped with the Switch game data.
+// Treat a missing open as an optional asset so the video sequencer can continue.
+// A real file with either name is still opened normally.
+static bool isOptionalMissingVideoPath(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string normalized = asciiLower(path);
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    const size_t slash = normalized.find_last_of('/');
+    const std::string base = slash == std::string::npos
+        ? normalized
+        : normalized.substr(slash + 1);
+
+    return base == "amd64.bik" ||
+           base == "governmental_message.bik";
+}
+
 static bool isShaderPathForDiag(const char* path);
  
 extern "C" {
@@ -3807,6 +3829,13 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             return pakFile;
         }
 
+        if (videoIo && isOptionalMissingVideoPath(ioPath)) {
+            g_near_video_open_failed = 0;
+            compatLogFmt("VIDEO SKIP OPTIONAL: %s (missing, continuing)",
+                         ioPath ? ioPath : "?");
+            return nullptr;
+        }
+
         if (videoIo)
             g_near_video_open_failed = 1;
 
@@ -4021,7 +4050,15 @@ static int stub_open(const char* path, int flags, ...) {
     }
 
     if (fd < 0) {
-        if (videoIo) g_near_video_open_failed = 1;
+        if (videoIo && isOptionalMissingVideoPath(ioPath)) {
+            g_near_video_open_failed = 0;
+            compatLogFmt("VIDEO SKIP OPTIONAL: %s (missing, continuing)",
+                         ioPath ? ioPath : "?");
+            return fd;
+        }
+
+        if (videoIo)
+            g_near_video_open_failed = 1;
         compatLogFmt("open FAIL: %s flags=0x%x", ioPath ? ioPath : "?", flags);
     } else if (videoIo) {
         g_near_video_open_failed = 0;
