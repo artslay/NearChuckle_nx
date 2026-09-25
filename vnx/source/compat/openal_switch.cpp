@@ -111,6 +111,12 @@ void resetSource(Source& s) {
 void mixSource(Source& s, float* dst, size_t frames) {
     if(s.state!=AL_PLAYING || s.queue.empty()) return;
 
+    // CryMovie uses dedicated OpenAL source 32 for the intro stream. Its Bink
+    // decoder delivers valid PCM, but the decoded track is substantially quieter
+    // than regular game audio on the Switch path. Apply a targeted gain only to
+    // this movie source; all other OpenAL sources keep the game's requested gain.
+    const float movie_boost = (&s == &g_sources[32]) ? 4.0f : 1.0f;
+
     for(size_t o=0;o<frames;o++) {
         while(s.current<s.queue.size()) {
             Buffer* b=getBuffer(s.queue[s.current]);
@@ -151,7 +157,7 @@ void mixSource(Source& s, float* dst, size_t frames) {
                 // this mode; applying world-space attenuation to them can
                 // make the cutscene track effectively inaudible.
                 if(s.relative) {
-                    const float v=mono*s.gain*g_listener_gain;
+                    const float v=mono*s.gain*g_listener_gain*movie_boost;
                     left=v*0.70710678f;
                     right=v*0.70710678f;
                 } else {
@@ -165,14 +171,14 @@ void mixSource(Source& s, float* dst, size_t frames) {
                     if(dist>=s.maxdist) att=0.0f;
                     att=std::clamp(att,s.mingain,s.maxgain);
                     const float pan=std::clamp(dx/std::max(1.0f,dist),-1.0f,1.0f);
-                    const float v=mono*s.gain*g_listener_gain*att;
+                    const float v=mono*s.gain*g_listener_gain*att*movie_boost;
                     left=v*0.5f*(1.0f-pan);
                     right=v*0.5f*(1.0f+pan);
                 }
             } else {
                 const size_t p0=i0*2, p1=i1*2;
-                left=(b->pcm[p0]+(b->pcm[p1]-b->pcm[p0])*frac)/32768.0f*s.gain*g_listener_gain;
-                right=(b->pcm[p0+1]+(b->pcm[p1+1]-b->pcm[p0+1])*frac)/32768.0f*s.gain*g_listener_gain;
+                left=(b->pcm[p0]+(b->pcm[p1]-b->pcm[p0])*frac)/32768.0f*s.gain*g_listener_gain*movie_boost;
+                right=(b->pcm[p0+1]+(b->pcm[p1+1]-b->pcm[p0+1])*frac)/32768.0f*s.gain*g_listener_gain*movie_boost;
             }
             dst[o*2]+=left;
             dst[o*2+1]+=right;
