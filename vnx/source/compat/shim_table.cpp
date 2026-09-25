@@ -5461,6 +5461,57 @@ static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
     }
 
     if (vertexProgramEnabled && vertexProgram > 0) {
+        // Inspect the actual bound ARB vertex program source without changing it.
+        using NearGetProgramivARB = void (*)(GLenum, GLenum, GLint*);
+        using NearGetProgramStringARB = void (*)(GLenum, GLenum, void*);
+        static NearGetProgramivARB getProgramiv =
+            reinterpret_cast<NearGetProgramivARB>(
+                eglGetProcAddress("glGetProgramivARB"));
+        static NearGetProgramStringARB getProgramString =
+            reinterpret_cast<NearGetProgramStringARB>(
+                eglGetProcAddress("glGetProgramStringARB"));
+
+        if (getProgramiv && getProgramString) {
+            GLint programLength = 0;
+            getProgramiv(0x8620 /* GL_VERTEX_PROGRAM_ARB */,
+                         0x8627 /* GL_PROGRAM_LENGTH_ARB */, &programLength);
+
+            if (programLength > 0 && programLength <= 1024 * 1024) {
+                std::string programSource((size_t)programLength, '\0');
+                getProgramString(0x8620 /* GL_VERTEX_PROGRAM_ARB */,
+                                 0x8628 /* GL_PROGRAM_STRING_ARB */,
+                                 &programSource[0]);
+
+                auto has = [&](const char* token) -> int {
+                    return programSource.find(token) != std::string::npos ? 1 : 0;
+                };
+
+                const int usesPosition =
+                    has("vertex.position") || has("vertex.attrib[0]") || has("$vin.ATTR0");
+                const int usesNormal =
+                    has("vertex.normal") || has("vertex.attrib[2]") || has("$vin.ATTR2");
+                const int usesTexcoord =
+                    has("vertex.texcoord") || has("vertex.attrib[8]") || has("$vin.ATTR8");
+
+                compatLogFmt(
+                    "GL DRAW VP SOURCE[%u]: program=%d len=%d "
+                    "position=%d normal=%d texcoord=%d attrib0=%d attrib2=%d attrib8=%d "
+                    "mvp=%d result_pos=%d",
+                    g_nearDrawContentDiagCalls + 1, (int)vertexProgram,
+                    (int)programLength,
+                    usesPosition,
+                    usesNormal,
+                    usesTexcoord,
+                    has("vertex.attrib[0]") || has("$vin.ATTR0"),
+                    has("vertex.attrib[2]") || has("$vin.ATTR2"),
+                    has("vertex.attrib[8]") || has("$vin.ATTR8"),
+                    has("state.matrix.mvp") || has("ModelViewProj"),
+                    has("result.position"));
+            }
+        } else {
+            compatLog("GL DRAW VP SOURCE: ARB program query unavailable");
+        }
+
         // This diagnostic function is above the shared ARB typedef block below.
         using NearGetProgramEnvParameterfvARB = void (*)(GLenum, GLuint, GLfloat*);
         static NearGetProgramEnvParameterfvARB getEnv =
@@ -5567,14 +5618,21 @@ static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void
     if (clientIndices)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
+    const GLenum errAfterWaterDiag = glGetError();
     const bool emu = nearPrepareTextureShaderEmulation();
+    const GLenum errAfterPrepare = glGetError();
+
     glDrawElements(mode, count, type, indices);
     const GLenum drawError = glGetError();
+    const GLenum errAfterDrawDiag = drawError;
     if (g_nearDrawElementsDiagCalls <= 24) {
         compatLogFmt(
-            "GL DRAW RESULT[%u]: err=0x%x vertex_prog=%u fragment_prog=%u",
+            "GL DRAW RESULT[%u]: err=0x%x pre_prepare=0x%x "
+            "prepare=0x%x vertex_prog=%u fragment_prog=%u",
             g_nearDrawElementsDiagCalls,
             (unsigned)drawError,
+            (unsigned)errAfterWaterDiag,
+            (unsigned)errAfterPrepare,
             (unsigned)g_nearArbVertexProgramBinding,
             (unsigned)g_nearArbFragmentProgramBinding);
     }
