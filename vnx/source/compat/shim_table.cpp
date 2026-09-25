@@ -5242,6 +5242,182 @@ static void w_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
 }
 
 static unsigned g_nearDrawElementsDiagCalls = 0;
+static unsigned g_nearDrawContentDiagCalls = 0;
+
+static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
+                                       GLint vertexBufferSize, GLint indexBufferSize,
+                                       GLenum type, GLsizei count, const void* indices) {
+    if (g_nearDrawContentDiagCalls >= 8 || arrayBuffer <= 0 || elementBuffer <= 0 ||
+        vertexBufferSize <= 0 || indexBufferSize <= 0 || !indices)
+        return;
+
+    const uintptr_t indexOffset = reinterpret_cast<uintptr_t>(indices);
+    const GLint stride = g_nearVertexPointerState.stride;
+    const uintptr_t vertexOffset = g_nearVertexPointerState.pointer;
+
+    // This diagnostic is intentionally read-only: map the exact GPU buffers
+    // immediately before the draw, inspect them, then unmap without changing
+    // any vertex/index data.
+    if (g_nearVertexPointerState.buffer != arrayBuffer ||
+        g_nearVertexPointerState.clientPointer ||
+        stride <= 0 || g_nearVertexPointerState.type != GL_FLOAT) {
+        compatLogFmt(
+            "GL DRAW CONTENT SKIP[%u]: vbo=%d ptrBuf=%d client=%d type=0x%x stride=%d ptrOff=0x%llx",
+            g_nearDrawContentDiagCalls + 1, (int)arrayBuffer,
+            (int)g_nearVertexPointerState.buffer,
+            g_nearVertexPointerState.clientPointer ? 1 : 0,
+            (unsigned)g_nearVertexPointerState.type, (int)stride,
+            (unsigned long long)vertexOffset);
+        ++g_nearDrawContentDiagCalls;
+        return;
+    }
+
+    if (indexOffset >= (uintptr_t)indexBufferSize) {
+        compatLogFmt(
+            "GL DRAW CONTENT BAD INDEX OFFSET: off=0x%llx iboSize=%d count=%d type=0x%x",
+            (unsigned long long)indexOffset, (int)indexBufferSize,
+            (int)count, (unsigned)type);
+        ++g_nearDrawContentDiagCalls;
+        return;
+    }
+
+    const GLsizeiptr vSize = (GLsizeiptr)vertexBufferSize;
+    const GLsizeiptr iSize = (GLsizeiptr)indexBufferSize;
+
+    void* vb = glMapBufferRange(GL_ARRAY_BUFFER, 0, vSize, GL_MAP_READ_BIT);
+    if (!vb) {
+        compatLogFmt("GL DRAW CONTENT VBO MAP FAIL: vbo=%d size=%d err=0x%x",
+                     (int)arrayBuffer, (int)vertexBufferSize, (unsigned)glGetError());
+        ++g_nearDrawContentDiagCalls;
+        return;
+    }
+
+    void* ib = glMapBufferRange(GL_ELEMENT_ARRAY_BUFFER, 0, iSize, GL_MAP_READ_BIT);
+    if (!ib) {
+        compatLogFmt("GL DRAW CONTENT IBO MAP FAIL: ibo=%d size=%d err=0x%x",
+                     (int)elementBuffer, (int)indexBufferSize, (unsigned)glGetError());
+        glUnmapBuffer(GL_ARRAY_BUFFER);
+        ++g_nearDrawContentDiagCalls;
+        return;
+    }
+
+    const uint8_t* vbytes = reinterpret_cast<const uint8_t*>(vb);
+    const uint8_t* ibytes = reinterpret_cast<const uint8_t*>(ib);
+
+    size_t vertexCount = 0;
+    if (vertexOffset < (uintptr_t)vertexBufferSize)
+        vertexCount = ((size_t)vertexBufferSize - (size_t)vertexOffset) / (size_t)stride;
+
+    size_t indexCount = 0;
+    size_t indexElemSize = 0;
+    if (type == GL_UNSIGNED_BYTE) indexElemSize = 1;
+    else if (type == GL_UNSIGNED_SHORT) indexElemSize = 2;
+    else if (type == GL_UNSIGNED_INT) indexElemSize = 4;
+
+    if (indexElemSize && indexOffset < (uintptr_t)indexBufferSize)
+        indexCount = std::min<size_t>(
+            (size_t)count,
+            ((size_t)indexBufferSize - (size_t)indexOffset) / indexElemSize);
+
+    uint32_t badIndexCount = 0;
+    uint32_t nanInfCount = 0;
+    uint32_t hugeCoordCount = 0;
+    uint32_t referencedCount = 0;
+    uint32_t minIndex = UINT32_MAX;
+    uint32_t maxIndex = 0;
+
+    float minX = 0.0f, minY = 0.0f, minZ = 0.0f;
+    float maxX = 0.0f, maxY = 0.0f, maxZ = 0.0f;
+    bool haveCoord = false;
+
+    auto readIndex = [&](size_t n) -> uint32_t {
+        const uint8_t* p = ibytes + (size_t)indexOffset + n * indexElemSize;
+        if (indexElemSize == 1) return p[0];
+        if (indexElemSize == 2) {
+            uint16_t v = 0;
+            std::memcpy(&v, p, sizeof(v));
+            return v;
+        }
+        uint32_t v = 0;
+        std::memcpy(&v, p, sizeof(v));
+        return v;
+    };
+
+    for (size_t i = 0; i < indexCount; ++i) {
+        const uint32_t idx = readIndex(i);
+        minIndex = std::min(minIndex, idx);
+        maxIndex = std::max(maxIndex, idx);
+
+        if ((size_t)idx >= vertexCount) {
+            ++badIndexCount;
+            continue;
+        }
+
+        const uint8_t* vp = vbytes + (size_t)vertexOffset + (size_t)idx * (size_t)stride;
+        float xyz[3] = {};
+        std::memcpy(&xyz[0], vp + 0, sizeof(float));
+        std::memcpy(&xyz[1], vp + 4, sizeof(float));
+        std::memcpy(&xyz[2], vp + 8, sizeof(float));
+
+        ++referencedCount;
+        if (!std::isfinite(xyz[0]) || !std::isfinite(xyz[1]) || !std::isfinite(xyz[2])) {
+            ++nanInfCount;
+        } else {
+            if (!haveCoord) {
+                minX = maxX = xyz[0];
+                minY = maxY = xyz[1];
+                minZ = maxZ = xyz[2];
+                haveCoord = true;
+            } else {
+                minX = std::min(minX, xyz[0]); maxX = std::max(maxX, xyz[0]);
+                minY = std::min(minY, xyz[1]); maxY = std::max(maxY, xyz[1]);
+                minZ = std::min(minZ, xyz[2]); maxZ = std::max(maxZ, xyz[2]);
+            }
+            if (std::fabs(xyz[0]) > 100000.0f ||
+                std::fabs(xyz[1]) > 100000.0f ||
+                std::fabs(xyz[2]) > 100000.0f)
+                ++hugeCoordCount;
+        }
+    }
+
+    compatLogFmt(
+        "GL DRAW CONTENT[%u]: vbo=%d verts=%zu stride=%d ptrOff=0x%llx "
+        "ibo=%d indices=%zu/%d indexOff=0x%llx min=%u max=%u bad=%u "
+        "nanInf=%u huge=%u XYZ=%g,%g,%g..%g,%g,%g",
+        g_nearDrawContentDiagCalls + 1,
+        (int)arrayBuffer, vertexCount, (int)stride,
+        (unsigned long long)vertexOffset, (int)elementBuffer,
+        indexCount, (int)count, (unsigned long long)indexOffset,
+        minIndex == UINT32_MAX ? 0u : minIndex, maxIndex, badIndexCount,
+        nanInfCount, hugeCoordCount,
+        haveCoord ? (double)minX : 0.0, haveCoord ? (double)minY : 0.0,
+        haveCoord ? (double)minZ : 0.0, haveCoord ? (double)maxX : 0.0,
+        haveCoord ? (double)maxY : 0.0, haveCoord ? (double)maxZ : 0.0);
+
+    const size_t sampleCount = std::min<size_t>(indexCount, 12);
+    for (size_t i = 0; i < sampleCount; ++i) {
+        const uint32_t idx = readIndex(i);
+        if ((size_t)idx >= vertexCount) {
+            compatLogFmt("GL DRAW CONTENT INDEX[%u]: i=%u idx=%u BAD",
+                         g_nearDrawContentDiagCalls + 1, (unsigned)i, (unsigned)idx);
+            continue;
+        }
+        const uint8_t* vp = vbytes + (size_t)vertexOffset + (size_t)idx * (size_t)stride;
+        float xyz[3] = {};
+        std::memcpy(&xyz[0], vp + 0, sizeof(float));
+        std::memcpy(&xyz[1], vp + 4, sizeof(float));
+        std::memcpy(&xyz[2], vp + 8, sizeof(float));
+        compatLogFmt(
+            "GL DRAW CONTENT INDEX[%u]: i=%u idx=%u XYZ=%g,%g,%g",
+            g_nearDrawContentDiagCalls + 1, (unsigned)i, (unsigned)idx,
+            (double)xyz[0], (double)xyz[1], (double)xyz[2]);
+    }
+
+    glUnmapBuffer(GL_ELEMENT_ARRAY_BUFFER);
+    glUnmapBuffer(GL_ARRAY_BUFFER);
+
+    ++g_nearDrawContentDiagCalls;
+}
 
 static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
     if (g_nearDrawElementsDiagCalls < 24) {
@@ -5266,6 +5442,10 @@ static void w_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void
             (int)arrayBuffer, (int)vertexBufferSize,
             (int)elementBuffer, (int)indexBufferSize,
             glIsEnabled(GL_VERTEX_ARRAY) ? 1 : 0);
+
+        nearDiagDrawBufferContents(arrayBuffer, elementBuffer,
+                                   vertexBufferSize, indexBufferSize,
+                                   type, count, indices);
     }
     ++g_nearDrawElementsDiagCalls;
 
@@ -8898,6 +9078,17 @@ static void shim_glDisableClientStateCompat(GLenum array) {
 
 static unsigned g_nearVertexPointerDiagCalls = 0;
 
+struct NearVertexPointerState {
+    GLint size = 0;
+    GLenum type = 0;
+    GLsizei stride = 0;
+    uintptr_t pointer = 0;
+    GLint buffer = 0;
+    bool clientPointer = false;
+};
+
+static NearVertexPointerState g_nearVertexPointerState;
+
 static void shim_glVertexPointerCompat(GLint size, GLenum type, GLsizei stride,
                                         const void* pointer) {
     GLint buffer = 0;
@@ -8924,6 +9115,14 @@ static void shim_glVertexPointerCompat(GLint size, GLenum type, GLsizei stride,
         }
         glVertexPointer(size, type, stride, pointer);
     }
+
+    g_nearVertexPointerState.size = size;
+    g_nearVertexPointerState.type = type;
+    g_nearVertexPointerState.stride = stride;
+    g_nearVertexPointerState.pointer = reinterpret_cast<uintptr_t>(pointer);
+    g_nearVertexPointerState.buffer = buffer;
+    g_nearVertexPointerState.clientPointer =
+        (buffer == 0) || nearLooksLikeClientPointer(pointer);
 
     ++g_nearVertexPointerDiagCalls;
 }
