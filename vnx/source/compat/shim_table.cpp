@@ -8779,6 +8779,9 @@ static void shim_glBindBufferARB(GLenum target, GLuint buffer) { glBindBuffer(ta
 // The Android renderer maps VBO storage with glMapBufferARB(), modifies the
 // vertex coordinates in-place, then releases it with glUnmapBufferARB().
 // Route the legacy ARB names to Mesa/Zink's core map/unmap entry points.
+static unsigned g_nearVboMapDiagCalls = 0;
+static unsigned g_nearVboUnmapDiagCalls = 0;
+
 static void* shim_glMapBufferARB(GLenum target, GLenum access) {
     // devkitA64 headers expose glMapBufferRange(), but not desktop glMapBuffer().
     // Translate the legacy ARB access enum and map the entire currently bound
@@ -8810,14 +8813,27 @@ static void* shim_glMapBufferARB(GLenum target, GLenum access) {
     }
 
     void* p = glMapBufferRange(target, 0, (GLsizeiptr)size, flags);
-    compatPakLog("GL VERTEX BUFFER: glMapBufferARB target=0x%x access=0x%x size=%d flags=0x%x -> %p",
-                 (unsigned)target, (unsigned)access, (int)size, (unsigned)flags, p);
+    if (g_nearVboMapDiagCalls < 8 || !p) {
+        GLint buffer = 0;
+        glGetIntegerv(target, &buffer);
+        compatLogFmt(
+            "GL DEFORM MAP[%u]: target=0x%x access=0x%x buffer=%d size=%d flags=0x%x ptr=%p",
+            g_nearVboMapDiagCalls + 1, (unsigned)target, (unsigned)access,
+            (int)buffer, (int)size, (unsigned)flags, p);
+    }
+    ++g_nearVboMapDiagCalls;
     return p;
 }
 static GLboolean shim_glUnmapBufferARB(GLenum target) {
     const GLboolean ok = glUnmapBuffer(target);
-    compatPakLog("GL VERTEX BUFFER: glUnmapBufferARB target=0x%x -> %d",
-                 (unsigned)target, (int)ok);
+    if (g_nearVboUnmapDiagCalls < 8 || !ok) {
+        GLint buffer = 0;
+        glGetIntegerv(target, &buffer);
+        compatLogFmt("GL DEFORM UNMAP[%u]: target=0x%x buffer=%d ok=%d",
+                     g_nearVboUnmapDiagCalls + 1, (unsigned)target,
+                     (int)buffer, (int)ok);
+    }
+    ++g_nearVboUnmapDiagCalls;
     return ok;
 }
 static void shim_glBufferDataARB(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
