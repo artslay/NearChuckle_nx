@@ -33,6 +33,8 @@ static bool g_startup_timing_script = false;
 static bool g_startup_timing_renderer = false;
 static bool g_startup_timing_main_loop = false;
 
+static void log_write(const char* text, bool force_flush);
+
 void compatStartupTimerBegin() {
     g_startup_timer_tick = armGetSystemTick();
     g_startup_timing_fs = false;
@@ -79,9 +81,6 @@ static void startupTimingMaybeLog(const char* msg) {
     log_write(buf, label[0] != 'C');
 }
 
-// Forward declaration: startupTimingMaybeLog() is defined before the
-// logger implementation so it can timestamp milestones from inside compatLog().
-static void log_write(const char* text, bool force_flush);
 
 static bool g_boot_console = false;
 static const devoptab_t* g_boot_stdout_dotab = nullptr;
