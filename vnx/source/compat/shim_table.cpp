@@ -7602,6 +7602,14 @@ static std::atomic<unsigned> g_legacyTextureNormalizeCalls{0};
 // gl4es exposes explicit compatibility controls for BGRA and 24-bit RGB
 // textures. Far Cry's Android renderer relies on these legacy upload forms.
 // Normalize them here so Zink/NVK receives a plain RGBA8 client image.
+static bool nearIsBumpOrNormalTextureName(const std::string& name) {
+    const std::string lower = asciiLower(name);
+    return lower.find("_ddn") != std::string::npos ||
+           lower.find("_ddp") != std::string::npos ||
+           lower.find("normal") != std::string::npos ||
+           lower.find("bump") != std::string::npos;
+}
+
 static bool nearPrepareLegacyRgbaPixels(GLsizei width, GLsizei height,
                                         GLenum format, GLenum type,
                                         const void* pixels, GLint unpackBuffer,
@@ -7926,8 +7934,14 @@ static void shim_glTexImage2D(GLenum target, GLint level, GLint internalformat,
         (GLenum)internalformat == GL_RGB8 ||
         (GLenum)internalformat == GL_RGBA ||
         (GLenum)internalformat == GL_RGBA8;
+    // CryEngine's bump/normal-map data is intentionally supplied as BGRA.
+    // GenerateNormalMap() writes Z/Y/X/A into that buffer and the Android
+    // renderer relies on GL_BGRA to expose it as R/G/B/A. Do NOT run the
+    // generic RB swap on those textures or the normal's X/Z axes are exchanged.
+    const bool channelSensitive = nearIsBumpOrNormalTextureName(traceName);
     const bool legacyColorFormat =
         legacy8BitColorTarget &&
+        !channelSensitive &&
         (format == GL_RGB || format == GL_BGR || format == GL_BGRA);
 
     if (type == GL_UNSIGNED_BYTE && legacyColorFormat &&
@@ -8030,6 +8044,11 @@ static bool nearMapLegacySubImageFormat(GLenum format, GLenum type,
     if ((type == GL_UNSIGNED_BYTE || type == GL_BYTE) &&
         isNearDsdtFormat(format)) {
         mappedFormat = (format == kNearGL_DSDT_MAG_NV) ? GL_RGB : GL_RG;
+        // DSDT byte data is stored as two's-complement signed deltas even at
+        // the Android call sites that use GL_UNSIGNED_BYTE. The legacy NV
+        // format interprets those bytes as signed offset components; replay
+        // the same bit pattern through the core signed type.
+        mappedType = GL_BYTE;
         return true;
     }
 
