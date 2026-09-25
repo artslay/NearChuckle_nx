@@ -5519,7 +5519,7 @@ static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
 
                 std::string compactSource = programSource;
                 for (char& ch : compactSource) {
-                    if (ch == '\\n' || ch == '\\r')
+                    if (ch == '\n' || ch == '\r')
                         ch = ' ';
                 }
                 compatLogFmt(
@@ -5534,11 +5534,11 @@ static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
                 {
                     size_t bodyStart = programSource.find("#program main");
                     if (bodyStart != std::string::npos)
-                        bodyStart = programSource.find('\\n', bodyStart);
+                        bodyStart = programSource.find('\n', bodyStart);
 
                     size_t bodyEnd = std::string::npos;
                     if (bodyStart != std::string::npos)
-                        bodyEnd = programSource.find("\\n#end", bodyStart);
+                        bodyEnd = programSource.find("\n#end", bodyStart);
 
                     if (bodyStart != std::string::npos) {
                         if (bodyEnd == std::string::npos)
@@ -5549,13 +5549,13 @@ static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
                         size_t cursor = 0;
                         unsigned instructionNo = 0;
                         while (cursor < instructions.size() && instructionNo < 128) {
-                            size_t next = instructions.find('\\n', cursor);
+                            size_t next = instructions.find('\n', cursor);
                             if (next == std::string::npos)
                                 next = instructions.size();
 
                             std::string line = instructions.substr(cursor, next - cursor);
                             while (!line.empty() &&
-                                   (line.front() == ' ' || line.front() == '\\t'))
+                                   (line.front() == ' ' || line.front() == '\t'))
                                 line.erase(line.begin());
 
                             if (!line.empty() && line[0] != '#') {
