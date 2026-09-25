@@ -8414,16 +8414,14 @@ static void nearLogWaterDrawState() {
 
     GLint maxUnits = 0;
     GLint program = 0;
-    GLint vertexProgram = 0;
-    GLint fragmentProgram = 0;
+    const GLint vertexProgram = (GLint)g_nearArbVertexProgramBinding;
+    const GLint fragmentProgram = (GLint)g_nearArbFragmentProgramBinding;
 
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &maxUnits);
     glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-    glGetIntegerv(0x864A, &vertexProgram);   // GL_VERTEX_PROGRAM_BINDING_ARB
-    glGetIntegerv(0x8873, &fragmentProgram); // GL_FRAGMENT_PROGRAM_BINDING_ARB
 
     const GLboolean fragmentEnabled = glIsEnabled(0x8804); // GL_FRAGMENT_PROGRAM_ARB
-    const GLboolean vertexEnabled = glIsEnabled(0x8620);  // GL_VERTEX_PROGRAM_ARB
+    const GLboolean vertexEnabled = glIsEnabled(0x8620);   // GL_VERTEX_PROGRAM_ARB
 
     // First identify whether this draw actually uses one of the affected
     // rust/moss/normal-map textures. Only then spend the diagnostic budget.
@@ -8481,10 +8479,12 @@ static void nearLogWaterDrawState() {
 
     compatPakLog(
         "GL AFFECTED DRAW ARRAYS: program=%d vertex_prog=%d vertex_en=%d "
-        "array_vbo=%d pos=%p pos_size=%d pos_type=0x%x pos_stride=%d "
+        "fragment_prog=%d fragment_en=%d array_vbo=%d "
+        "pos=%p pos_size=%d pos_type=0x%x pos_stride=%d "
         "normal=%p normal_type=0x%x normal_stride=%d "
         "color=%p color_size=%d color_type=0x%x color_stride=%d",
         program, vertexProgram, vertexEnabled ? 1 : 0,
+        fragmentProgram, fragmentEnabled ? 1 : 0,
         arrayBufferBefore,
         vertexPtr, vertexSize, (unsigned)vertexType, vertexStride,
         normalPtr, (unsigned)normalType, normalStride,
@@ -9586,9 +9586,10 @@ static void nearLogArbProgramState(const char* event, GLenum target, GLuint requ
         return;
 
     GLint binding = -1;
-    const GLenum bindingEnum = nearArbProgramBindingEnum(target);
-    if (bindingEnum)
-        glGetIntegerv(bindingEnum, &binding);
+    if (target == 0x8620)
+        binding = (GLint)g_nearArbVertexProgramBinding;
+    else if (target == 0x8804)
+        binding = (GLint)g_nearArbFragmentProgramBinding;
 
     GLint length = -1;
     GLint errorPos = -2;
