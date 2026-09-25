@@ -816,11 +816,13 @@ static void* resolveSymbol(const char* name) {
         }
     }
 
-    // Last: Unity/IL2CPP libc gap fillers.
+    // Last: Unity/IL2CPP libc gap fillers. Do not cache this result:
+    // a later dlopen() can load a guest library that defines the same symbol,
+    // and the existing resolver would then select that newly available guest
+    // definition before falling back.
     void* fb = shimResolveFallback(name);
     if (fb) {
         if (trace) compatLogFmt("bind: %s -> fallback %p", name, fb);
-        g_symbol_cache.emplace(name, fb);
         return fb;
     }
 
