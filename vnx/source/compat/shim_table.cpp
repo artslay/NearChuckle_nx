@@ -8770,6 +8770,23 @@ static void shim_glDisableClientStateCompat(GLenum array) {
 
 static void shim_glActiveStencilFaceEXT(GLenum) {}
 static void shim_glBindBufferARB(GLenum target, GLuint buffer) { glBindBuffer(target, buffer); }
+
+// Switch-only compatibility for Far Cry's software vertex deformation path.
+// The Android renderer maps VBO storage with glMapBufferARB(), modifies the
+// vertex coordinates in-place, then releases it with glUnmapBufferARB().
+// Route the legacy ARB names to Mesa/Zink's core map/unmap entry points.
+static void* shim_glMapBufferARB(GLenum target, GLenum access) {
+    void* p = glMapBuffer(target, access);
+    compatPakLog("GL VERTEX BUFFER: glMapBufferARB target=0x%x access=0x%x -> %p",
+                 (unsigned)target, (unsigned)access, p);
+    return p;
+}
+static GLboolean shim_glUnmapBufferARB(GLenum target) {
+    const GLboolean ok = glUnmapBuffer(target);
+    compatPakLog("GL VERTEX BUFFER: glUnmapBufferARB target=0x%x -> %d",
+                 (unsigned)target, (int)ok);
+    return ok;
+}
 static void shim_glBufferDataARB(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
     glBufferData(target, size, data, usage);
 }
@@ -10657,6 +10674,8 @@ static const ShimEntry g_shims[] = {
     {"glBegin", (void*)glBegin},
     {"glBindBufferARB", (void*)shim_glBindBufferARB},
     {"glBufferDataARB", (void*)shim_glBufferDataARB},
+    {"glMapBufferARB", (void*)shim_glMapBufferARB},
+    {"glUnmapBufferARB", (void*)shim_glUnmapBufferARB},
     {"glBufferSubDataARB", (void*)shim_glBufferSubDataARB},
     {"glBindProgramARB", (void*)shim_glBindProgramARB},
     {"glDeleteProgramsARB", (void*)shim_glDeleteProgramsARB},
