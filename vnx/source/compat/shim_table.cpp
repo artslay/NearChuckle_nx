@@ -5527,6 +5527,56 @@ static void nearDiagDrawBufferContents(GLint arrayBuffer, GLint elementBuffer,
                     g_nearDrawContentDiagCalls + 1, (int)vertexProgram,
                     compactSource.c_str());
 
+                // Also emit only executable ARBvp instructions. The full
+                // compiler text above is useful but can be too long for a
+                // single console/log record; the instruction-only view makes
+                // position/data dependencies immediately visible.
+                {
+                    size_t bodyStart = programSource.find("#program main");
+                    if (bodyStart != std::string::npos)
+                        bodyStart = programSource.find('\\n', bodyStart);
+
+                    size_t bodyEnd = std::string::npos;
+                    if (bodyStart != std::string::npos)
+                        bodyEnd = programSource.find("\\n#end", bodyStart);
+
+                    if (bodyStart != std::string::npos) {
+                        if (bodyEnd == std::string::npos)
+                            bodyEnd = programSource.size();
+
+                        std::string instructions = programSource.substr(
+                            bodyStart + 1, bodyEnd - (bodyStart + 1));
+                        size_t cursor = 0;
+                        unsigned instructionNo = 0;
+                        while (cursor < instructions.size() && instructionNo < 128) {
+                            size_t next = instructions.find('\\n', cursor);
+                            if (next == std::string::npos)
+                                next = instructions.size();
+
+                            std::string line = instructions.substr(cursor, next - cursor);
+                            while (!line.empty() &&
+                                   (line.front() == ' ' || line.front() == '\\t'))
+                                line.erase(line.begin());
+
+                            if (!line.empty() && line[0] != '#') {
+                                compatLogFmt(
+                                    "GL DRAW VP INST[%u]: program=%d n=%u %s",
+                                    g_nearDrawContentDiagCalls + 1,
+                                    (int)vertexProgram,
+                                    instructionNo,
+                                    line.c_str());
+                                ++instructionNo;
+                            }
+                            cursor = next + (next < instructions.size() ? 1 : 0);
+                        }
+
+                        compatLogFmt(
+                            "GL DRAW VP INST END[%u]: program=%d count=%u",
+                            g_nearDrawContentDiagCalls + 1,
+                            (int)vertexProgram, instructionNo);
+                    }
+                }
+
                 // vertex.texcoord (without [n]) and vertex.texcoord[0] both
                 // consume the conventional texture-coordinate set 0. Capture
                 // that exact client-array state at the same draw.
