@@ -470,7 +470,7 @@ static int run_farcry(LoadedSo* game_so) {
     // the equivalent detail path disabled until real detail shaders are available.
     std::snprintf(arg12, sizeof(arg12), "\"r_DetailTextures 0\"");
     // Disable render-buffer merging for one A/B run. The original CryEngine
-    // merge path rewrites vertex/index data in mfFillRB(), so this isolates
+    // merge path rewrites vertex/index data in mfFillRB(), so this forces
     // merge-specific geometry corruption without changing the GL stream path.
     std::snprintf(arg13, sizeof(arg13), "\"r_rb_merge 0\"");
     // CryEngine applies +CVar post-commands after renderer/system initialization.
@@ -505,7 +505,7 @@ static int run_farcry(LoadedSo* game_so) {
     compatLog("Far Cry: r_UseHWShaders 1 queued for shader script registration");
     compatLog("Far Cry: r_displayInfo 1 queued for on-screen FPS/render statistics");
     compatLog("Far Cry: r_DetailTextures 0 queued to avoid fallback detail-overlay artifacts");
-    compatLog("Far Cry: r_rb_merge 0 queued for merge-path A/B geometry test");
+    compatLog("Far Cry: r_RB_Merge 4096 queued to force render-buffer merge for geometry A/B test");
     compatLog("Far Cry: command-line CVars use quoted name + value commands");
 
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
