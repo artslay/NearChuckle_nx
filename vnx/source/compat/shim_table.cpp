@@ -39,10 +39,12 @@ extern void compatPollSwitchInput();
 // Bink video audio bridge. These are the exported C entry points implemented
 // in bink_audio_sdl.cpp; bind the guest CS_* imports to the SDL3-backed path.
 extern "C" {
-void* near_bink_cs_stream_create(void (*callback)(void), int length, unsigned int flags, int samplerate, void* userdata);
-int near_bink_cs_stream_play(int channel, void* stream);
-signed char near_bink_cs_stream_stop(void* stream);
-signed char near_bink_cs_stream_close(void* stream);
+struct CS_STREAM;
+using CS_StreamCallback = signed char (*)(CS_STREAM*, void*, int, void*);
+void* near_bink_cs_stream_create(CS_StreamCallback callback, int length, unsigned int flags, int samplerate, void* userdata);
+int near_bink_cs_stream_play(int channel, CS_STREAM* stream);
+signed char near_bink_cs_stream_stop(CS_STREAM* stream);
+signed char near_bink_cs_stream_close(CS_STREAM* stream);
 void near_bink_cs_update(void);
 }
 extern void compatPakLog(const char* fmt, ...);
