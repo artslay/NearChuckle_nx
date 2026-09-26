@@ -25,6 +25,7 @@ extern void compatProcessPendingFarCryProfile();
 extern "C" void compatMarkFarCryMainLoopReady();
 extern "C" bool compatProfileListRecentlyScanned();
 extern "C" bool compatActivateFarCryProfile(const char* profile);
+extern "C" bool compatPersistFarCryProfile(const char* profile);
 
 static CompatLayer g_compat = {};
 static Mutex g_log_lock;
@@ -519,6 +520,7 @@ static bool switchSelectFarCryProfileAtVirtualPoint(float x, float y) {
 
     const std::string& selected = profiles[static_cast<size_t>(row)];
     if (!selected.empty() && compatActivateFarCryProfile(selected.c_str())) {
+        compatPersistFarCryProfile(selected.c_str());
         compatLogFmt("PROFILE TOUCH SELECT: row=%d name=%s",
                      row, selected.c_str());
         return true;
