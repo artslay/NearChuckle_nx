@@ -1025,7 +1025,7 @@ static bool compatGetFarCrySystemConsole(
     return console != nullptr;
 }
 
-extern "C" void compatRestoreFarCryBackgroundVideoCVar() {
+static void compatRestoreFarCryBackgroundVideoCVarImpl() {
     static void* lastCvar = nullptr;
 
     void* system = nullptr;
@@ -1145,6 +1145,10 @@ static int compatVideoPanelPlayGuard(void* self) {
 }
 
 } // namespace
+
+extern "C" void compatRestoreFarCryBackgroundVideoCVar() {
+    compatRestoreFarCryBackgroundVideoCVarImpl();
+}
 
 extern "C" bool compatSaveFarCryConfiguration() {
     // Call the actual non-virtual CSystem::SaveConfiguration() symbol. This
