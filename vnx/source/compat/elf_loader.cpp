@@ -1003,11 +1003,12 @@ extern "C" bool compatSaveFarCryProfileConfiguration(const char* profile) {
     if (!gameVtable || !*gameVtable)
         return false;
 
-    // IGame::SaveConfiguration(systemCfg, gameCfg, profile) is slot 18.
+    // IGame::SaveConfiguration(systemCfg, gameCfg, profile) is slot 4
+    // in the Far Cry IGame interface.
     using SaveConfigurationFn =
         void (*)(void*, const char*, const char*, const char*);
     auto saveConfiguration =
-        reinterpret_cast<SaveConfigurationFn>((*gameVtable)[18]);
+        reinterpret_cast<SaveConfigurationFn>((*gameVtable)[4]);
     if (!saveConfiguration)
         return false;
 
