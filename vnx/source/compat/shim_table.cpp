@@ -1028,6 +1028,51 @@ static void syncActiveProfileFromGuestCvar() {
     }
 }
 
+static void activateProfileFromExplicitConfigPath(
+    const std::string& input, bool writeAccess) {
+    if (writeAccess)
+        return;
+
+    std::string profile;
+    bool matched = false;
+
+    if (parseProfileConfigName(input, "_system.cfg", profile) ||
+        parseProfileConfigName(input, "_game.cfg", profile)) {
+        matched = true;
+    }
+
+    if (!matched || profile.empty())
+        return;
+
+    if (asciiLower(profile) == "default") {
+        g_activeProfile.clear();
+        g_activeProfileCvarSet = true;
+        return;
+    }
+
+    if (profile.find('/') != std::string::npos ||
+        profile.find('\\') != std::string::npos)
+        return;
+
+    // Game:LoadConfiguration(<profile>) explicitly opens this profile's
+    // *_system.cfg and *_game.cfg. Make that profile the real current
+    // g_playerprofile before the next filesystem operation, so subsequent
+    // saves and path generation continue to use the profile just selected.
+    if (g_activeProfile != profile) {
+        const bool cvarOk = compatActivateFarCryProfile(profile.c_str());
+        if (cvarOk) {
+            g_activeProfile = profile;
+            g_activeProfileCvarSet = true;
+            compatLogFmt("PROFILE EXPLICIT LOAD: %s -> active", profile.c_str());
+        } else {
+            g_activeProfile = profile;
+            g_activeProfileCvarSet = false;
+            compatLogFmt("PROFILE EXPLICIT LOAD: %s -> CVar switch FAILED",
+                         profile.c_str());
+        }
+    }
+}
+
 static std::string remapRootProfileSystemRead(const std::string& input) {
     if (g_activeProfile.empty() || asciiLower(g_activeProfile) == "default")
         return input;
@@ -4044,6 +4089,9 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const bool configWrite =
         mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
 
+    if (configPath)
+        activateProfileFromExplicitConfigPath(normalizedPath, configWrite);
+
     std::string activePath = remapActiveProfilePath(normalizedPath);
 
     // The engine first loads root system.cfg to discover g_playerprofile.
@@ -4372,6 +4420,9 @@ static int stub_open(const char* path, int flags, ...) {
 
     const bool openWrite =
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
+
+    if (configPath)
+        activateProfileFromExplicitConfigPath(normalizedPath, openWrite);
 
     std::string ioPathStorage = remapActiveProfilePath(normalizedPath);
 
