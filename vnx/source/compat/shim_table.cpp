@@ -847,6 +847,65 @@ static bool profileModeWrites(const char* mode) {
             std::strchr(mode, '+') != nullptr);
 }
 
+extern "C" bool compatActivateFarCryProfile(const char* profile);
+
+static Mutex g_pending_farcry_profile_lock;
+static std::string g_pending_farcry_profile;
+
+static bool getProfileConfigName(const std::string& path,
+                                 std::string& profileName) {
+    std::string normalized = path;
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    std::string lower = asciiLower(normalized);
+    const char* suffixes[] = {"_system.cfg", "_game.cfg"};
+    const char* suffix = nullptr;
+    for (const char* candidate : suffixes) {
+        const size_t len = std::strlen(candidate);
+        if (lower.size() > len &&
+            lower.compare(lower.size() - len, len, candidate) == 0) {
+            suffix = candidate;
+            break;
+        }
+    }
+    if (!suffix)
+        return false;
+
+    const size_t marker = lower.rfind("profiles/player/");
+    if (marker == std::string::npos)
+        return false;
+
+    const size_t nameStart = marker + std::strlen("profiles/player/");
+    const size_t suffixStart = normalized.size() - std::strlen(suffix);
+    if (suffixStart <= nameStart)
+        return false;
+
+    const std::string tail = normalized.substr(nameStart,
+                                               suffixStart - nameStart);
+    if (tail.empty() || tail.find('/') != std::string::npos)
+        return false;
+
+    profileName = tail;
+    return true;
+}
+
+static void queueFarCryProfileSelection(const std::string& configPath) {
+    std::string profileName;
+    if (!getProfileConfigName(configPath, profileName))
+        return;
+
+    mutexLock(&g_pending_farcry_profile_lock);
+    g_pending_farcry_profile = profileName;
+    mutexUnlock(&g_pending_farcry_profile_lock);
+
+    compatLogFmt("PROFILE SELECT REQUEST: %s -> %s",
+                 configPath.c_str(), profileName.c_str());
+}
+
+
 static bool getProfileGameBaseName(const std::string& path,
                                    std::string& profileBase) {
     std::string normalized = path;
@@ -1015,56 +1074,6 @@ static bool ensureProfileConfigPairForDirectory(
     return changed || (haveSystem && haveGame);
 }
 
-static bool ensureProfileConfigPairForPath(
-    const std::string& configPath) {
-    std::string normalized = configPath;
-    for (char& c : normalized) {
-        if ((unsigned char)c == 92)
-            c = '/';
-    }
-
-    const std::string lower = asciiLower(normalized);
-    const char* suffixes[] = {"_system.cfg", "_game.cfg"};
-    const char* suffix = nullptr;
-    for (const char* candidate : suffixes) {
-        const size_t len = std::strlen(candidate);
-        if (lower.size() > len &&
-            lower.compare(lower.size() - len, len, candidate) == 0) {
-            suffix = candidate;
-            break;
-        }
-    }
-    if (!suffix)
-        return false;
-
-    const size_t slash = normalized.find_last_of('/');
-    if (slash == std::string::npos)
-        return false;
-
-    const std::string fileName = normalized.substr(slash + 1);
-    const std::string profileName =
-        fileName.substr(0, fileName.size() - std::strlen(suffix));
-    if (profileName.empty())
-        return false;
-
-    const std::string base = normalized.substr(0, slash + 1);
-    const std::string profileDirectory = base + profileName;
-
-    struct stat stDir = {};
-    if (::stat(profileDirectory.c_str(), &stDir) != 0) {
-        if (::mkdir(profileDirectory.c_str(), 0755) != 0 && errno != EEXIST) {
-            compatLogFmt("PROFILE DIR CREATE FAIL: %s errno=%d",
-                         profileDirectory.c_str(), errno);
-            return false;
-        }
-        compatLogFmt("PROFILE DIR CREATE: %s", profileDirectory.c_str());
-    } else if (!S_ISDIR(stDir.st_mode)) {
-        return false;
-    }
-
-    return ensureProfileConfigPairForDirectory(profileDirectory);
-}
-
 static void ensureProfileSystemConfigForGameWrite(
     const std::string& openedGamePath) {
     std::string profileName;
@@ -1135,7 +1144,21 @@ extern "C" void compatMarkFarCryMainLoopReady() {
 }
 
 void compatProcessPendingFarCryProfile() {
-    // Intentionally empty. CXGame/CScriptObjectGame owns profile state.
+    std::string profile;
+    mutexLock(&g_pending_farcry_profile_lock);
+    profile = g_pending_farcry_profile;
+    mutexUnlock(&g_pending_farcry_profile_lock);
+
+    if (profile.empty())
+        return;
+
+    if (!compatActivateFarCryProfile(profile.c_str()))
+        return;
+
+    mutexLock(&g_pending_farcry_profile_lock);
+    if (g_pending_farcry_profile == profile)
+        g_pending_farcry_profile.clear();
+    mutexUnlock(&g_pending_farcry_profile_lock);
 }
 
 static int stub_fstat64(int fd, void* out) {
@@ -4157,17 +4180,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         }
     }
 
-    // A profile directory can exist before its two root config files. The
-    // native CryEngine profile loader expects both <name>_system.cfg and
-    // <name>_game.cfg, so repair that pair before falling through to PAK lookup.
-    if (!f && !writeMode && profileIo) {
-        if (ensureProfileConfigPairForPath(ioPath)) {
-            f = fopen(ioPath, mode);
-            if (f)
-                openedPath = ioPath ? ioPath : "";
-        }
-    }
-
     if (!f && !writeMode) {
         FILE* pakFile = tryOpenFromPaks(ioPath, mode);
         if (pakFile) {
@@ -4218,6 +4230,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     }
 
     setvbuf(f, nullptr, _IOFBF, 64 * 1024);
+
+    if (f && !writeMode && profileIo) {
+        queueFarCryProfileSelection(openedPath);
+    }
 
     if (f && writeMode && profileIo) {
         compatLogFmt("PROFILE FOPEN OK: %s mode=%s",
@@ -7096,32 +7112,6 @@ static struct dirent* stub_readdir(DIR* dir) {
         unsigned& count = g_readdirCounts[dir];
         ++count;
 
-        const std::string enumDir = asciiLower(it->second);
-        std::string enumDirNorm = enumDir;
-        while (enumDirNorm.size() > 1 && enumDirNorm.back() == '/')
-            enumDirNorm.pop_back();
-        const bool profileListDir =
-            enumDirNorm == "profiles/player" ||
-            (enumDirNorm.size() > std::strlen("/profiles/player") &&
-             enumDirNorm.compare(enumDirNorm.size() - std::strlen("/profiles/player"),
-                                 std::strlen("/profiles/player"),
-                                 "/profiles/player") == 0);
-
-        // ScanDirectory("profiles/player", SCANDIR_SUBDIRS) is what the
-        // original menu uses to obtain profile names. A directory by itself
-        // is not a complete profile: the following LoadConfiguration call
-        // needs <name>_system.cfg and <name>_game.cfg at the same level.
-        if (profileListDir && compat.d_type == DT_DIR &&
-            compat.d_name[0] != '\0' &&
-            std::strcmp(compat.d_name, ".") != 0 &&
-            std::strcmp(compat.d_name, "..") != 0) {
-            std::string profileDir = it->second;
-            if (profileDir.empty() || profileDir.back() != '/')
-                profileDir += '/';
-            profileDir += compat.d_name;
-            (void)ensureProfileConfigPairForDirectory(profileDir);
-        }
-
         if (isProfileFsPath(it->second))
             compatLogFmt("PROFILE ENUM: %s -> %s type=%u",
                          it->second.c_str(), compat.d_name,
@@ -7184,27 +7174,6 @@ static struct dirent* stub_readdir64(DIR* dir) {
 
         unsigned& count = g_readdirCounts[dir];
         ++count;
-
-        const std::string enumDir = asciiLower(it->second);
-        std::string enumDirNorm = enumDir;
-        while (enumDirNorm.size() > 1 && enumDirNorm.back() == '/')
-            enumDirNorm.pop_back();
-        const bool profileListDir =
-            enumDirNorm == "profiles/player" ||
-            (enumDirNorm.size() > std::strlen("/profiles/player") &&
-             enumDirNorm.compare(enumDirNorm.size() - std::strlen("/profiles/player"),
-                                 std::strlen("/profiles/player"),
-                                 "/profiles/player") == 0);
-        if (profileListDir && compat.d_type == DT_DIR &&
-            compat.d_name[0] != '\0' &&
-            std::strcmp(compat.d_name, ".") != 0 &&
-            std::strcmp(compat.d_name, "..") != 0) {
-            std::string profileDir = it->second;
-            if (profileDir.empty() || profileDir.back() != '/')
-                profileDir += '/';
-            profileDir += compat.d_name;
-            (void)ensureProfileConfigPairForDirectory(profileDir);
-        }
 
         return reinterpret_cast<struct dirent*>(&compat);
     }
