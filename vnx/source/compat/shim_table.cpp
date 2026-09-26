@@ -1031,35 +1031,6 @@ static void syncActiveProfileFromGuestCvar() {
     }
 }
 
-static void queueExplicitProfileActivation(const std::string& input,
-                                              bool writeAccess) {
-    if (writeAccess)
-        return;
-
-    std::string profile;
-    if (!parseProfileConfigName(input, "_system.cfg", profile) &&
-        !parseProfileConfigName(input, "_game.cfg", profile))
-        return;
-
-    if (profile.empty())
-        return;
-
-    if (profile.find('/') != std::string::npos ||
-        profile.find('\\') != std::string::npos)
-        return;
-
-    // Game:LoadConfiguration(profile) passes the explicit profile filenames
-    // to CXGame::LoadConfiguration(). Do not change g_playerprofile from
-    // inside fopen/open: the callback is still executing Lua/C++ guest code.
-    // The system config itself is authoritative and normally contains the
-    // target g_playerprofile value. We only schedule a final CVar activation
-    // for the next safe poll, including the explicit "default" profile.
-    g_pendingProfileActivation =
-        asciiLower(profile) == "default" ? "default" : profile;
-    compatLogFmt("PROFILE SWITCH PENDING: %s",
-                 g_pendingProfileActivation.c_str());
-}
-
 static bool isExplicitProfileConfigPath(const std::string& input) {
     if (asciiLower(input).find("profiles/player/") == std::string::npos)
         return false;
@@ -4129,13 +4100,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         lowerPath.find("_system.cfg") != std::string::npos ||
         lowerPath.find("_game.cfg") != std::string::npos;
 
-    if (configPath) {
+    if (configPath)
         syncActiveProfileFromGuestCvar();
-        queueExplicitProfileActivation(normalizedPath,
-                                        mode && (mode[0] == 'w' ||
-                                                 mode[0] == 'a' ||
-                                                 mode[0] == '+'));
-    }
 
     const bool configWrite =
         mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
@@ -4460,12 +4426,8 @@ static int stub_open(const char* path, int flags, ...) {
         lowerPath.find("_system.cfg") != std::string::npos ||
         lowerPath.find("_game.cfg") != std::string::npos;
 
-    if (configPath) {
+    if (configPath)
         syncActiveProfileFromGuestCvar();
-        queueExplicitProfileActivation(
-            normalizedPath,
-            (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0);
-    }
 
     const bool openWrite =
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
@@ -7580,26 +7542,54 @@ static int stub_findclose64(intptr_t handle) {
     return 0;
 }
 
-// The original Android game can remove configuration files while
-// resetting profiles. Keep these operations real on Switch so the filesystem
-// behaves like the Android port; there is intentionally no root-config guard.
+// Keep ordinary file removal untouched. A profile must only switch
+// to default when its actual profile directory is removed; deleting one of the
+// profile's *_system.cfg / *_game.cfg files is not a profile switch.
+static bool isExactProfileDirectory(const std::string& path,
+                                    std::string* profileOut = nullptr) {
+    std::string normalized = path;
+    while (normalized.size() > 1 &&
+           (normalized.back() == '/' || normalized.back() == '\\'))
+        normalized.pop_back();
+
+    std::string lower = asciiLower(normalized);
+    const std::string prefix = "profiles/player/";
+    if (lower.rfind(prefix, 0) != 0)
+        return false;
+
+    const std::string profile = normalized.substr(prefix.size());
+    if (profile.empty() || profile.find('/') != std::string::npos ||
+        profile.find('\\') != std::string::npos)
+        return false;
+
+    if (profileOut)
+        *profileOut = profile;
+    return true;
+}
+
 static int stub_remove(const char* path) {
     const std::string normalized = normalizeSwitchFsPath(path);
-    std::string profile;
-    const bool isSystem =
-        parseProfileConfigName(normalized, "_system.cfg", profile);
-    const bool isGame =
-        !isSystem && parseProfileConfigName(normalized, "_game.cfg", profile);
 
-    if ((isSystem || isGame) && !g_activeProfile.empty() &&
-        asciiLower(profile) == asciiLower(g_activeProfile)) {
+    struct stat st = {};
+    const bool wasDirectory = (::stat(normalized.c_str(), &st) == 0) &&
+                              S_ISDIR(st.st_mode);
+
+    std::string removedProfile;
+    const bool profileDirectory =
+        wasDirectory && isExactProfileDirectory(normalized, &removedProfile);
+
+    const int rc = ::remove(normalized.c_str());
+
+    if (rc == 0 && profileDirectory &&
+        !g_activeProfile.empty() &&
+        asciiLower(removedProfile) == asciiLower(g_activeProfile)) {
         g_pendingProfileActivation = "default";
         g_activeProfileCvarSet = false;
-        compatLogFmt("PROFILE DELETE ACTIVE: %s -> default pending",
-                     g_activeProfile.c_str());
+        compatLogFmt("PROFILE DIRECTORY DELETED: %s -> default pending",
+                     removedProfile.c_str());
     }
 
-    return ::remove(normalized.c_str());
+    return rc;
 }
 
 static int stub_rename(const char* old_path, const char* new_path) {
@@ -7623,22 +7613,9 @@ static int stub_unlinkat(int dirfd, const char* path, int flags) {
         return -1;
     }
 
-    const std::string normalized = normalizeSwitchFsPath(path);
-    std::string profile;
-    const bool isSystem =
-        parseProfileConfigName(normalized, "_system.cfg", profile);
-    const bool isGame =
-        !isSystem && parseProfileConfigName(normalized, "_game.cfg", profile);
-
-    if ((isSystem || isGame) && !g_activeProfile.empty() &&
-        asciiLower(profile) == asciiLower(g_activeProfile)) {
-        g_pendingProfileActivation = "default";
-        g_activeProfileCvarSet = false;
-        compatLogFmt("PROFILE DELETE ACTIVE: %s -> default pending",
-                     g_activeProfile.c_str());
-    }
-
-    return ::unlink(normalized.c_str());
+    // unlinkat() removes files here; it must never change the active profile
+    // merely because a profile config file was removed.
+    return ::unlink(normalizeSwitchFsPath(path).c_str());
 }
 static int stub_utimensat(int, const char*, const void*, int) { return 0; }
 static int stub_fchmodat(int, const char*, mode_t, int) { return 0; }
