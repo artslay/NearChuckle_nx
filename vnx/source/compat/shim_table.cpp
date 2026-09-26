@@ -860,6 +860,68 @@ static bool profileModeWrites(const char* mode) {
 
 extern "C" bool compatActivateFarCryProfile(const char* profile);
 
+static constexpr const char* kFarCryLastProfileMarker = "Profiles/Player/.last_profile";
+static bool g_farcry_profile_marker_checked = false;
+
+static bool validFarCryProfileName(const char* profile) {
+    if (!profile || !*profile)
+        return false;
+    const std::string name(profile);
+    return name != "." && name != ".." &&
+           name.find('/') == std::string::npos &&
+           name.find('\\') == std::string::npos;
+}
+
+extern "C" bool compatPersistFarCryProfile(const char* profile) {
+    if (!validFarCryProfileName(profile))
+        return false;
+
+    FILE* f = std::fopen(kFarCryLastProfileMarker, "wb");
+    if (!f) {
+        compatLogFmt("PROFILE PERSIST FAIL: %s errno=%d",
+                     profile, errno);
+        return false;
+    }
+
+    const size_t len = std::strlen(profile);
+    const bool ok = std::fwrite(profile, 1, len, f) == len &&
+                    std::fputc('\n', f) != EOF;
+    std::fclose(f);
+
+    if (ok)
+        compatLogFmt("PROFILE PERSIST: %s", profile);
+    else
+        compatLogFmt("PROFILE PERSIST FAIL: %s errno=%d",
+                     profile, errno);
+    return ok;
+}
+
+static bool loadFarCryProfileMarker(std::string& profile) {
+    FILE* f = std::fopen(kFarCryLastProfileMarker, "rb");
+    if (!f)
+        return false;
+
+    char buf[256] = {};
+    const size_t n = std::fread(buf, 1, sizeof(buf) - 1, f);
+    std::fclose(f);
+    if (n == 0)
+        return false;
+
+    size_t len = n;
+    while (len > 0 &&
+           (buf[len - 1] == '\r' || buf[len - 1] == '\n' ||
+            buf[len - 1] == ' ' || buf[len - 1] == '\t')) {
+        --len;
+    }
+    buf[len] = '\0';
+
+    if (!validFarCryProfileName(buf))
+        return false;
+
+    profile.assign(buf, len);
+    return true;
+}
+
 static Mutex g_pending_farcry_profile_lock;
 static std::string g_pending_farcry_profile;
 
@@ -1245,6 +1307,23 @@ extern "C" void compatMarkFarCryMainLoopReady() {
 
 void compatProcessPendingFarCryProfile() {
     std::string profile;
+
+    // The Android guest ignores/deletes the normal root system.cfg on startup,
+    // so restore the last selected profile from a tiny native marker instead.
+    // Check it only once per process; explicit in-session profile changes still
+    // go through the normal pending-profile path.
+    if (!g_farcry_profile_marker_checked) {
+        g_farcry_profile_marker_checked = true;
+
+        std::string persisted;
+        if (loadFarCryProfileMarker(persisted)) {
+            mutexLock(&g_pending_farcry_profile_lock);
+            if (g_pending_farcry_profile.empty())
+                g_pending_farcry_profile = persisted;
+            mutexUnlock(&g_pending_farcry_profile_lock);
+        }
+    }
+
     mutexLock(&g_pending_farcry_profile_lock);
     profile = g_pending_farcry_profile;
     mutexUnlock(&g_pending_farcry_profile_lock);
@@ -1257,10 +1336,7 @@ void compatProcessPendingFarCryProfile() {
 
     // Mirror the original CSystem::SaveConfiguration() behavior immediately
     // after a profile switch. The original engine saves both the selected
-    // profile files and the root system.cfg/game.cfg, the latter carrying
-    // g_playerprofile so the same profile is restored on the next launch.
-    // Do this while the pending profile is still set so any selected-profile
-    // writes are redirected consistently.
+    // profile files and the root system.cfg/game.cfg.
     if (!compatSaveFarCryConfiguration()) {
         compatLogFmt("PROFILE SAVE: failed after selecting %s",
                      profile.c_str());
