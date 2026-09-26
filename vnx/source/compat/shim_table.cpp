@@ -920,9 +920,24 @@ static void ensureProfileCreateDirectories(const std::string& profile) {
         return;
 
     const std::string profileDir = "Profiles/Player/" + profile;
+    const std::string systemCfg = "Profiles/Player/" + profile + "_system.cfg";
+    const std::string gameCfg = "Profiles/Player/" + profile + "_game.cfg";
+
     ::mkdir("Profiles", 0755);
     ::mkdir("Profiles/Player", 0755);
     ::mkdir(profileDir.c_str(), 0755);
+
+    // Create both profile configuration files immediately. The real
+    // SaveConfiguration() write will reopen these exact paths and replace
+    // their contents. Keeping the files in Player is also important for
+    // profile discovery on the next ScanDirectory pass.
+    FILE* f = ::fopen(systemCfg.c_str(), "ab");
+    if (f)
+        ::fclose(f);
+
+    f = ::fopen(gameCfg.c_str(), "ab");
+    if (f)
+        ::fclose(f);
 }
 
 static int stub_fstat64(int fd, void* out) {
