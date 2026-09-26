@@ -1076,6 +1076,71 @@ static bool compatWriteFarCryBackgroundVideoConfig(const char* profile, int valu
     return ok;
 }
 
+static bool compatGetFarCryFocusScreenName(void* system,
+                                            std::string& outName) {
+    outName.clear();
+    if (!system)
+        return false;
+
+    void*** systemVtable = reinterpret_cast<void***>(system);
+    if (!systemVtable || !*systemVtable)
+        return false;
+
+    using GetIScriptSystemFn = void* (*)(void*);
+    auto getIScriptSystem =
+        reinterpret_cast<GetIScriptSystemFn>((*systemVtable)[25]);
+    if (!getIScriptSystem)
+        return false;
+
+    void* scriptSystem = getIScriptSystem(system);
+    if (!scriptSystem)
+        return false;
+
+    void*** scriptVtable = reinterpret_cast<void***>(scriptSystem);
+    if (!scriptVtable || !*scriptVtable)
+        return false;
+
+    using ExecuteBufferFn = bool (*)(void*, const char*, size_t);
+    auto executeBuffer =
+        reinterpret_cast<ExecuteBufferFn>((*scriptVtable)[3]);
+    if (!executeBuffer)
+        return false;
+
+    // CScriptObjectUI exposes UI:GetFocusScreen(), while CUIScreen exposes
+    // GetName(). Ask Lua for the active screen only when this CVar changes;
+    // this avoids any per-frame script overhead.
+    static unsigned sequence = 0;
+    char globalName[64];
+    char script[512];
+    std::snprintf(globalName, sizeof(globalName),
+                  "__near_bg_focus_screen_%u", ++sequence);
+    const int n = std::snprintf(
+        script, sizeof(script),
+        "%s = \"\"\"; local s = UI:GetFocusScreen(); "
+        "if s then %s = s:GetName(); end",
+        globalName, globalName);
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(script))
+        return false;
+
+    if (!executeBuffer(scriptSystem, script, static_cast<size_t>(n)))
+        return false;
+
+    using GetGlobalStringFn =
+        bool (*)(void*, const char*, const char*&);
+    auto getGlobalString =
+        reinterpret_cast<GetGlobalStringFn>((*scriptVtable)[41]);
+    if (!getGlobalString)
+        return false;
+
+    const char* value = nullptr;
+    if (!getGlobalString(scriptSystem, globalName, value))
+        return false;
+
+    if (value && *value)
+        outName = value;
+    return true;
+}
+
 extern "C" void compatPollFarCryBackgroundVideoSave() {
     static bool initialized = false;
     static int lastValue = -1;
@@ -1203,6 +1268,37 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
 
     if (value == lastValue)
         return;
+
+    // Far Cry's menu scripts may reset this CVar while switching back to the
+    // Main Menu. A real user change 0 -> 1 can only come from the Video Options
+    // screen. Reject a 0 -> 1 change from any other screen and restore the
+    // persisted value instead of turning the expensive Bink background back on.
+    if (lastValue == 0 && value == 1) {
+        std::string screenName;
+        const bool haveScreen =
+            compatGetFarCryFocusScreenName(system, screenName);
+        std::string lowerScreen = screenName;
+        for (char& ch : lowerScreen)
+            ch = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(ch)));
+
+        if (!haveScreen || lowerScreen.find("video") == std::string::npos) {
+            using SetStringFn = void (*)(void*, const char*);
+            auto setString =
+                reinterpret_cast<SetStringFn>((*cvarVtable)[4]);
+            if (setString)
+                setString(cvar, "0");
+
+            compatLogFmt(
+                "PROFILE CVar: rejected bg video reset on screen=%s; restored=0",
+                haveScreen ? screenName.c_str() : "(unknown)");
+            return;
+        }
+
+        compatLogFmt(
+            "PROFILE CVar: accepted bg video enable from screen=%s",
+            screenName.c_str());
+    }
 
     compatLogFmt("PROFILE CVar: ui_BackGroundVideo changed %d -> %d; saving profile",
                  lastValue, value);
