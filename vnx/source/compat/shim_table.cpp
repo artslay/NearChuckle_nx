@@ -885,6 +885,7 @@ static int stub__mkdirat(int dirfd, const char* path, mode_t mode) {
 static std::string g_pendingProfileCreate;
 static bool g_pendingProfileSystemWritten = false;
 static bool g_pendingProfileGameWritten = false;
+static std::string g_pendingProfileSystemRefresh;
 
 // Effective profile selected by the profile-creation UI. The guest CVar can
 // remain "default", so the Switch filesystem shim mirrors the selected profile
@@ -1049,16 +1050,14 @@ static std::string remapRootProfileSystemRead(const std::string& input) {
 
 
 void compatProcessPendingFarCryProfile() {
-    if (g_pendingProfileCreate.empty())
+    if (g_pendingProfileSystemRefresh.empty())
         return;
 
-    const std::string profile = g_pendingProfileCreate;
+    const std::string profile = g_pendingProfileSystemRefresh;
     if (compatWriteFarCryProfileSystemConfig(profile.c_str())) {
         g_activeProfile = profile;
         g_activeProfileCvarSet = true;
-        g_pendingProfileCreate.clear();
-        g_pendingProfileSystemWritten = false;
-        g_pendingProfileGameWritten = false;
+        g_pendingProfileSystemRefresh.clear();
         compatLogFmt("PROFILE SYSTEM CFG PENDING: completed %s", profile.c_str());
     }
 }
@@ -4166,12 +4165,11 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             if (parseProfileConfigName(ioPathStorage, "_system.cfg", probedProfile) &&
                 asciiLower(probedProfile) != "default") {
                 g_pendingProfileCreate = probedProfile;
+                g_pendingProfileSystemRefresh = probedProfile;
                 g_activeProfile = probedProfile;
                 g_activeProfileCvarSet = false;
                 g_pendingProfileSystemWritten = false;
                 g_pendingProfileGameWritten = false;
-
-                g_activeProfileCvarSet = false;
 
                 // Create the profile directory immediately when the UI has
                 // identified the new profile name. The original flow may
