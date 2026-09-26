@@ -3771,65 +3771,11 @@ static FILE* makeSyntheticAlphaGradientDds() {
     return f;
 }
 
-// Profile saves are written as Profiles/Player/<name>_game.cfg, while the
-// profile browser enumerates Profiles/Player/<name>/ as a directory. Android
-// creates that directory in SaveConfiguration() immediately after writing the
-// cfg. Make the filesystem side effect explicit here as a safety net so a
-// successful cfg write cannot leave an invisible profile behind.
-static void ensureProfileSaveDirectories(const char* path, const char* mode) {
-    if (!path || !mode || mode[0] != 'w')
-        return;
-
-    std::string normalized = normalizeSwitchFsPath(path);
-    for (char& c : normalized) {
-        if ((unsigned char)c == 92)
-            c = '/';
-    }
-
-    const std::string prefix = "Profiles/Player/";
-    if (normalized.compare(0, prefix.size(), prefix) != 0)
-        return;
-
-    const std::string suffix = "_game.cfg";
-    if (normalized.size() <= prefix.size() + suffix.size() ||
-        normalized.compare(normalized.size() - suffix.size(),
-                           suffix.size(), suffix) != 0)
-        return;
-
-    std::string profile = normalized.substr(
-        prefix.size(),
-        normalized.size() - prefix.size() - suffix.size());
-
-    // Profile names are directory basenames. Reject path traversal/separators
-    // rather than turning a malformed config path into arbitrary mkdir calls.
-    if (profile.empty() || profile == "." || profile == ".." ||
-        profile.find('/') != std::string::npos)
-        return;
-
-    std::string profileDir = prefix + profile;
-    std::string saveDir = profileDir + "/savegames";
-
-    const int profileRc = ::mkdir(profileDir.c_str(), 0755);
-    const int profileErrno = errno;
-    const int saveRc = ::mkdir(saveDir.c_str(), 0755);
-    const int saveErrno = errno;
-
-    if ((profileRc == 0 || profileErrno == EEXIST) &&
-        (saveRc == 0 || saveErrno == EEXIST)) {
-        compatLogFmt("PROFILE FS: ensured %s", saveDir.c_str());
-    } else {
-        compatLogFmt("PROFILE FS: mkdir failed %s rc=%d errno=%d; %s rc=%d errno=%d",
-                     profileDir.c_str(), profileRc, profileErrno,
-                     saveDir.c_str(), saveRc, saveErrno);
-    }
-}
-
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string ioPathStorage = normalizeSwitchFsPath(path);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
-    ensureProfileSaveDirectories(ioPath, mode);
     rememberActiveLevelPak(ioPath);
 
     const bool shaderIo = isShaderPathForDiag(ioPath);
@@ -6570,13 +6516,21 @@ static void fixDirentType(const std::string& directory, struct dirent* ent) {
     }
 
     struct stat st = {};
-    if (stat(full.c_str(), &st) != 0)
+    if (::stat(full.c_str(), &st) == 0) {
+        if (S_ISDIR(st.st_mode))
+            ent->d_type = DT_DIR;
+        else if (S_ISREG(st.st_mode))
+            ent->d_type = DT_REG;
         return;
+    }
 
-    if (S_ISDIR(st.st_mode))
+    // Some Switch filesystem paths can fail stat() while still being valid
+    // directories. Opening the candidate is an unambiguous directory test and
+    // matches the way the Android profile code consumes d_type.
+    if (DIR* probe = ::opendir(full.c_str())) {
+        ::closedir(probe);
         ent->d_type = DT_DIR;
-    else if (S_ISREG(st.st_mode))
-        ent->d_type = DT_REG;
+    }
 }
 
 static struct dirent* stub_readdir(DIR* dir) {
@@ -6610,6 +6564,15 @@ static struct dirent* stub_readdir(DIR* dir) {
 
         unsigned& count = g_readdirCounts[dir];
         ++count;
+
+        std::string profileDir = asciiLower(it->second);
+        while (!profileDir.empty() && profileDir.back() == '/')
+            profileDir.pop_back();
+        if (profileDir == "profiles/player")
+            compatLogFmt("PROFILE ENUM: %s -> %s type=%u",
+                         it->second.c_str(), compat.d_name,
+                         (unsigned)compat.d_type);
+
         return reinterpret_cast<struct dirent*>(&compat);
     }
     return ent;
