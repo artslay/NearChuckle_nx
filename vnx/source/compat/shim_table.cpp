@@ -35,6 +35,16 @@
 #include <unordered_set>
 
 extern void compatPollSwitchInput();
+
+// Bink video audio bridge. These are the exported C entry points implemented
+// in bink_audio_sdl.cpp; bind the guest CS_* imports to the SDL3-backed path.
+extern "C" {
+void* near_bink_cs_stream_create(void (*callback)(void), int length, unsigned int flags, int samplerate, void* userdata);
+int near_bink_cs_stream_play(int channel, void* stream);
+signed char near_bink_cs_stream_stop(void* stream);
+signed char near_bink_cs_stream_close(void* stream);
+void near_bink_cs_update(void);
+}
 extern void compatPakLog(const char* fmt, ...);
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
@@ -11625,6 +11635,15 @@ static const ShimEntry g_shims[] = {
     {"openlog",  (void*)stub_openlog},
     {"closelog", (void*)stub_closelog},
     {"syslog",   (void*)stub_syslog},
+
+    // ── Bink video audio (SDL3) ─────────────────────────────────────────────
+    // Far Cry's Android Bink library imports these CS_* functions directly.
+    // Without explicit bindings they fall through to the old OpenAL path.
+    {"CS_Stream_Create", (void*)near_bink_cs_stream_create},
+    {"CS_Stream_Play",   (void*)near_bink_cs_stream_play},
+    {"CS_Stream_Stop",   (void*)near_bink_cs_stream_stop},
+    {"CS_Stream_Close",  (void*)near_bink_cs_stream_close},
+    {"CS_Update",        (void*)near_bink_cs_update},
 
     // ── Android specifics ────────────────────────────────────────────────────
     {"android_set_abort_message", (void*)stub_android_abort_msg},
