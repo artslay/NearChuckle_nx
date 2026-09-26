@@ -506,10 +506,10 @@ static void pollSwitchInputInternal() {
 
         if (old_zr != new_zr)
             switchEmitMouse(g_sdl_mouse, new_mouse_state,
-                            new_zr ? 0 : 1);
+                            new_zr ? 0 : 1, 0.0f, 0.0f, true);
         if (old_zl != new_zl)
             switchEmitMouse(g_sdl_mouse, new_mouse_state,
-                            new_zl ? 0 : 1);
+                            new_zl ? 0 : 1, 0.0f, 0.0f, true);
 
         const bool rs_left  = (held & HidNpadButton_StickRLeft)  != 0;
         const bool rs_right = (held & HidNpadButton_StickRRight) != 0;
@@ -524,11 +524,9 @@ static void pollSwitchInputInternal() {
 
     // Touchscreen -> logical pointer position + left click.
     //
-    // Far Cry's Android CSDLMouse enables SDL relative mouse mode and consumes
-    // event.motion.xrel/yrel. Sending an absolute mouse event here therefore
-    // does not reliably move the game's virtual mouse. Translate Switch's
-    // 1280x720 touch coordinates into CSDLMouse's 800x600 virtual screen and
-    // feed only relative mouse motion plus the normal left-button pair.
+    // The profile/menu ListView needs the actual logical pointer position.
+    // Translate Switch's 1280x720 touch coordinates into the game's 800x600
+    // UI space and send absolute SDL mouse events while the finger is down.
     if (g_sdl_mouse && g_switch_touch_initialized) {
         HidTouchScreenState touch = {};
         const size_t touch_samples = hidGetTouchScreenStates(&touch, 1);
