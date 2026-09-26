@@ -1117,6 +1117,8 @@ static int g_bg_video_value = -1;
 static void* g_bg_video_last_cvar = nullptr;
 static bool g_bg_video_sink_installed = false;
 static uint64_t g_bg_video_disabled_tick = 0;
+extern "C" volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
+extern "C" void* g_near_video_panel_start = nullptr;
 
 extern "C" int compatVideoPanelPlayGuard(void* self) {
     // Background video is controlled by the persisted Switch-side CVar state.
@@ -1590,8 +1592,6 @@ LoadedSo* elfDlopen(const char* name) {
 extern "C" int compatVideoPanelIsPlaying(void* self);
 extern "C" volatile int g_near_video_open_failed;
 extern "C" volatile uint32_t g_near_video_panel_finished_offset;
-extern "C" volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
-extern "C" void* g_near_video_panel_start = nullptr;
 extern "C" int compatVideoPanelPlayGuard(void* self);
 
 static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
