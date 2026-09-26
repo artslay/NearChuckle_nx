@@ -258,12 +258,17 @@ static bool suppressCompatNoise(const char* msg) {
     const bool switchTouchNoise =
         normalized.find("switch touch:") == 0;
 
+    const bool audioNoise =
+        normalized.find("audio:") == 0 ||
+        normalized.find("bink audio:") == 0;
+
     return normalized.find("pak mem trace") == 0 ||
            normalized.find("farcry getfilesize") == 0 ||
            normalized.find("opendir ") == 0 ||
            normalized.find("pak virtual") == 0 ||
            normalized.find("switch input") == 0 ||
            switchTouchNoise ||
+           audioNoise ||
            normalized.find("sdl: swap heartbeat[") == 0 ||
            normalized.find("pak caf hit:") == 0 ||
            normalized.find("texture format '.tga' is deprecated") != std::string::npos ||
