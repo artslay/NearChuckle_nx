@@ -508,12 +508,15 @@ static void pollSwitchInputInternal() {
             const float dx = rs_right ? 10.0f : (rs_left ? -10.0f : 0.0f);
             const float dy = rs_down ? 10.0f : (rs_up ? -10.0f : 0.0f);
             switchEmitRelativeMouse(g_sdl_mouse, dx, dy);
+            // CSDLMouse defaults to sensitivity=0.2 and multiplies the
+            // resulting delta by 4, so each raw SDL relative unit moves the
+            // Far Cry virtual cursor by 0.8 pixels.
             g_switch_cursor_virtual_x =
                 std::max(0.0f, std::min(799.0f,
-                    g_switch_cursor_virtual_x + dx * 4.0f));
+                    g_switch_cursor_virtual_x + dx * 0.8f));
             g_switch_cursor_virtual_y =
                 std::max(0.0f, std::min(599.0f,
-                    g_switch_cursor_virtual_y + dy * 4.0f));
+                    g_switch_cursor_virtual_y + dy * 0.8f));
         }
     }
 
