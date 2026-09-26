@@ -18,6 +18,13 @@ SOURCES     := source vnx/source/compat
 DATA        :=
 INCLUDES    := source vnx/include
 
+# Android ARM64 guest libraries are packaged into the NRO's RomFS.
+# The source directory is only needed on the build machine; nothing from it
+# has to be copied to the Switch at runtime.
+ROMFS              := romfs
+EMBED_LIB_SOURCE   ?= $(CURDIR)/lib
+EMBED_LIB_DIR      := $(CURDIR)/$(ROMFS)/lib
+
 MESA_SDK    := $(TOPDIR)/mesa-sdk/opt/devkitpro/portlibs/switch
 LIBDIRS     := $(MESA_SDK) $(PORTLIBS) $(LIBNX)
 
@@ -90,7 +97,7 @@ $(BUILD):
 
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).nro $(TARGET).nacp $(TARGET).elf
+	@rm -fr $(BUILD) $(TARGET).nro $(TARGET).nacp $(TARGET).elf $(ROMFS)
 
 else
 
