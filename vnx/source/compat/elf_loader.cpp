@@ -976,6 +976,106 @@ extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile) {
     return ok;
 }
 
+static bool compatWriteFarCryBackgroundVideoConfig(const char* profile, int value) {
+    if (!profile || !*profile)
+        return false;
+
+    char path[512];
+    const int pathLen = std::snprintf(
+        path, sizeof(path),
+        "Profiles/Player/%s_system.cfg", profile);
+    if (pathLen <= 0 || static_cast<size_t>(pathLen) >= sizeof(path))
+        return false;
+
+    FILE* in = std::fopen(path, "rb");
+    if (!in)
+        return false;
+
+    if (std::fseek(in, 0, SEEK_END) != 0) {
+        std::fclose(in);
+        return false;
+    }
+    const long size = std::ftell(in);
+    if (size < 0 || size > 4 * 1024 * 1024) {
+        std::fclose(in);
+        return false;
+    }
+    std::rewind(in);
+
+    std::string data;
+    data.resize(static_cast<size_t>(size));
+    if (size > 0 &&
+        std::fread(&data[0], 1, static_cast<size_t>(size), in) !=
+            static_cast<size_t>(size)) {
+        std::fclose(in);
+        return false;
+    }
+    std::fclose(in);
+
+    const std::string lineValue =
+        std::string("ui_BackGroundVideo = \"") +
+        (value ? "1" : "0") + "\"";
+
+    size_t pos = 0;
+    bool replaced = false;
+    while (pos < data.size()) {
+        const size_t lineEnd = data.find_first_of("\r\n", pos);
+        const size_t end = (lineEnd == std::string::npos) ? data.size() : lineEnd;
+
+        std::string line = data.substr(pos, end - pos);
+        size_t key = 0;
+        while (key < line.size() &&
+               (line[key] == ' ' || line[key] == '\t'))
+            ++key;
+
+        if (line.compare(key, std::strlen("ui_BackGroundVideo"),
+                         "ui_BackGroundVideo") == 0) {
+            size_t afterKey = key + std::strlen("ui_BackGroundVideo");
+            while (afterKey < line.size() &&
+                   (line[afterKey] == ' ' || line[afterKey] == '\t'))
+                ++afterKey;
+            if (afterKey < line.size() && line[afterKey] == '=') {
+                std::string replacement =
+                    line.substr(0, key) + lineValue;
+                data.replace(pos, end - pos, replacement);
+                pos += replacement.size();
+                replaced = true;
+                continue;
+            }
+        }
+
+        if (lineEnd == std::string::npos)
+            break;
+
+        pos = lineEnd;
+        if (data[pos] == '\r') {
+            ++pos;
+            if (pos < data.size() && data[pos] == '\n')
+                ++pos;
+        } else {
+            ++pos;
+        }
+    }
+
+    if (!replaced) {
+        if (!data.empty() && data.back() != '\n' && data.back() != '\r')
+            data += "\r\n";
+        data += lineValue;
+        data += "\r\n";
+    }
+
+    FILE* out = std::fopen(path, "wb");
+    if (!out)
+        return false;
+
+    const size_t written =
+        data.empty() ? 0 : std::fwrite(data.data(), 1, data.size(), out);
+    const bool ok = data.empty() ? true : written == data.size();
+    if (std::fclose(out) != 0)
+        return false;
+    return ok;
+}
+
 extern "C" void compatPollFarCryBackgroundVideoSave() {
     static bool initialized = false;
     static int lastValue = -1;
@@ -1085,8 +1185,28 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
                  lastValue, value);
     lastValue = value;
 
-    if (!compatSaveFarCryConfiguration()) {
+    const char* profile = nullptr;
+    void* profileCvar = getCVar(console, "g_playerprofile", true);
+    if (profileCvar) {
+        void*** profileVtable = reinterpret_cast<void***>(profileCvar);
+        if (profileVtable && *profileVtable) {
+            auto getProfileString =
+                reinterpret_cast<GetStringFn>((*profileVtable)[3]);
+            if (getProfileString)
+                profile = getProfileString(profileCvar);
+        }
+    }
+
+    const bool engineSaved = compatSaveFarCryConfiguration();
+    const bool fileSaved =
+        profile && *profile &&
+        compatWriteFarCryBackgroundVideoConfig(profile, value);
+
+    if (!engineSaved && !fileSaved) {
         compatLog("PROFILE CVar: failed to save ui_BackGroundVideo");
+    } else {
+        compatLogFmt("PROFILE CVar: ui_BackGroundVideo=%d saved engine=%d file=%d",
+                     value, engineSaved ? 1 : 0, fileSaved ? 1 : 0);
     }
 }
 
