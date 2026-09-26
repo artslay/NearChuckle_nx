@@ -24,6 +24,8 @@ extern void* jniFindRegisteredNative(const char* name, int occurrence);
 extern void compatProcessPendingFarCryProfile();
 extern "C" void compatEnsureFarCryBackgroundVideoSink();
 extern "C" void compatMarkFarCryMainLoopReady();
+extern "C" void compatArmFarCryConfigurationPersistence();
+extern "C" void compatFlushFarCryConfigurationIfDirty();
 extern "C" bool compatProfileListRecentlyScanned();
 extern "C" bool compatActivateFarCryProfile(const char* profile);
 extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile);
@@ -667,12 +669,18 @@ void compatPollSwitchInput() {
     // returned, using the real IConsole::DumpCVars() path.
     compatProcessPendingFarCryProfile();
     compatEnsureFarCryBackgroundVideoSink();
+    compatFlushFarCryConfigurationIfDirty();
 }
 
 void compatLog(const char* msg) {
     const bool main_loop = is_main_loop_marker(msg);
-    if (main_loop)
+    if (main_loop) {
         compatMarkFarCryMainLoopReady();
+        // Do not persist startup defaults. From the moment the real game loop
+        // begins, CVar changes made by the options UI are eligible for deferred
+        // profile persistence.
+        compatArmFarCryConfigurationPersistence();
+    }
 
     const bool suppress_pak_success = suppressSuccessfulPakDiag(msg);
     const bool suppress_noise = suppressCompatNoise(msg);
