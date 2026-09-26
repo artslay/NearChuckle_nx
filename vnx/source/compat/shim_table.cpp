@@ -881,6 +881,19 @@ static void ensureProfileSystemConfigForGameWrite(
     if (!isProfileFsPath(openedGamePath))
         return;
 
+    // The native CScriptObjectGame::SaveConfiguration() creates the profile
+    // directory after serializing both config files. If the native system
+    // config write is skipped on this ABI, keep the directory visible to the
+    // same ScanDirectory("profiles/player", SCANDIR_SUBDIRS, ...) path.
+    std::string profileDir = openedGamePath.substr(
+        0, openedGamePath.size() -
+        (profileName.size() + std::strlen("_game.cfg")));
+    profileDir += profileName;
+    if (::mkdir(profileDir.c_str(), 0755) != 0 && errno != EEXIST) {
+        compatLogFmt("PROFILE DIR CREATE FAIL: %s errno=%d",
+                     profileDir.c_str(), errno);
+    }
+
     std::string systemPath = openedGamePath.substr(
         0, openedGamePath.size() - std::strlen("_game.cfg"));
     systemPath += "_system.cfg";
