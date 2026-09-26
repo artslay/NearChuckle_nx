@@ -49,15 +49,15 @@ namespace {
 constexpr ALenum AL_TRUE = 1;
 constexpr ALenum AL_SOURCE_RELATIVE = 0x0202;
 constexpr ALenum AL_POSITION = 0x1004;
-constexpr AL_VELOCITY = 0x1006;
-constexpr AL_BUFFER = 0x1009;
-constexpr AL_SOURCE_STATE = 0x1010;
-constexpr AL_INITIAL = 0x1011;
-constexpr AL_PLAYING = 0x1012;
-constexpr AL_PAUSED = 0x1013;
-constexpr AL_BUFFERS_QUEUED = 0x1015;
-constexpr AL_BUFFERS_PROCESSED = 0x1016;
-constexpr AL_FORMAT_STEREO16 = 0x1103;
+constexpr ALenum AL_VELOCITY = 0x1006;
+constexpr ALenum AL_BUFFER = 0x1009;
+constexpr ALenum AL_SOURCE_STATE = 0x1010;
+constexpr ALenum AL_INITIAL = 0x1011;
+constexpr ALenum AL_PLAYING = 0x1012;
+constexpr ALenum AL_PAUSED = 0x1013;
+constexpr ALenum AL_BUFFERS_QUEUED = 0x1015;
+constexpr ALenum AL_BUFFERS_PROCESSED = 0x1016;
+constexpr ALenum AL_FORMAT_STEREO16 = 0x1103;
 
 constexpr int CS_FREE = -1;
 constexpr int MIN_QUEUED_BUFFERS = 20;
