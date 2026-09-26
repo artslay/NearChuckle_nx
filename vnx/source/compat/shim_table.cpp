@@ -841,6 +841,17 @@ static bool isProfileFsPath(const std::string& path) {
            lower.find("/profiles/") != std::string::npos;
 }
 
+static u64 g_last_profile_list_scan_tick = 0;
+
+extern "C" bool compatProfileListRecentlyScanned() {
+    if (!g_last_profile_list_scan_tick)
+        return false;
+    const u64 now = armGetSystemTick();
+    const u64 freq = armGetSystemTickFreq();
+    return freq != 0 && now >= g_last_profile_list_scan_tick &&
+           (now - g_last_profile_list_scan_tick) <= freq * 60;
+}
+
 static bool profileModeWrites(const char* mode) {
     return mode &&
            (mode[0] == 'w' || mode[0] == 'a' ||
@@ -7211,10 +7222,14 @@ static struct dirent* stub_readdir(DIR* dir) {
         unsigned& count = g_readdirCounts[dir];
         ++count;
 
-        if (isProfileFsPath(it->second))
+        if (isProfileFsPath(it->second)) {
+            const std::string enumLower = asciiLower(it->second);
+            if (enumLower.find("profiles/player") != std::string::npos)
+                g_last_profile_list_scan_tick = armGetSystemTick();
             compatLogFmt("PROFILE ENUM: %s -> %s type=%u",
                          it->second.c_str(), compat.d_name,
                          (unsigned)compat.d_type);
+        }
 
         return reinterpret_cast<struct dirent*>(&compat);
     }
