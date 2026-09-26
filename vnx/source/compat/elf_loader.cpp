@@ -809,7 +809,7 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
 
     using GetIConsoleFn = void* (*)(void*);
     auto getIConsole =
-        reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
+        reinterpret_cast<GetIConsoleFn>((*systemVtable)[28]);
     void* console = getIConsole(system);
     if (!console) {
         compatLog("PROFILE CVAR: GetIConsole returned NULL");
@@ -988,10 +988,10 @@ extern "C" bool compatSaveFarCryProfileConfiguration(const char* profile) {
     if (!systemVtable || !*systemVtable)
         return false;
 
-    // ISystem::GetIGame() is slot 19 in the Far Cry ISystem interface.
+    // ISystem::GetIGame() is slot 23 in the Far Cry ISystem interface.
     using GetIGameFn = void* (*)(void*);
     auto getIGame =
-        reinterpret_cast<GetIGameFn>((*systemVtable)[19]);
+        reinterpret_cast<GetIGameFn>((*systemVtable)[23]);
     if (!getIGame)
         return false;
 
