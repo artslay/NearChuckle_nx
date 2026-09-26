@@ -3592,7 +3592,7 @@ static bool findUniqueAnimationBasename(const std::string& wanted,
             const std::string& entry = item.first;
             const size_t entrySlash = entry.find_last_of('/');
             if (entrySlash == std::string::npos ||
-                entry.compare(0, 29, "objects/characters/animations/") != 0)
+                entry.compare(0, 30, "objects/characters/animations/") != 0)
                 continue;
             if (entry.substr(entrySlash + 1) != basename)
                 continue;
