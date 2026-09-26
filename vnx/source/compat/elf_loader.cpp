@@ -1074,12 +1074,28 @@ extern "C" bool compatWriteFarCryProfileSystemConfig(const char* profile) {
             using GetStringFn = char* (*)(void*);
             using GetNameFn = const char* (*)(void*);
 
+            // ICVar vtable (Far Cry IConsole.h):
+            //   0 Release
+            //   1 GetIVal
+            //   2 GetFVal
+            //   3 GetString
+            //   4 Set(const char*)
+            //   5 ForceSet
+            //   6 Set(float)
+            //   7 Set(int)
+            //   8 Refresh
+            //   9 ClearFlags
+            //  10 GetFlags
+            //  11 SetFlags
+            //  12 GetType
+            //  13 GetName
+            //  14 GetHelp
             const auto getFlags =
-                reinterpret_cast<GetFlagsFn>((*vtable)[11]);
+                reinterpret_cast<GetFlagsFn>((*vtable)[10]);
             const auto getString =
                 reinterpret_cast<GetStringFn>((*vtable)[3]);
             const auto getName =
-                reinterpret_cast<GetNameFn>((*vtable)[12]);
+                reinterpret_cast<GetNameFn>((*vtable)[13]);
 
             if (!getFlags || !getString || !getName)
                 return;
