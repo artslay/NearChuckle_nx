@@ -2816,6 +2816,21 @@ static bool g_global_pak_paths_ready = false;
 static std::unordered_map<std::string, PakLookupCacheEntry> g_pak_lookup_cache;
 static std::unordered_set<std::string> g_pak_lookup_misses;
 
+struct AnimationBasenameCacheEntry {
+    enum State : uint8_t {
+        NONE = 0,
+        UNIQUE = 1,
+        AMBIGUOUS = 2
+    };
+
+    State state = NONE;
+    std::string pakPath;
+    PakEntryMeta meta;
+};
+
+static std::unordered_map<std::string, AnimationBasenameCacheEntry>
+    g_animation_basename_cache;
+
 // CRefStreamEngine may ask for the same CAF size repeatedly. Once a file has
 // been positively resolved from a PAK, keep its size independent of subsequent
 // lookup state so a later GetFileSize() can never regress to zero.
@@ -2877,6 +2892,7 @@ static void rememberActiveLevelPak(const char* path) {
         g_pak_lookup_cache.clear();
         g_pak_lookup_misses.clear();
         g_caf_size_cache.clear();
+        g_animation_basename_cache.clear();
     }
     mutexUnlock(&g_pak_index_lock);
 }
@@ -3524,6 +3540,103 @@ static void getAnimationAliasCandidates(const std::string& wanted,
     }
 }
 
+static bool findUniqueAnimationBasename(const std::string& wanted,
+                                        const std::vector<std::string>& activeLevelPaks,
+                                        const std::vector<std::string>& globalPaks,
+                                        std::string& pakPathOut,
+                                        PakEntryMeta& metaOut) {
+    if (wanted.size() < 4 ||
+        wanted.compare(wanted.size() - 4, 4, ".caf") != 0)
+        return false;
+
+    const size_t slash = wanted.find_last_of('/');
+    const std::string basename =
+        slash == std::string::npos ? wanted : wanted.substr(slash + 1);
+    if (basename.empty())
+        return false;
+
+    {
+        mutexLock(&g_pak_index_lock);
+        auto it = g_animation_basename_cache.find(basename);
+        if (it != g_animation_basename_cache.end()) {
+            if (it->second.state == AnimationBasenameCacheEntry::UNIQUE) {
+                pakPathOut = it->second.pakPath;
+                metaOut = it->second.meta;
+                mutexUnlock(&g_pak_index_lock);
+                return true;
+            }
+            mutexUnlock(&g_pak_index_lock);
+            return false;
+        }
+        mutexUnlock(&g_pak_index_lock);
+    }
+
+    AnimationBasenameCacheEntry result;
+    std::unordered_set<std::string> scanned;
+    scanned.reserve(activeLevelPaks.size() + globalPaks.size());
+
+    auto scanPak = [&](const std::string& pakPath) {
+        if (result.state == AnimationBasenameCacheEntry::AMBIGUOUS)
+            return;
+        if (!scanned.insert(pakPath).second)
+            return;
+
+        mutexLock(&g_pak_index_lock);
+        auto it = g_pak_indexes.find(pakPath);
+        if (it == g_pak_indexes.end()) {
+            mutexUnlock(&g_pak_index_lock);
+            return;
+        }
+
+        for (const auto& item : it->second.entries) {
+            const std::string& entry = item.first;
+            const size_t entrySlash = entry.find_last_of('/');
+            if (entrySlash == std::string::npos ||
+                entry.compare(0, 29, "objects/characters/animations/") != 0)
+                continue;
+            if (entry.substr(entrySlash + 1) != basename)
+                continue;
+
+            if (result.state == AnimationBasenameCacheEntry::NONE) {
+                result.state = AnimationBasenameCacheEntry::UNIQUE;
+                result.pakPath = pakPath;
+                result.meta = item.second;
+            } else {
+                result.state = AnimationBasenameCacheEntry::AMBIGUOUS;
+                result.pakPath.clear();
+                result.meta = {};
+                break;
+            }
+        }
+
+        mutexUnlock(&g_pak_index_lock);
+    };
+
+    for (const std::string& pakPath : activeLevelPaks)
+        scanPak(pakPath);
+    for (const std::string& pakPath : globalPaks)
+        scanPak(pakPath);
+
+    mutexLock(&g_pak_index_lock);
+    g_animation_basename_cache[basename] = result;
+    mutexUnlock(&g_pak_index_lock);
+
+    if (result.state == AnimationBasenameCacheEntry::UNIQUE) {
+        pakPathOut = result.pakPath;
+        metaOut = result.meta;
+        compatLogFmt("FARCRY CAF BASENAME HIT: %s -> %s <- %s size=%u",
+                     wanted.c_str(), basename.c_str(), pakPathOut.c_str(),
+                     (unsigned)metaOut.uncompressedSize);
+        return true;
+    }
+
+    if (result.state == AnimationBasenameCacheEntry::AMBIGUOUS) {
+        compatLogFmt("FARCRY CAF BASENAME AMBIGUOUS: %s", basename.c_str());
+    }
+
+    return false;
+}
+
 static thread_local std::string g_lastTexturePakName;
 static Mutex g_textureDiagLock;
 static std::string g_lastTexturePakNameGlobal;
@@ -3721,34 +3834,26 @@ static bool pakFindVirtualEntry(const char* requested,
     // Some Android Far Cry data builds contain stale/relocated
     // animation filenames in the .cal tables. The canonical CAF is still
     // present in Objects.pak, but under its original animation directory.
-    // Resolve only the four verified compatibility aliases instead of doing
-    // a broad basename/fuzzy search.
     {
         std::vector<std::string> aliases;
         getAnimationAliasCandidates(wanted, aliases);
         if (!aliases.empty())
             compatPakLog("ALIAS_CANDIDATES: wanted=%s count=%zu",
                          wanted.c_str(), aliases.size());
+
         for (const std::string& alias : aliases) {
-            compatPakLog("ALIAS_CANDIDATE: wanted=%s alias=%s",
-                         wanted.c_str(), alias.c_str());
-            // Some canonical animation paths have already been resolved by
-            // the normal preload pass. Reuse that positive lookup before
-            // rebuilding the PAK index search for the alias candidate.
-            {
-                mutexLock(&g_pak_index_lock);
-                auto cachedAlias = g_pak_lookup_cache.find(alias);
-                if (cachedAlias != g_pak_lookup_cache.end()) {
-                    pakPathOut = cachedAlias->second.pakPath;
-                    metaOut = cachedAlias->second.meta;
-                    mutexUnlock(&g_pak_index_lock);
-                    compatPakLog("PAK ANIM ALIAS CACHE HIT: %s -> %s <- %s size=%u",
-                                 wanted.c_str(), alias.c_str(), pakPathOut.c_str(),
-                                 (unsigned)metaOut.uncompressedSize);
-                    return true;
-                }
+            mutexLock(&g_pak_index_lock);
+            auto cachedAlias = g_pak_lookup_cache.find(alias);
+            if (cachedAlias != g_pak_lookup_cache.end()) {
+                pakPathOut = cachedAlias->second.pakPath;
+                metaOut = cachedAlias->second.meta;
                 mutexUnlock(&g_pak_index_lock);
+                compatPakLog("PAK ANIM ALIAS CACHE HIT: %s -> %s <- %s size=%u",
+                             wanted.c_str(), alias.c_str(), pakPathOut.c_str(),
+                             (unsigned)metaOut.uncompressedSize);
+                return true;
             }
+            mutexUnlock(&g_pak_index_lock);
 
             for (const std::string& levelPak : activeLevelPaks) {
                 if (pakFindEntryCached(levelPak, alias, metaOut)) {
@@ -3764,8 +3869,6 @@ static bool pakFindVirtualEntry(const char* requested,
                 }
             }
 
-            const std::vector<std::string> globalPaks =
-                getGlobalPakPathsSnapshot();
             for (auto it = globalPaks.rbegin(); it != globalPaks.rend(); ++it) {
                 if (!pakFindEntryCached(*it, alias, metaOut))
                     continue;
@@ -3781,6 +3884,19 @@ static bool pakFindVirtualEntry(const char* requested,
                 return true;
             }
         }
+    }
+
+    // Only fall back from a missing CAF path when exactly one animation PAK
+    // entry has the requested basename. Ambiguous names are rejected.
+    if (wanted.size() >= 4 &&
+        wanted.compare(wanted.size() - 4, 4, ".caf") == 0 &&
+        findUniqueAnimationBasename(wanted, activeLevelPaks, globalPaks,
+                                    pakPathOut, metaOut)) {
+        mutexLock(&g_pak_index_lock);
+        g_pak_lookup_cache[wanted] =
+            PakLookupCacheEntry{pakPathOut, metaOut};
+        mutexUnlock(&g_pak_index_lock);
+        return true;
     }
 
     const bool wantedIsCaf =
