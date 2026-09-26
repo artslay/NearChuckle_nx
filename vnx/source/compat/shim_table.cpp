@@ -52,6 +52,7 @@ extern void compatPakLog(const char* fmt, ...);
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 extern "C" bool compatActivateFarCryProfile(const char* profile);
 extern "C" bool compatGetFarCryProfile(char* out, size_t outSize);
+extern "C" bool compatSaveFarCryConfiguration();
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
 extern "C" {
@@ -884,6 +885,7 @@ static int stub__mkdirat(int dirfd, const char* path, mode_t mode) {
 static std::string g_pendingProfileCreate;
 static bool g_pendingProfileSystemWritten = false;
 static bool g_pendingProfileGameWritten = false;
+static bool g_profileSeedSaveInProgress = false;
 
 // Effective profile selected by the profile-creation UI. The guest CVar can
 // remain "default", so the Switch filesystem shim mirrors the selected profile
@@ -4220,6 +4222,19 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 ensureProfileCreateDirectories(g_pendingProfileCreate);
                 compatLogFmt("PROFILE PENDING CREATE: %s",
                              g_pendingProfileCreate.c_str());
+
+                // The profile UI can create the two filenames before the
+                // normal save call reaches them. Seed the new profile through
+                // the real engine serializer now, rather than leaving the
+                // placeholder *_system.cfg empty. DumpCVars() and the action
+                // map serializer therefore remain the single source of truth.
+                if (cvarOk && !g_profileSeedSaveInProgress) {
+                    g_profileSeedSaveInProgress = true;
+                    const bool saved = compatSaveFarCryConfiguration();
+                    g_profileSeedSaveInProgress = false;
+                    compatLogFmt("PROFILE SEED SAVE: %s",
+                                 saved ? "OK" : "FAILED");
+                }
             }
         }
 
