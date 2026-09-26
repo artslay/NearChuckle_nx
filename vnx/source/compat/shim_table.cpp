@@ -889,6 +889,13 @@ static std::string g_pendingProfileSystemRefresh;
 static std::string g_pendingProfileActivation;
 static std::string g_pendingProfileSystemRewrite;
 
+// A normal profile probe must not switch the active profile. A real
+// Game:LoadConfiguration(profile) opens the selected system cfg and then the
+// selected game cfg, so only after both files are observed do we queue the
+// profile activation.
+static std::string g_explicitProfileLoadCandidate;
+static bool g_farCryMainLoopReady = false;
+
 // Effective profile selected by the profile-creation UI. The guest CVar can
 // remain "default", so the Switch filesystem shim mirrors the selected profile
 // for subsequent config/savegame accesses without touching guest object memory.
@@ -1047,17 +1054,31 @@ static void queueExplicitProfileActivation(const std::string& input,
         return;
 
     std::string profile;
-    if (!parseProfileConfigName(input, "_system.cfg", profile) &&
-        !parseProfileConfigName(input, "_game.cfg", profile))
-        return;
+    const bool systemCfg =
+        parseProfileConfigName(input, "_system.cfg", profile);
+    const bool gameCfg =
+        !systemCfg && parseProfileConfigName(input, "_game.cfg", profile);
 
-    if (profile.empty() ||
+    if ((!systemCfg && !gameCfg) || profile.empty() ||
         profile.find('/') != std::string::npos ||
         profile.find('\\') != std::string::npos)
         return;
 
+    // CXGame::LoadConfiguration() opens system.cfg first and game.cfg second.
+    // A single file open is not a reliable indication that the user selected
+    // this profile because the menu can probe files while enumerating profiles.
+    if (systemCfg) {
+        g_explicitProfileLoadCandidate = profile;
+        return;
+    }
+
+    if (g_explicitProfileLoadCandidate.empty() ||
+        asciiLower(g_explicitProfileLoadCandidate) != asciiLower(profile))
+        return;
+
     g_pendingProfileActivation =
         asciiLower(profile) == "default" ? "default" : profile;
+    g_explicitProfileLoadCandidate.clear();
     compatLogFmt("PROFILE LOAD PENDING: %s", profile.c_str());
 }
 
@@ -1071,7 +1092,14 @@ static std::string remapRootProfileSystemRead(const std::string& input) {
 }
 
 
+extern "C" void compatMarkFarCryMainLoopReady() {
+    g_farCryMainLoopReady = true;
+}
+
 void compatProcessPendingFarCryProfile() {
+    if (!g_farCryMainLoopReady)
+        return;
+
     std::string profile;
 
     if (!g_pendingProfileActivation.empty())
@@ -4318,6 +4346,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 g_activeProfileCvarSet = false;
                 g_pendingProfileSystemWritten = false;
                 g_pendingProfileGameWritten = false;
+                g_explicitProfileLoadCandidate.clear();
 
                 // Create the profile directory immediately when the UI has
                 // identified the new profile name. The original flow may
