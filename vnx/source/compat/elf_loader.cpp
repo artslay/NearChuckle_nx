@@ -15,6 +15,7 @@
 extern void compatLog(const char* msg);
 extern void compatLogFmt(const char* fmt, ...);
 extern "C" void compatSetActiveFarCryProfile(const char* profile);
+extern "C" bool compatSaveFarCryConfiguration();
 extern void compatLogFlush();
 extern void compatUiLog(const char* msg);
 extern void compatUiSetPct(int pct);
