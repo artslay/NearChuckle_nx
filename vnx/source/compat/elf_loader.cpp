@@ -1134,6 +1134,7 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
     if (!cvarVtable || !*cvarVtable)
         return;
 
+    using GetStringFn = char* (*)(void*);
     using GetIValFn = int (*)(void*);
     auto getIVal = reinterpret_cast<GetIValFn>((*cvarVtable)[1]);
     if (!getIVal)
