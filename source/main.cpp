@@ -434,49 +434,29 @@ static int run_farcry(LoadedSo* game_so) {
     // e.g. "r_Width 1280", which ExecuteString() parses as CVar + value.
     // Without the quotes the parser receives "r_Width" and "1280" separately
     // and reports the value as an unknown command.
+    // Only keep CVars that are part of the Switch/Android compatibility
+    // bootstrap or diagnostics. User-selectable graphics/game settings are
+    // deliberately NOT passed on every launch: CryEngine must take their
+    // persisted values from the active profile/root configuration.
     char arg1[64];
     char arg2[64];
     char arg3[64];
     char arg4[64];
     char arg5[64];
     char arg6[64];
-    char arg7[64];
-    char arg8[64];
-    char arg9[64];
-    char arg10[64];
-    char arg11[64];
-    char arg12[64];
-    char arg13[64];
 
     std::snprintf(arg1, sizeof(arg1), "\"r_Driver OpenGL\"");
-    std::snprintf(arg2, sizeof(arg2), "\"r_Width %d\"", config.screen_width);
-    std::snprintf(arg3, sizeof(arg3), "\"r_Height %d\"", config.screen_height);
-    std::snprintf(arg4, sizeof(arg4), "\"r_Fullscreen 1\"");
-    std::snprintf(arg5, sizeof(arg5), "\"game_fov %d\"", config.fov);
-    std::snprintf(arg6, sizeof(arg6), "\"r_Quality_BumpMapping 3\"");
-    std::snprintf(arg7, sizeof(arg7), "\"r_NoPS20 0\"");
-    // r_GL_NV30_PS20 is initialized to 1 by Android SystemInit after the
-    // command-line/config stage, so passing it here only creates a redundant
-    // console command and is not needed for the Android shader path.
-    std::snprintf(arg8, sizeof(arg8), "\"GL_NV30_PS20 1\"");
-    std::snprintf(arg9, sizeof(arg9), "\"r_UseHWShaders 1\"");
-    std::snprintf(arg10, sizeof(arg10), "\"r_VSync 0\"");
-    std::snprintf(arg11, sizeof(arg11), "\"r_displayInfo 1\"");
-    // The Switch build intentionally uses embedded fallback ARB shaders because
-    // the Android-style runtime shader cache is not loaded. Android identified
-    // the detail-overlay fallback as a source of garbled texture patterns; keep
-    // the equivalent detail path disabled until real detail shaders are available.
-    std::snprintf(arg12, sizeof(arg12), "\"r_DetailTextures 0\"");
-    // Force render-buffer merging for the geometry A/B run. The original
-    // CryEngine merge path rewrites vertex/index data in mfFillRB(), so this
-    // deliberately routes mergeable render elements through that path.
-    std::snprintf(arg13, sizeof(arg13), "\"r_rb_merge 0\"");
-    // CryEngine applies +CVar post-commands after renderer/system initialization.
-    // ui_BackGroundVideo is created later by CUISystem::CreateCVars(), so a
-    // startup command cannot override its default value of 1 reliably.
-    // It is intentionally not included in the early command-line argument list.
+    std::snprintf(arg2, sizeof(arg2), "\"r_NoPS20 0\"");
+    // Keep the Android shader-path switch used by the working ARB path.
+    std::snprintf(arg3, sizeof(arg3), "\"GL_NV30_PS20 1\"");
+    std::snprintf(arg4, sizeof(arg4), "\"r_UseHWShaders 1\"");
+    // Diagnostic display toggle only; this is not a saved user preference.
+    std::snprintf(arg5, sizeof(arg5), "\"r_displayInfo 1\"");
+    // Keep the known-working Switch geometry path. This is a compatibility
+    // requirement rather than a user-facing profile option.
+    std::snprintf(arg6, sizeof(arg6), "\"r_rb_merge 0\"");
 
-    char* argv[14];
+    char* argv[7];
     argv[0] = arg0;
     argv[1] = arg1;
     argv[2] = arg2;
@@ -484,27 +464,19 @@ static int run_farcry(LoadedSo* game_so) {
     argv[4] = arg4;
     argv[5] = arg5;
     argv[6] = arg6;
-    argv[7] = arg7;
-    argv[8] = arg8;
-    argv[9] = arg9;
-    argv[10] = arg10;
-    argv[11] = arg11;
-    argv[12] = arg12;
-    argv[13] = arg13;
 
-    const int argc = 14;
+    const int argc = 7;
 
     // Keep shader compilation enabled, matching the working Android build.
     // Missing/experimental Switch shader caches must not turn the menu into a
     // black frame just because this wrapper was built from a shader-debug branch.
 
-    compatLog("Far Cry: Android-style graphics CVars queued (quoted command syntax)");
+    compatLog("Far Cry: compatibility CVars queued; user graphics settings remain profile-controlled");
     compatLog("Far Cry: ui_BackGroundVideo left at Android default until UI CVar creation");
     compatLog("Far Cry: r_UseHWShaders 1 queued for shader script registration");
     compatLog("Far Cry: r_displayInfo 1 queued for on-screen FPS/render statistics");
-    compatLog("Far Cry: r_DetailTextures 0 queued to avoid fallback detail-overlay artifacts");
-    compatLog("Far Cry: r_RB_Merge 0 queued for control run without render-buffer merge");
-    compatLog("Far Cry: command-line CVars use quoted name + value commands");
+    compatLog("Far Cry: r_rb_merge 0 queued for the known-working Switch geometry path");
+    compatLog("Far Cry: startup does not override resolution/fullscreen/VSync/quality/FOV settings");
 
     compatStartupTimerBegin();
     compatLogFmt("Starting Far Cry: %p argc=%d", reinterpret_cast<void*>(game_main), argc);
