@@ -1116,7 +1116,6 @@ static bool g_bg_video_initialized = false;
 static int g_bg_video_value = -1;
 static void* g_bg_video_last_cvar = nullptr;
 static bool g_bg_video_sink_installed = false;
-static uint64_t g_bg_video_disabled_tick = 0;
 static volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
 static void* g_near_video_panel_start = nullptr;
 
@@ -1295,8 +1294,6 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
         g_bg_video_initialized = true;
         g_bg_video_value = value;
         g_bg_video_last_cvar = cvar;
-        if (value == 0)
-            g_bg_video_disabled_tick = armGetSystemTick();
         compatLogFmt("PROFILE CVar: initial ui_BackGroundVideo=%d", value);
         return;
     }
@@ -1334,9 +1331,6 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
 
     const int oldValue = g_bg_video_value;
     g_bg_video_value = value;
-    if (value == 0)
-        g_bg_video_disabled_tick = armGetSystemTick();
-
     compatLogFmt(
         "PROFILE CVar: ui_BackGroundVideo user value %d -> %d",
         oldValue, value);
