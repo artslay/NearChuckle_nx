@@ -1805,8 +1805,13 @@ static bool patchVideoPanelPlay(LoadedSo* so, uint8_t* stage_base,
     const uint32_t old2 = insn[2];
     const uint32_t old3 = insn[3];
 
+    using VideoPanelPlayGuardFn = int (*)(void*);
+
+    const VideoPanelPlayGuardFn helperFn =
+        static_cast<VideoPanelPlayGuardFn>(&compatVideoPanelPlayGuard);
+
     const uint64_t helper =
-        reinterpret_cast<uint64_t>(&compatVideoPanelPlayGuard);
+        reinterpret_cast<uint64_t>(helperFn);
     insn[0] = 0x58000050u; // LDR X16, #+8
     insn[1] = 0xd61f0200u; // BR X16
     std::memcpy(&insn[2], &helper, sizeof(helper));
