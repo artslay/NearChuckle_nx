@@ -1,5 +1,4 @@
 #include "compat/loader.h"
-#include "config.h"
 #include <switch.h>
 #include <cstring>
 #include <cstdio>
@@ -977,64 +976,164 @@ extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile) {
     return ok;
 }
 
-static bool compatReadFarCryBackgroundVideoConfig(const char* profile,
-                                               int& outValue) {
-    outValue = -1;
+namespace {
 
-    auto readConfigFile = [&](const char* path) -> bool {
-        if (!path || !*path)
-            return false;
+static volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
+static void* g_near_video_panel_start = nullptr;
 
-        FILE* f = std::fopen(path, "rb");
-        if (!f)
-            return false;
+static bool compatGetFarCrySystemConsole(
+    void*& system, void*& console) {
+    system = nullptr;
+    console = nullptr;
 
-        char line[512];
-        while (std::fgets(line, sizeof(line), f)) {
-            char key[128] = {};
-            char value[64] = {};
-            if (std::sscanf(line, " %127[^= ] = \"%63[01]\"",
-                            key, value) == 2 &&
-                std::strcmp(key, "ui_BackGroundVideo") == 0) {
-                outValue = (value[0] == '0') ? 0 : 1;
-                std::fclose(f);
-                return true;
-            }
+    LoadedSo* sysSo = nullptr;
+    for (LoadedSo* so : g_loaded_sos) {
+        if (!so)
+            continue;
+        const char* p = so->path.c_str();
+        const char* base = std::strrchr(p, '/');
+        base = base ? base + 1 : p;
+        if (std::strcmp(base, "libCrySystem.so") == 0) {
+            sysSo = so;
+            break;
         }
-
-        std::fclose(f);
+    }
+    if (!sysSo)
         return false;
-    };
 
-    // Original Far Cry keeps the currently selected profile's settings
-    // mirrored into the root system.cfg. Read that file first, exactly as the
-    // normal engine configuration path does.
-    char rootPath[512];
-    const char* root = config.data_root[0]
-        ? config.data_root
-        : "/switch/NearChuckle_nx/game";
-    const int rootLen = std::snprintf(
-        rootPath, sizeof(rootPath), "%s/system.cfg", root);
-    if (rootLen > 0 && static_cast<size_t>(rootLen) < sizeof(rootPath) &&
-        readConfigFile(rootPath)) {
-        return true;
+    using GetISystemFn = void* (*)();
+    auto getISystem =
+        reinterpret_cast<GetISystemFn>(sysSo->findSym("_Z10GetISystemv"));
+    if (!getISystem)
+        return false;
+
+    system = getISystem();
+    if (!system)
+        return false;
+
+    void*** systemVtable = reinterpret_cast<void***>(system);
+    if (!systemVtable || !*systemVtable)
+        return false;
+
+    using GetIConsoleFn = void* (*)(void*);
+    auto getIConsole =
+        reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
+    if (!getIConsole)
+        return false;
+
+    console = getIConsole(system);
+    return console != nullptr;
+}
+
+extern "C" void compatRestoreFarCryBackgroundVideoCVar() {
+    static void* lastCvar = nullptr;
+
+    void* system = nullptr;
+    void* console = nullptr;
+    if (!compatGetFarCrySystemConsole(system, console))
+        return;
+
+    void*** consoleVtable = reinterpret_cast<void***>(console);
+    if (!consoleVtable || !*consoleVtable)
+        return;
+
+    using GetCVarFn = void* (*)(void*, const char*, bool);
+    auto getCVar =
+        reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
+    if (!getCVar)
+        return;
+
+    void* cvar = getCVar(console, "ui_BackGroundVideo", true);
+    if (!cvar)
+        return; // UI CVar is not created yet.
+
+    if (cvar == lastCvar)
+        return;
+
+    lastCvar = cvar;
+
+    void* profileCvar = getCVar(console, "g_playerprofile", true);
+    if (!profileCvar)
+        return;
+
+    void*** profileVtable = reinterpret_cast<void***>(profileCvar);
+    if (!profileVtable || !*profileVtable)
+        return;
+
+    using GetStringFn = char* (*)(void*);
+    auto getProfileString =
+        reinterpret_cast<GetStringFn>((*profileVtable)[3]);
+    if (!getProfileString)
+        return;
+
+    const char* profile = getProfileString(profileCvar);
+    if (!profile || !*profile)
+        return;
+
+    // CUISystem::Reload() destroys and recreates its UI CVars. The original
+    // engine's configuration system is the authority for their persisted
+    // values, so re-run the real profile LoadConfiguration() only when this
+    // particular CVar is newly created. Do not save or otherwise modify the
+    // setting here.
+    compatLogFmt(
+        "PROFILE CVar: ui_BackGroundVideo created; loading profile=%s",
+        profile);
+
+    if (!compatLoadFarCryProfileConfiguration(profile)) {
+        compatLogFmt(
+            "PROFILE CVar: ui_BackGroundVideo profile reload failed for %s",
+            profile);
+        return;
     }
 
-    // Fallback for a profile that has been created but not yet mirrored to the
-    // root configuration.
-    if (!profile || !*profile)
-        return false;
+    void*** cvarVtable = reinterpret_cast<void***>(cvar);
+    if (!cvarVtable || !*cvarVtable)
+        return;
 
-    char profilePath[512];
-    const int profileLen = std::snprintf(
-        profilePath, sizeof(profilePath),
-        "%s/Profiles/Player/%s_system.cfg", root, profile);
-    if (profileLen <= 0 ||
-        static_cast<size_t>(profileLen) >= sizeof(profilePath))
-        return false;
+    using GetIValFn = int (*)(void*);
+    auto getIVal = reinterpret_cast<GetIValFn>((*cvarVtable)[1]);
+    if (!getIVal)
+        return;
 
-    return readConfigFile(profilePath);
+    compatLogFmt(
+        "PROFILE CVar: ui_BackGroundVideo after profile load=%d",
+        getIVal(cvar) != 0 ? 1 : 0);
 }
+
+static int compatVideoPanelPlayGuard(void* self) {
+    // The CVar has already been restored from the selected profile by
+    // compatRestoreFarCryBackgroundVideoCVar(). Play only consults the current
+    // CVar value; it never changes the CVar or any config file.
+    int enabled = 1;
+
+    void* system = nullptr;
+    void* console = nullptr;
+    if (compatGetFarCrySystemConsole(system, console)) {
+        void*** consoleVtable = reinterpret_cast<void***>(console);
+        if (consoleVtable && *consoleVtable) {
+            using GetCVarFn = void* (*)(void*, const char*, bool);
+            auto getCVar =
+                reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
+            if (getCVar) {
+                void* cvar = getCVar(console, "ui_BackGroundVideo", true);
+                if (cvar) {
+                    void*** cvarVtable = reinterpret_cast<void***>(cvar);
+                    if (cvarVtable && *cvarVtable) {
+                        using GetIValFn = int (*)(void*);
+                        auto getIVal =
+                            reinterpret_cast<GetIValFn>((*cvarVtable)[1]);
+                        if (getIVal)
+                            enabled = getIVal(cvar) != 0 ? 1 : 0;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!enabled)
+        return 0;
+
+
 namespace {
 
 static volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
