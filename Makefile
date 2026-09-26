@@ -91,9 +91,19 @@ export NROFLAGS += --nacp=$(CURDIR)/$(TARGET).nacp
 .PHONY: all clean $(BUILD)
 all: $(BUILD)
 
-$(BUILD):
+$(BUILD): prepare_romfs
 	@[ -d $@ ] || mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+
+.PHONY: prepare_romfs
+prepare_romfs:
+	@echo "Packaging Android ARM64 libraries into NRO RomFS from: $(EMBED_LIB_SOURCE)"
+	@test -d "$(EMBED_LIB_SOURCE)" || { echo "ERROR: guest library source not found: $(EMBED_LIB_SOURCE)"; exit 1; }
+	@rm -rf "$(EMBED_LIB_DIR)"
+	@mkdir -p "$(EMBED_LIB_DIR)"
+	@find "$(EMBED_LIB_SOURCE)" -maxdepth 1 -type f -name '*.so' -exec cp -fL {} "$(EMBED_LIB_DIR)/" \;
+	@test -n "$(find "$(EMBED_LIB_DIR)" -maxdepth 1 -type f -name '*.so' -print -quit)" || { echo "ERROR: no .so files found in $(EMBED_LIB_SOURCE)"; exit 1; }
+	@echo "Embedded guest libraries: $(find "$(EMBED_LIB_DIR)" -maxdepth 1 -type f -name '*.so' | wc -l)"
 
 clean:
 	@echo clean ...
