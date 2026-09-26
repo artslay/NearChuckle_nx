@@ -60,6 +60,7 @@ struct Source {
     ALint state=AL_INITIAL;
     bool looping=false;
     bool relative=false;
+    bool streaming=false;
     float gain=1.0f, pitch=1.0f;
     float pos[3]={0,0,0};
     float ref=1.0f, maxdist=1000000.0f, rolloff=1.0f, mingain=0.0f, maxgain=1.0f;
@@ -107,7 +108,12 @@ void setError(ALenum e) { if(g_al_error==AL_NO_ERROR) g_al_error=e; }
 void setAlcError(ALCenum e) { if(g_alc_error==ALC_NO_ERROR) g_alc_error=e; }
 
 void resetSource(Source& s) {
-    s.queue.clear(); s.current=0; s.processed=0; s.play_requested=false; s.sample_pos=0.0;
+    s.queue.clear();
+    s.current=0;
+    s.processed=0;
+    s.play_requested=false;
+    s.sample_pos=0.0;
+    s.streaming=false;
 }
 
 void mixSource(Source& s, float* dst, size_t frames) {
@@ -191,10 +197,19 @@ void mixSource(Source& s, float* dst, size_t frames) {
                 s.state=AL_STOPPED;
                 s.sample_pos=0;
                 break;
+            } else if(s.streaming) {
+                // A queued source has consumed every currently queued buffer.
+                // Report STOPPED so the guest streamer can observe processed
+                // buffers, unqueue them, queue more data and restart playback.
+                s.state=AL_STOPPED;
+                s.sample_pos=0;
+                break;
             } else {
-                // The movie streamer may be between QueueBuffers and
-                // UnqueueBuffers calls. Keep the source in PLAYING state so
-                // a newly queued buffer can continue without a stop/start gap.
+                // A static AL_BUFFER source has reached the end of its buffer.
+                // It must become STOPPED or the guest's source allocator will
+                // consider it permanently busy, exhausting the 30 SFX channels.
+                s.state=AL_STOPPED;
+                s.sample_pos=0;
                 break;
             }
         }
@@ -590,6 +605,8 @@ void alSourceQueueBuffers(ALuint id,ALsizei n,const ALuint*v){
         if(!getBuffer(v[i])){setError(AL_INVALID_NAME);break;}
         s->queue.push_back(v[i]);
     }
+    if(n>0)
+        s->streaming=true;
 
     if(s->play_requested && !s->queue.empty() && s->state != AL_PAUSED)
         s->state=AL_PLAYING;
