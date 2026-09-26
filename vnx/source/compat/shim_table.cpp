@@ -1164,7 +1164,7 @@ static std::string remapActiveProfilePath(const std::string& input) {
         pending == "." ||
         pending == ".." ||
         pending.find('/') != std::string::npos ||
-        pending.find('\\\\') != std::string::npos)
+        pending.find('\\') != std::string::npos)
         return normalized;
 
     const std::string lower = asciiLower(normalized);
