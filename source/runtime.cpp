@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <dirent.h>
 #include <string>
 #include <algorithm>
 #include <sys/iosupport.h>
@@ -21,6 +22,8 @@
 extern void* jniFindRegisteredNative(const char* name, int occurrence);
 extern void compatProcessPendingFarCryProfile();
 extern "C" void compatMarkFarCryMainLoopReady();
+extern "C" bool compatProfileListRecentlyScanned();
+extern "C" bool compatActivateFarCryProfile(const char* profile);
 
 static CompatLayer g_compat = {};
 static Mutex g_log_lock;
@@ -447,6 +450,82 @@ static void switchInputResolveCallbacks() {
     }
 }
 
+static bool switchSelectFarCryProfileAtVirtualPoint(float x, float y) {
+    if (!compatProfileListRecentlyScanned())
+        return false;
+
+    // Exact geometry from the original Far Cry Profiles.lua.
+    constexpr float kListLeft = 205.0f;
+    constexpr float kListTop = 147.0f;
+    constexpr float kListWidth = 570.0f;
+    constexpr float kListHeight = 238.0f;
+    constexpr float kItemHeight = 18.0f;
+
+    if (x < kListLeft || x >= kListLeft + kListWidth ||
+        y < kListTop || y >= kListTop + kListHeight)
+        return false;
+
+    const int row = static_cast<int>((y - kListTop) / kItemHeight);
+    if (row < 0)
+        return false;
+
+    std::string profileDir = config.data_root[0]
+        ? std::string(config.data_root) + "/Profiles/Player"
+        : std::string("/switch/NearChuckle_nx/game/Profiles/Player");
+
+    DIR* dir = ::opendir(profileDir.c_str());
+    if (!dir)
+        return false;
+
+    std::vector<std::string> profiles;
+    while (dirent* ent = ::readdir(dir)) {
+        if (!ent->d_name[0])
+            continue;
+
+        std::string name(ent->d_name);
+        const std::string lower = [&]() {
+            std::string v = name;
+            for (char& c : v)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return v;
+        }();
+
+        const std::string suffix = "_system.cfg";
+        if (lower.size() <= suffix.size() ||
+            lower.compare(lower.size() - suffix.size(),
+                          suffix.size(), suffix) != 0)
+            continue;
+
+        name.resize(name.size() - suffix.size());
+        if (!name.empty())
+            profiles.push_back(name);
+    }
+    ::closedir(dir);
+
+    std::sort(profiles.begin(), profiles.end(),
+              [](const std::string& a, const std::string& b) {
+                  std::string al = a;
+                  std::string bl = b;
+                  for (char& c : al)
+                      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                  for (char& c : bl)
+                      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                  return al < bl;
+              });
+
+    if (row >= static_cast<int>(profiles.size()))
+        return false;
+
+    const std::string& selected = profiles[static_cast<size_t>(row)];
+    if (!selected.empty() && compatActivateFarCryProfile(selected.c_str())) {
+        compatLogFmt("PROFILE TOUCH SELECT: row=%d name=%s",
+                     row, selected.c_str());
+        return true;
+    }
+
+    return false;
+}
+
 static void pollSwitchInputInternal() {
     switchInputResolveCallbacks();
     if (!g_sdl_key_down && !g_sdl_key_up && !g_sdl_mouse)
@@ -552,6 +631,11 @@ static void pollSwitchInputInternal() {
             g_switch_touch_down = true;
             g_switch_touch_x = target_x;
             g_switch_touch_y = target_y;
+
+            // Profile selection is a compatibility-only layer on top of the
+            // already-working mouse click. It does not alter touch/mouse events.
+            (void)switchSelectFarCryProfileAtVirtualPoint(
+                target_x, target_y);
 
             switchEmitMouse(g_sdl_mouse, 1, 0, 0.0f, 0.0f, true); // LMB down
         } else if (!touching && g_switch_touch_down) {
