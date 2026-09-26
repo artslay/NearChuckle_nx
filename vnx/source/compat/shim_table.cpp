@@ -887,6 +887,7 @@ static bool g_pendingProfileSystemWritten = false;
 static bool g_pendingProfileGameWritten = false;
 static std::string g_pendingProfileSystemRefresh;
 static std::string g_pendingProfileActivation;
+static std::string g_pendingProfileSystemRewrite;
 
 // Effective profile selected by the profile-creation UI. The guest CVar can
 // remain "default", so the Switch filesystem shim mirrors the selected profile
@@ -1040,73 +1041,167 @@ static bool isExplicitProfileConfigPath(const std::string& input) {
            parseProfileConfigName(input, "_game.cfg", profile);
 }
 
-static std::string remapRootProfileSystemRead(const std::string& input) {
-    if (g_activeProfile.empty() || asciiLower(g_activeProfile) == "default")
-        return input;
+static void queueExplicitProfileActivation(const std::string& input,
+                                                bool writeAccess) {
+    if (writeAccess)
+        return;
 
-    const std::string lower = asciiLower(input);
-    if (lower == "system.cfg" || lower == "./system.cfg") {
-        return "Profiles/Player/" + g_activeProfile + "_system.cfg";
-    }
-    if (lower == "/system.cfg") {
-        return "/Profiles/Player/" + g_activeProfile + "_system.cfg";
-    }
-    if (lower == "/switch/nearchuckle_nx/game/system.cfg") {
-        return "/switch/NearChuckle_nx/game/" +
-               g_activeProfile + "_system.cfg";
-    }
+    std::string profile;
+    if (!parseProfileConfigName(input, "_system.cfg", profile) &&
+        !parseProfileConfigName(input, "_game.cfg", profile))
+        return;
+
+    if (profile.empty() ||
+        profile.find('/') != std::string::npos ||
+        profile.find('\\') != std::string::npos)
+        return;
+
+    g_pendingProfileActivation =
+        asciiLower(profile) == "default" ? "default" : profile;
+    compatLogFmt("PROFILE LOAD PENDING: %s", profile.c_str());
+}
+
+// Root system.cfg is intentionally NOT remapped.
+// CryEngine first reads this file to discover g_playerprofile, then
+// CXGame::LoadConfiguration() explicitly opens the selected profile's
+// <profile>_system.cfg. Redirecting the root read here would apply all
+// profile CVars during early system initialization.
+static std::string remapRootProfileSystemRead(const std::string& input) {
     return input;
 }
 
 
 void compatProcessPendingFarCryProfile() {
     std::string profile;
-    bool saveProfile = false;
 
-    if (!g_pendingProfileSystemRefresh.empty()) {
-        profile = g_pendingProfileSystemRefresh;
-        saveProfile = true;
-    } else if (!g_pendingProfileActivation.empty()) {
+    if (!g_pendingProfileActivation.empty())
         profile = g_pendingProfileActivation;
-    } else {
+    else if (!g_pendingProfileSystemRewrite.empty())
+        profile = g_pendingProfileSystemRewrite;
+    else
         return;
-    }
 
-    // For a newly created profile, make it the real current g_playerprofile
-    // before calling the engine serializer. DumpCVars() must therefore write
-    // g_playerprofile="<profile>" together with every other VF_DUMPTODISK CVar.
-    if (!compatActivateFarCryProfile(profile.c_str())) {
-        compatLogFmt("PROFILE SWITCH PENDING: CVar activation failed %s",
-                     profile.c_str());
-        return;
-    }
-
-    g_activeProfile = (asciiLower(profile) == "default") ? std::string() : profile;
-    g_activeProfileCvarSet = true;
-
-    if (saveProfile) {
-        // Safe point: this runs from the regular Switch poll, after the guest
-        // fopen()/Lua callback that initiated profile creation has returned.
-        if (!compatSaveFarCryProfileConfiguration(profile.c_str())) {
-            compatLogFmt("PROFILE SAVE PENDING: FAILED %s", profile.c_str());
+    // Never change g_playerprofile from inside fopen/open. The Lua/C++ callback
+    // that initiated the profile operation must return first. This safe-point
+    // runs from the normal Switch poll after that guest call has unwound.
+    if (!g_pendingProfileActivation.empty()) {
+        if (!compatActivateFarCryProfile(profile.c_str())) {
+            compatLogFmt("PROFILE SWITCH PENDING: CVar activation failed %s",
+                         profile.c_str());
             return;
         }
-        compatLogFmt("PROFILE SAVE PENDING: completed %s", profile.c_str());
-        g_pendingProfileSystemRefresh.clear();
-    }
 
-    if (g_pendingProfileActivation == profile)
+        g_activeProfile =
+            (asciiLower(profile) == "default") ? std::string() : profile;
+        g_activeProfileCvarSet = true;
         g_pendingProfileActivation.clear();
 
-    if (g_pendingProfileCreate == profile) {
-        g_pendingProfileCreate.clear();
-        g_pendingProfileSystemWritten = false;
-        g_pendingProfileGameWritten = false;
+        if (g_pendingProfileCreate == profile) {
+            g_pendingProfileCreate.clear();
+            g_pendingProfileSystemWritten = false;
+            g_pendingProfileGameWritten = false;
+        }
+
+        compatLogFmt("PROFILE ACTIVE: %s",
+                     g_activeProfile.empty() ? "default" :
+                     g_activeProfile.c_str());
     }
 
-    compatLogFmt("PROFILE ACTIVE: %s",
-                 g_activeProfile.empty() ? "default" : g_activeProfile.c_str());
+    if (!g_pendingProfileSystemRewrite.empty()) {
+        const std::string rewriteProfile = g_pendingProfileSystemRewrite;
+        const std::string cfg =
+            "Profiles/Player/" + rewriteProfile + "_system.cfg";
+
+        FILE* in = ::fopen(cfg.c_str(), "rb");
+        if (!in) {
+            compatLogFmt("PROFILE SYSTEM FIX: open failed %s", cfg.c_str());
+            return;
+        }
+
+        if (fseek(in, 0, SEEK_END) != 0) {
+            fclose(in);
+            return;
+        }
+
+        const long size = ftell(in);
+        if (size < 0) {
+            fclose(in);
+            return;
+        }
+
+        rewind(in);
+        std::string text;
+        text.resize((size_t)size);
+        if (size > 0 &&
+            fread(&text[0], 1, (size_t)size, in) != (size_t)size) {
+            fclose(in);
+            return;
+        }
+        fclose(in);
+
+        const std::string replacement =
+            "g_playerprofile = \"" + rewriteProfile + "\"\r\n";
+
+        bool replaced = false;
+        size_t pos = 0;
+        while (pos < text.size()) {
+            size_t lineEnd = text.find_first_of("\r\n", pos);
+            if (lineEnd == std::string::npos)
+                lineEnd = text.size();
+
+            const std::string line = text.substr(pos, lineEnd - pos);
+            size_t first = 0;
+            while (first < line.size() &&
+                   std::isspace((unsigned char)line[first]))
+                ++first;
+
+            if (line.compare(first, std::strlen("g_playerprofile"),
+                             "g_playerprofile") == 0) {
+                size_t eq = line.find('=', first + std::strlen("g_playerprofile"));
+                if (eq != std::string::npos) {
+                    const size_t next = (lineEnd < text.size())
+                        ? (text[lineEnd] == '\r' && lineEnd + 1 < text.size() &&
+                           text[lineEnd + 1] == '\n' ? lineEnd + 2 : lineEnd + 1)
+                        : lineEnd;
+                    text.replace(pos, next - pos, replacement);
+                    pos += replacement.size();
+                    replaced = true;
+                    continue;
+                }
+            }
+
+            if (lineEnd >= text.size())
+                break;
+            pos = (text[lineEnd] == '\r' && lineEnd + 1 < text.size() &&
+                   text[lineEnd + 1] == '\n') ? lineEnd + 2 : lineEnd + 1;
+        }
+
+        if (!replaced) {
+            if (!text.empty() &&
+                text.back() != '\n' && text.back() != '\r')
+                text += "\r\n";
+            text += replacement;
+        }
+
+        FILE* out = ::fopen(cfg.c_str(), "wb");
+        if (!out)
+            return;
+
+        const size_t written = fwrite(text.data(), 1, text.size(), out);
+        fclose(out);
+
+        if (written != text.size()) {
+            compatLogFmt("PROFILE SYSTEM FIX: short write %s", cfg.c_str());
+            return;
+        }
+
+        compatLogFmt("PROFILE SYSTEM FIX: g_playerprofile=%s -> %s",
+                     rewriteProfile.c_str(), cfg.c_str());
+        g_pendingProfileSystemRewrite.clear();
+        return;
+    }
 }
+
 static void ensureProfileCreateDirectories(const std::string& profile) {
     if (profile.empty() || asciiLower(profile) == "default")
         return;
@@ -4109,6 +4204,9 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const bool explicitProfileConfig =
         isExplicitProfileConfigPath(normalizedPath) && !configWrite;
 
+    if (isExplicitProfileConfigPath(normalizedPath))
+        queueExplicitProfileActivation(normalizedPath, configWrite);
+
     std::string activePath = explicitProfileConfig
         ? normalizedPath
         : remapActiveProfilePath(normalizedPath);
@@ -4217,7 +4315,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 g_pendingProfileCreate = probedProfile;
                 g_pendingProfileSystemRefresh = probedProfile;
                 g_pendingProfileActivation = probedProfile;
-                g_activeProfile = probedProfile;
                 g_activeProfileCvarSet = false;
                 g_pendingProfileSystemWritten = false;
                 g_pendingProfileGameWritten = false;
@@ -4287,6 +4384,16 @@ static FILE* stub_fopen(const char* path, const char* mode) {
 
     if (videoIo)
         g_near_video_open_failed = 0;
+
+    if (f && configWrite) {
+        std::string writtenProfile;
+        if (parseProfileConfigName(openPath, "_system.cfg", writtenProfile) &&
+            asciiLower(writtenProfile) != "default") {
+            g_pendingProfileSystemRewrite = writtenProfile;
+            compatLogFmt("PROFILE SYSTEM WRITE PENDING: %s",
+                         writtenProfile.c_str());
+        }
+    }
 
     if (apkcache::adopt(f, ioPath)) {
         setvbuf(f, nullptr, _IOFBF, 16 * 1024);
@@ -4434,6 +4541,9 @@ static int stub_open(const char* path, int flags, ...) {
 
     const bool explicitProfileConfig =
         isExplicitProfileConfigPath(normalizedPath) && !openWrite;
+
+    if (isExplicitProfileConfigPath(normalizedPath))
+        queueExplicitProfileActivation(normalizedPath, openWrite);
 
     std::string ioPathStorage = explicitProfileConfig
         ? normalizedPath
@@ -11003,7 +11113,23 @@ static stub_div_t stub_div(int n, int d) { stub_div_t r; r.quot = d ? n/d : 0; r
 static int  stub_unlink(const char* path) {
     return ::unlink(path);
 }
-static int  stub_rmdir(const char*)              { errno = EROFS; return -1; }
+static int stub_rmdir(const char* path) {
+    const std::string normalized = normalizeSwitchFsPath(path);
+    std::string removedProfile;
+    const bool profileDirectory = isExactProfileDirectory(normalized, &removedProfile);
+    const int rc = ::rmdir(normalized.c_str());
+
+    if (rc == 0 && profileDirectory &&
+        !g_activeProfile.empty() &&
+        asciiLower(removedProfile) == asciiLower(g_activeProfile)) {
+        g_pendingProfileActivation = "default";
+        g_activeProfileCvarSet = false;
+        compatLogFmt("PROFILE RMDIR ACTIVE: %s -> default pending",
+                     removedProfile.c_str());
+    }
+
+    return rc;
+}
 static int  stub_truncate(const char*, long)     { errno = EROFS; return -1; }
 static int  stub_ftruncate(int, long)            { errno = EROFS; return -1; }
 static long stub_lseek64(int fd, long off, int w){ return lseek(fd, off, w); }
