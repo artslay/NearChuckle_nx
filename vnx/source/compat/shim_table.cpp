@@ -821,6 +821,19 @@ static int stub_stat(const char* p, struct stat* ignored) {
     return 0;
 }
 
+static bool isProfileFsPath(const std::string& path) {
+    std::string lower = asciiLower(path);
+    while (lower.size() > 1 && (lower.back() == '/' || lower.back() == '\\'))
+        lower.pop_back();
+
+    if (lower == "profiles" || lower == "profiles/player")
+        return true;
+
+    return lower.rfind("profiles/player/", 0) == 0 ||
+           lower.find("/profiles/player/") != std::string::npos ||
+           lower.find("/profiles/") != std::string::npos;
+}
+
 static int stub_mkdir(const char* path, mode_t mode) {
     if (!path) {
         errno = EINVAL;
@@ -833,16 +846,29 @@ static int stub_mkdir(const char* path, mode_t mode) {
     int rc = ::mkdir(ioPath, mode);
     const int savedErrno = errno;
 
-    std::string lower = asciiLower(ioPathStorage);
-    if (lower == "profiles" ||
-        lower == "profiles/player" ||
-        lower.find("profiles/player/") == 0) {
+    if (isProfileFsPath(ioPathStorage)) {
         compatLogFmt("PROFILE MKDIR: %s mode=%o rc=%d errno=%d",
                      ioPath, (unsigned)mode, rc, savedErrno);
     }
 
     errno = savedErrno;
     return rc;
+}
+
+static int stub__mkdir(const char* path) {
+    return stub_mkdir(path, 0755);
+}
+
+static int stub_mkdirat(int dirfd, const char* path, mode_t mode) {
+    if (dirfd != AT_FDCWD) {
+        errno = ENOTSUP;
+        return -1;
+    }
+    return stub_mkdir(path, mode);
+}
+
+static int stub__mkdirat(int dirfd, const char* path, mode_t mode) {
+    return stub_mkdirat(dirfd, path, mode);
 }
 
 static int stub_fstat64(int fd, void* out) {
@@ -10948,7 +10974,11 @@ static const ShimEntry g_shims[] = {
     {"stat64",       (void*)stub_stat},
     {"fstat",       (void*)sh_fstat},
     {"fstat64",      (void*)stub_fstat64},
-    {"mkdir",       (void*)stub_mkdir},
+    {"mkdir",        (void*)stub_mkdir},
+    {"_mkdir",       (void*)stub__mkdir},
+    {"__mkdir",      (void*)stub__mkdir},
+    {"mkdirat",      (void*)stub_mkdirat},
+    {"__mkdirat",    (void*)stub__mkdirat},
     {"opendir",     (void*)stub_opendir},
     {"readdir",     (void*)stub_readdir},
     {"readdir64",   (void*)stub_readdir64},
