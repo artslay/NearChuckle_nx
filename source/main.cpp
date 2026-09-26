@@ -502,6 +502,23 @@ int main(int, char**) {
 
     setup_environment();
 
+    // The Android ARM64 guest libraries are part of the NRO RomFS.
+    // This keeps the Switch deployment self-contained: no external lib/
+    // directory is required on the SD card.
+    const Result romfs_rc = romfsInit();
+    if (R_FAILED(romfs_rc)) {
+        compatLogFmt("ROMFS: initialization failed rc=0x%08X",
+                     static_cast<unsigned>(romfs_rc));
+        compatLogFlush();
+        compatUiShutdown();
+        return 1;
+    }
+
+    // Ignore any legacy lib_dir value from config.txt. The loader always uses
+    // the libraries packaged in this NRO.
+    std::strncpy(config.lib_dir, "romfs:/lib", sizeof(config.lib_dir) - 1);
+    config.lib_dir[sizeof(config.lib_dir) - 1] = '\0';
+
     compatLog("=== NearChuckle_nx start ===");
     compatLogFmt("data_root=%s", config.data_root);
     compatLogFmt("lib_dir=%s", config.lib_dir);
@@ -520,8 +537,10 @@ int main(int, char**) {
 
     const std::vector<SoFile> libs = find_guest_libraries();
     if (libs.empty()) {
-        compatLog("ERROR: no Android ARM64 .so files found");
+        compatLog("ERROR: no embedded Android ARM64 .so files found in romfs:/lib");
         compatLogFlush();
+        romfsExit();
+        compatUiShutdown();
         return 1;
     }
 
@@ -559,8 +578,10 @@ int main(int, char**) {
     }
 
     if (!game_so) {
-        compatLog("ERROR: libFarCry.so was not loaded");
+        compatLog("ERROR: libFarCry.so was not loaded from NRO RomFS");
         compatLogFlush();
+        romfsExit();
+        compatUiShutdown();
         return 1;
     }
 
@@ -589,6 +610,7 @@ int main(int, char**) {
     compatLogFmt("ELF TIMING: total load+ctors = %llu ms",
                  static_cast<unsigned long long>(elf_phase_ms));
     compatLog("ELF constructors complete");
+    compatLog("ROMFS: guest libraries loaded from embedded NRO data");
     compatLogFlush();
 
     // We invoke the guest Android SDL_main symbol directly instead of entering
@@ -633,6 +655,7 @@ int main(int, char**) {
     compatLogClose();
 
     vnxSetGameSo(nullptr);
+    romfsExit();
     compatUiShutdown();
     return rc;
 }
