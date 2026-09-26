@@ -772,7 +772,8 @@ static int stub_stat(const char* p, struct stat* ignored) {
         return -1;
     }
 
-    const std::string ioPathStorage = normalizeSwitchFsPath(p);
+    const std::string normalizedPath = normalizeSwitchFsPath(p);
+    const std::string ioPathStorage = remapActiveProfilePath(normalizedPath);
     const char* ioPath = ioPathStorage.c_str();
 
     struct stat nativeSt = {};
@@ -925,38 +926,41 @@ static std::string remapActiveProfilePath(const std::string& input) {
         return input;
 
     std::string out = input;
-    std::string lower = asciiLower(out);
-    const std::string profile = asciiLower(g_activeProfile);
+    const std::string lower = asciiLower(input);
+    const std::string profileDir = "Profiles/Player/" + g_activeProfile;
+    const std::string absProfileDir = "/Profiles/Player/" + g_activeProfile;
 
-    auto replaceAll = [&](const std::string& fromLower,
-                          const std::string& replacement) {
+    auto replaceInsensitive = [&](const std::string& needle,
+                                  const std::string& replacement) {
+        const std::string needleLower = asciiLower(needle);
         size_t pos = 0;
-        while ((pos = lower.find(fromLower, pos)) != std::string::npos) {
-            out.replace(pos, fromLower.size(), replacement);
-            lower.replace(pos, fromLower.size(), replacement);
+        while ((pos = asciiLower(out).find(needleLower, pos)) != std::string::npos) {
+            out.replace(pos, needle.size(), replacement);
             pos += replacement.size();
         }
     };
 
-    replaceAll("/profiles/player/default/savegames/",
-               "/profiles/player/" + profile + "/savedgames/");
-    replaceAll("profiles/player/default/savegames/",
-               "Profiles/Player/" + g_activeProfile + "/savedgames/");
-
-    replaceAll("/profiles/player/default/",
-               "/profiles/player/" + profile + "/");
-    replaceAll("profiles/player/default/",
-               "Profiles/Player/" + g_activeProfile + "/");
-
-    replaceAll("/profiles/player/default_game.cfg",
-               "/profiles/player/" + profile + "_game.cfg");
-    replaceAll("profiles/player/default_game.cfg",
-               "Profiles/Player/" + g_activeProfile + "_game.cfg");
-
-    replaceAll("/profiles/player/default_system.cfg",
-               "/profiles/player/" + profile + "_system.cfg");
-    replaceAll("profiles/player/default_system.cfg",
-               "Profiles/Player/" + g_activeProfile + "_system.cfg");
+    if (lower.find("profiles/player/default/savegames/") != std::string::npos) {
+        replaceInsensitive("Profiles/Player/default/savegames/",
+                           profileDir + "/savedgames/");
+        replaceInsensitive("/Profiles/Player/default/savegames/",
+                           absProfileDir + "/savedgames/");
+    } else if (lower.find("profiles/player/default/") != std::string::npos) {
+        replaceInsensitive("Profiles/Player/default/",
+                           profileDir + "/");
+        replaceInsensitive("/Profiles/Player/default/",
+                           absProfileDir + "/");
+    } else if (lower.find("profiles/player/default_game.cfg") != std::string::npos) {
+        replaceInsensitive("Profiles/Player/default_game.cfg",
+                           "Profiles/Player/" + g_activeProfile + "_game.cfg");
+        replaceInsensitive("/Profiles/Player/default_game.cfg",
+                           "/Profiles/Player/" + g_activeProfile + "_game.cfg");
+    } else if (lower.find("profiles/player/default_system.cfg") != std::string::npos) {
+        replaceInsensitive("Profiles/Player/default_system.cfg",
+                           "Profiles/Player/" + g_activeProfile + "_system.cfg");
+        replaceInsensitive("/Profiles/Player/default_system.cfg",
+                           "/Profiles/Player/" + g_activeProfile + "_system.cfg");
+    }
 
     return out;
 }
@@ -4224,8 +4228,13 @@ static int sh_fclose(FILE* f) {
 
 // open() wrapper — Android-compatible path resolution for guest stdio/file-stream users
 static int stub_open(const char* path, int flags, ...) {
-    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const std::string normalizedPath = normalizeSwitchFsPath(path);
+    const std::string ioPathStorage = remapActiveProfilePath(normalizedPath);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
+
+    if (ioPathStorage != normalizedPath)
+        compatLogFmt("PROFILE ACTIVE REDIRECT: %s -> %s",
+                     normalizedPath.c_str(), ioPathStorage.c_str());
 
     rememberActiveLevelPak(ioPath);
 
@@ -6240,7 +6249,8 @@ static long  stub_pathconf(const char*, int) { return -1; }
 // The *at() family, resolved against the process CWD — Switch has no directory
 // file descriptors, and every caller here passes AT_FDCWD anyway.
 static int stub_openat(int, const char* path, int flags, ...) {
-    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const std::string normalizedPath = normalizeSwitchFsPath(path);
+    const std::string ioPathStorage = remapActiveProfilePath(normalizedPath);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
     va_list va;
@@ -6865,8 +6875,13 @@ static struct dirent* stub_readdir64(DIR* dir) {
 }
 
 static DIR* stub_opendir(const char* path) {
-    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const std::string normalizedPath = normalizeSwitchFsPath(path);
+    const std::string ioPathStorage = remapActiveProfilePath(normalizedPath);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
+
+    if (ioPathStorage != normalizedPath && !isShaderPathForDiag(ioPath))
+        compatLogFmt("PROFILE ACTIVE REDIRECT: %s -> %s",
+                     normalizedPath.c_str(), ioPathStorage.c_str());
 
     rememberActiveLevelPak(ioPath);
 
@@ -7061,6 +7076,12 @@ static intptr_t stub_findfirst64(const char* pattern, NearFindData64* out) {
 
     std::string filePattern;
     std::string directory = findDirPart(pattern, filePattern);
+    const std::string normalizedDirectory = directory;
+    directory = remapActiveProfilePath(directory);
+
+    if (directory != normalizedDirectory)
+        compatLogFmt("PROFILE ACTIVE REDIRECT: %s -> %s",
+                     normalizedDirectory.c_str(), directory.c_str());
 
     if (isShaderPathForDiag(pattern))
         compatLogFmt("findfirst64 SHADER REQUEST: pattern=%s dir=%s filePattern=%s",
