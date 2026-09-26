@@ -1076,6 +1076,40 @@ static bool compatWriteFarCryBackgroundVideoConfig(const char* profile, int valu
     return ok;
 }
 
+static bool compatReadFarCryBackgroundVideoConfig(const char* profile,
+                                               int& outValue) {
+    outValue = -1;
+    if (!profile || !*profile)
+        return false;
+
+    char path[512];
+    const int pathLen = std::snprintf(
+        path, sizeof(path),
+        "Profiles/Player/%s_system.cfg", profile);
+    if (pathLen <= 0 || static_cast<size_t>(pathLen) >= sizeof(path))
+        return false;
+
+    FILE* f = std::fopen(path, "rb");
+    if (!f)
+        return false;
+
+    char line[512];
+    while (std::fgets(line, sizeof(line), f)) {
+        char key[128] = {};
+        char value[64] = {};
+        if (std::sscanf(line, " %127[^= ] = \"%63[01]\"", key, value) == 2) {
+            if (std::strcmp(key, "ui_BackGroundVideo") == 0) {
+                outValue = (value[0] == '0') ? 0 : 1;
+                std::fclose(f);
+                return true;
+            }
+        }
+    }
+
+    std::fclose(f);
+    return false;
+}
+
 namespace {
 
 static bool g_bg_video_initialized = false;
@@ -1084,6 +1118,7 @@ static void* g_bg_video_last_cvar = nullptr;
 static bool g_bg_video_sink_installed = false;
 static bool g_bg_video_screen_is_options = false;
 static uint64_t g_bg_video_last_screen_tick = 0;
+static uint64_t g_bg_video_disabled_tick = 0;
 
 static bool compatGetFarCryFocusScreenName(void* system,
                                            std::string& outName) {
@@ -1177,11 +1212,24 @@ struct FarCryBackgroundVideoVarSink {
             return true;
 
         const bool wantsEnable = std::atoi(newValue) != 0;
-        if (g_bg_video_value == 0 && wantsEnable &&
-            !g_bg_video_screen_is_options) {
-            compatLogFmt(
-                "PROFILE CVar SINK: blocked ui_BackGroundVideo=1 on non-video screen");
-            return false;
+        if (g_bg_video_value == 0 && wantsEnable) {
+            const u64 now = armGetSystemTick();
+            const u64 freq = armGetSystemTickFreq();
+            const u64 cooldown = freq != 0 ? (freq * 3) / 4 : 0;
+            const bool withinCooldown =
+                freq != 0 && g_bg_video_disabled_tick != 0 &&
+                now >= g_bg_video_disabled_tick &&
+                now - g_bg_video_disabled_tick < cooldown;
+
+            if (!g_bg_video_screen_is_options || withinCooldown) {
+                compatLogFmt(
+                    "PROFILE CVar SINK: blocked ui_BackGroundVideo=1 screenOptions=%d cooldown=%d",
+                    g_bg_video_screen_is_options ? 1 : 0,
+                    withinCooldown ? 1 : 0);
+                return false;
+            }
+
+            compatLog("PROFILE CVar SINK: accepted ui_BackGroundVideo=1 from video options");
         }
 
         return true;
@@ -1295,9 +1343,41 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
     const int value = getIVal(cvar) != 0 ? 1 : 0;
 
     if (!g_bg_video_initialized) {
+        int savedValue = -1;
+
+        void* profileCvar = getCVar(console, "g_playerprofile", true);
+        const char* profile = nullptr;
+        if (profileCvar) {
+            void*** profileVtable =
+                reinterpret_cast<void***>(profileCvar);
+            if (profileVtable && *profileVtable) {
+                using GetStringFn = char* (*)(void*);
+                auto getProfileString =
+                    reinterpret_cast<GetStringFn>((*profileVtable)[3]);
+                if (getProfileString)
+                    profile = getProfileString(profileCvar);
+            }
+        }
+
+        if (profile && *profile &&
+            compatReadFarCryBackgroundVideoConfig(profile, savedValue) &&
+            savedValue >= 0 && savedValue != value) {
+            using SetStringFn = void (*)(void*, const char*);
+            auto setString =
+                reinterpret_cast<SetStringFn>((*cvarVtable)[4]);
+            if (setString)
+                setString(cvar, savedValue ? "1" : "0");
+            value = savedValue;
+            compatLogFmt(
+                "PROFILE CVar: restored ui_BackGroundVideo=%d from %s_system.cfg",
+                value, profile);
+        }
+
         g_bg_video_initialized = true;
         g_bg_video_value = value;
         g_bg_video_last_cvar = cvar;
+        if (value == 0)
+            g_bg_video_disabled_tick = armGetSystemTick();
         compatLogFmt("PROFILE CVar: initial ui_BackGroundVideo=%d", value);
         return;
     }
@@ -1322,6 +1402,8 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
 
     const int oldValue = g_bg_video_value;
     g_bg_video_value = value;
+    if (value == 0)
+        g_bg_video_disabled_tick = armGetSystemTick();
 
     compatLogFmt(
         "PROFILE CVar: ui_BackGroundVideo user value %d -> %d",
