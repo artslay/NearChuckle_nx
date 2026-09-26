@@ -863,7 +863,7 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
     // command, rather than relying only on the ICVar object's setter.
     using ExecuteStringFn = void (*)(void*, const char*, bool, bool);
     auto executeString =
-        reinterpret_cast<ExecuteStringFn>((*consoleVtable)[31]);
+        reinterpret_cast<ExecuteStringFn>((*consoleVtable)[32]);
 
     char command[512];
     std::snprintf(command, sizeof(command),
@@ -1003,11 +1003,11 @@ extern "C" bool compatSaveFarCryProfileConfiguration(const char* profile) {
     if (!gameVtable || !*gameVtable)
         return false;
 
-    // IGame::SaveConfiguration(systemCfg, gameCfg, profile) is slot 39.
+    // IGame::SaveConfiguration(systemCfg, gameCfg, profile) is slot 18.
     using SaveConfigurationFn =
         void (*)(void*, const char*, const char*, const char*);
     auto saveConfiguration =
-        reinterpret_cast<SaveConfigurationFn>((*gameVtable)[39]);
+        reinterpret_cast<SaveConfigurationFn>((*gameVtable)[18]);
     if (!saveConfiguration)
         return false;
 
