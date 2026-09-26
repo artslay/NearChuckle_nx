@@ -809,7 +809,7 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
 
     using GetIConsoleFn = void* (*)(void*);
     auto getIConsole =
-        reinterpret_cast<GetIConsoleFn>((*systemVtable)[28]);
+        reinterpret_cast<GetIConsoleFn>((*systemVtable)[27]);
     void* console = getIConsole(system);
     if (!console) {
         compatLog("PROFILE CVAR: GetIConsole returned NULL");
@@ -824,7 +824,7 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
 
     using GetCVarFn = void* (*)(void*, const char*, bool);
     auto getCVar =
-        reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
+        reinterpret_cast<GetCVarFn>((*consoleVtable)[21]);
     void* cvar = getCVar(console, "g_playerprofile", true);
     if (!cvar) {
         compatLog("PROFILE CVAR: g_playerprofile not found");
@@ -863,7 +863,7 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
     // command, rather than relying only on the ICVar object's setter.
     using ExecuteStringFn = void (*)(void*, const char*, bool, bool);
     auto executeString =
-        reinterpret_cast<ExecuteStringFn>((*consoleVtable)[32]);
+        reinterpret_cast<ExecuteStringFn>((*consoleVtable)[33]);
 
     char command[512];
     std::snprintf(command, sizeof(command),
@@ -915,7 +915,7 @@ extern "C" bool compatGetFarCryProfile(char* out, size_t outSize) {
 
     using GetIConsoleFn = void* (*)(void*);
     auto getIConsole =
-        reinterpret_cast<GetIConsoleFn>((*systemVtable)[28]);
+        reinterpret_cast<GetIConsoleFn>((*systemVtable)[27]);
     if (!getIConsole)
         return false;
 
@@ -929,7 +929,7 @@ extern "C" bool compatGetFarCryProfile(char* out, size_t outSize) {
 
     using GetCVarFn = void* (*)(void*, const char*, bool);
     auto getCVar =
-        reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
+        reinterpret_cast<GetCVarFn>((*consoleVtable)[21]);
     if (!getCVar)
         return false;
 
@@ -988,10 +988,10 @@ extern "C" bool compatSaveFarCryProfileConfiguration(const char* profile) {
     if (!systemVtable || !*systemVtable)
         return false;
 
-    // ISystem::GetIGame() is slot 23 in the Far Cry ISystem interface.
+    // ISystem::GetIGame() is slot 22 in the Far Cry ISystem interface.
     using GetIGameFn = void* (*)(void*);
     auto getIGame =
-        reinterpret_cast<GetIGameFn>((*systemVtable)[23]);
+        reinterpret_cast<GetIGameFn>((*systemVtable)[22]);
     if (!getIGame)
         return false;
 
@@ -1003,12 +1003,12 @@ extern "C" bool compatSaveFarCryProfileConfiguration(const char* profile) {
     if (!gameVtable || !*gameVtable)
         return false;
 
-    // IGame::SaveConfiguration(systemCfg, gameCfg, profile) is slot 4
+    // IGame::SaveConfiguration(systemCfg, gameCfg, profile) is slot 18
     // in the Far Cry IGame interface.
     using SaveConfigurationFn =
         void (*)(void*, const char*, const char*, const char*);
     auto saveConfiguration =
-        reinterpret_cast<SaveConfigurationFn>((*gameVtable)[4]);
+        reinterpret_cast<SaveConfigurationFn>((*gameVtable)[18]);
     if (!saveConfiguration)
         return false;
 
