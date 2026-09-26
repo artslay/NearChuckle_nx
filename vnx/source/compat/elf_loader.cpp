@@ -993,7 +993,7 @@ static bool compatReadFarCryBackgroundVideoConfig(const char* profile,
         while (std::fgets(line, sizeof(line), f)) {
             char key[128] = {};
             char value[64] = {};
-            if (std::sscanf(line, " %127[^= ] = "%63[01]"",
+            if (std::sscanf(line, " %127[^= ] = \"%63[01]\"",
                             key, value) == 2 &&
                 std::strcmp(key, "ui_BackGroundVideo") == 0) {
                 outValue = (value[0] == '0') ? 0 : 1;
@@ -1041,73 +1041,17 @@ static volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
 static void* g_near_video_panel_start = nullptr;
 
 static int compatVideoPanelPlayGuard(void* self) {
-    // Original CryEngine uses ui_BackGroundVideo as a normal CVar whose
-    // persisted value comes from the system/profile configuration. The guard
-    // only reads that persisted value; it never modifies the CVar or config.
+    // Original Far Cry uses ui_BackGroundVideo as a normal VF_DUMPTODISK
+    // CVar. The active value is restored by the normal configuration path.
+    // On Switch, this compatibility guard only reads that persisted config;
+    // it never changes the CVar or any config file.
     int configuredValue = 1; // original CVar default
 
-    const char* profile = nullptr;
-    LoadedSo* sysSo = nullptr;
-    for (LoadedSo* so : g_loaded_sos) {
-        if (!so)
-            continue;
-        const char* p = so->path.c_str();
-        const char* base = std::strrchr(p, '/');
-        base = base ? base + 1 : p;
-        if (std::strcmp(base, "libCrySystem.so") == 0) {
-            sysSo = so;
-            break;
-        }
-    }
-
-    if (sysSo) {
-        using GetISystemFn = void* (*)();
-        auto getISystem =
-            reinterpret_cast<GetISystemFn>(sysSo->findSym("_Z10GetISystemv"));
-        if (getISystem) {
-            void* system = getISystem();
-            void*** systemVtable = reinterpret_cast<void***>(system);
-            if (systemVtable && *systemVtable) {
-                using GetIConsoleFn = void* (*)(void*);
-                auto getIConsole =
-                    reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
-                if (getIConsole) {
-                    void* console = getIConsole(system);
-                    void*** consoleVtable =
-                        reinterpret_cast<void***>(console);
-                    if (consoleVtable && *consoleVtable) {
-                        using GetCVarFn = void* (*)(void*, const char*, bool);
-                        auto getCVar =
-                            reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
-                        if (getCVar) {
-                            void* profileCvar =
-                                getCVar(console, "g_playerprofile", true);
-                            if (profileCvar) {
-                                void*** profileVtable =
-                                    reinterpret_cast<void***>(profileCvar);
-                                if (profileVtable && *profileVtable) {
-                                    using GetStringFn = char* (*)(void*);
-                                    auto getProfileString =
-                                        reinterpret_cast<GetStringFn>(
-                                            (*profileVtable)[3]);
-                                    if (getProfileString)
-                                        profile = getProfileString(profileCvar);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     int savedValue = -1;
-    if (compatReadFarCryBackgroundVideoConfig(profile, savedValue) &&
+    if (compatReadFarCryBackgroundVideoConfig(nullptr, savedValue) &&
         savedValue >= 0)
         configuredValue = savedValue;
 
-    if (configuredValue == 0)
-        return 0;
 
     const uint32_t offset = g_near_video_panel_player_offset;
     void* startFn = g_near_video_panel_start;
