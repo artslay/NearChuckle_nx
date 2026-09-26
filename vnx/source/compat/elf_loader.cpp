@@ -1079,6 +1079,7 @@ static bool compatWriteFarCryBackgroundVideoConfig(const char* profile, int valu
 extern "C" void compatPollFarCryBackgroundVideoSave() {
     static bool initialized = false;
     static int lastValue = -1;
+    static void* lastCvar = nullptr;
 
     LoadedSo* sysSo = nullptr;
     for (LoadedSo* so : g_loaded_sos) {
@@ -1141,6 +1142,26 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
         return;
 
     int value = getIVal(cvar) != 0 ? 1 : 0;
+
+    // CUISystem::Reload() calls ReleaseCVars() and CreateCVars() again.
+    // The recreated ui_BackGroundVideo starts from its hardcoded default "1".
+    // A value change caused by that recreation is not a user change and must
+    // never be written back over the selected profile.
+    if (initialized && cvar != lastCvar) {
+        using SetStringFn = void (*)(void*, const char*);
+        auto setString =
+            reinterpret_cast<SetStringFn>((*cvarVtable)[4]);
+        if (setString && lastValue >= 0) {
+            const char* restored = lastValue ? "1" : "0";
+            setString(cvar, restored);
+            value = lastValue;
+            compatLogFmt("PROFILE CVar: ui_BackGroundVideo recreated; restored=%d",
+                         value);
+        }
+        lastCvar = cvar;
+        return;
+    }
+
     if (!initialized) {
         // ui_BackGroundVideo is created by CUISystem::CreateCVars(), which is
         // later than the initial profile load. That creation uses "1" as the
@@ -1176,6 +1197,7 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
 
         initialized = true;
         lastValue = value;
+        lastCvar = cvar;
         return;
     }
 
@@ -1197,6 +1219,8 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
                 profile = getProfileString(profileCvar);
         }
     }
+
+    lastCvar = cvar;
 
     const bool engineSaved = compatSaveFarCryConfiguration();
     const bool fileSaved =
