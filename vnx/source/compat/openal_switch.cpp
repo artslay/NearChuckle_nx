@@ -65,6 +65,7 @@ struct Source {
     float ref=1.0f, maxdist=1000000.0f, rolloff=1.0f, mingain=0.0f, maxgain=1.0f;
     std::vector<ALuint> queue;
     size_t current=0, processed=0;
+    bool play_requested=false;
     double sample_pos=0.0;
 };
 
@@ -106,7 +107,7 @@ void setError(ALenum e) { if(g_al_error==AL_NO_ERROR) g_al_error=e; }
 void setAlcError(ALCenum e) { if(g_alc_error==ALC_NO_ERROR) g_alc_error=e; }
 
 void resetSource(Source& s) {
-    s.queue.clear(); s.current=0; s.processed=0; s.sample_pos=0.0;
+    s.queue.clear(); s.current=0; s.processed=0; s.play_requested=false; s.sample_pos=0.0;
 }
 
 void mixSource(Source& s, float* dst, size_t frames) {
@@ -497,13 +498,18 @@ void alSourcePlay(ALuint id){
     mutexLock(&g_audio.lock);
     Source*s=getSource(id);
     if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
-    if(s->queue.empty()){mutexUnlock(&g_audio.lock);setError(AL_INVALID_OPERATION);return;}
-    s->state=AL_PLAYING;
+    // OpenAL allows streaming clients to issue Play before the first
+    // buffer is queued. Preserve that ordering: CS_Stream_Play() in the
+    // Android CrySoundSystem does exactly this, and CS_Update() queues the
+    // first Bink buffer later.
+    s->play_requested=true;
+    if(!s->queue.empty())
+        s->state=AL_PLAYING;
     if(g_play_log_count<16) {
-        compatLogFmt("AUDIO: alSourcePlay[%u] source=%u queued=%u looping=%d gain=%.3f pitch=%.3f",
+        compatLogFmt("AUDIO: alSourcePlay[%u] source=%u queued=%u looping=%d gain=%.3f pitch=%.3f pending=%d",
                      g_play_log_count, static_cast<unsigned>(id),
                      static_cast<unsigned>(s->queue.size()), s->looping ? 1 : 0,
-                     s->gain, s->pitch);
+                     s->gain, s->pitch, s->queue.empty() ? 1 : 0);
         ++g_play_log_count;
     }
     mutexUnlock(&g_audio.lock);
@@ -519,14 +525,14 @@ void alSourceStop(ALuint id){
     mutexLock(&g_audio.lock);
     Source*s=getSource(id);
     if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
-    s->state=AL_STOPPED;s->current=0;s->processed=0;s->sample_pos=0;
+    s->state=AL_STOPPED;s->current=0;s->processed=s->queue.size();s->play_requested=false;s->sample_pos=0;
     mutexUnlock(&g_audio.lock);
 }
 void alSourceRewind(ALuint id){
     mutexLock(&g_audio.lock);
     Source*s=getSource(id);
     if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
-    s->state=AL_INITIAL;s->current=0;s->processed=0;s->sample_pos=0;
+    s->state=AL_INITIAL;s->current=0;s->processed=0;s->play_requested=false;s->sample_pos=0;
     mutexUnlock(&g_audio.lock);
 }
 void alSourcei(ALuint id,ALenum p,ALint v){
@@ -584,6 +590,9 @@ void alSourceQueueBuffers(ALuint id,ALsizei n,const ALuint*v){
         if(!getBuffer(v[i])){setError(AL_INVALID_NAME);break;}
         s->queue.push_back(v[i]);
     }
+
+    if(s->play_requested && !s->queue.empty() && s->state != AL_PAUSED)
+        s->state=AL_PLAYING;
 
     if(g_queue_log_count<16) {
         compatLogFmt("AUDIO: alSourceQueueBuffers[%u] source=%u n=%d total=%u",
