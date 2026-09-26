@@ -1117,10 +1117,10 @@ static int g_bg_video_value = -1;
 static void* g_bg_video_last_cvar = nullptr;
 static bool g_bg_video_sink_installed = false;
 static uint64_t g_bg_video_disabled_tick = 0;
-extern "C" volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
-extern "C" void* g_near_video_panel_start = nullptr;
+static volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
+static void* g_near_video_panel_start = nullptr;
 
-extern "C" int compatVideoPanelPlayGuard(void* self) {
+static int compatVideoPanelPlayGuard(void* self) {
     // Background video is controlled by the persisted Switch-side CVar state.
     // Do the check at the actual CUIVideoPanel::Play() entry so a later UI
     // reload or Lua script cannot start Bink behind our back.
@@ -1764,10 +1764,10 @@ static bool patchVideoPanelPlay(LoadedSo* so, uint8_t* stage_base,
             continue;
 
         startCallOff = off;
-        for (size_t back = (off >= 4 ? off - 4 : 0);
-             ; back >= 0 && back + 4 <= off + 1; ) {
+        for (size_t back = off; back >= 4; back -= 4) {
+            const size_t prevOff = back - 4;
             const uint32_t w =
-                *reinterpret_cast<const uint32_t*>(code + back);
+                *reinterpret_cast<const uint32_t*>(code + prevOff);
             const unsigned rd = w & 31u;
             const unsigned rn = (w >> 5) & 31u;
             if ((w & 0xffc00000u) == 0x91000000u &&
@@ -1779,9 +1779,6 @@ static bool patchVideoPanelPlay(LoadedSo* so, uint8_t* stage_base,
                     break;
                 }
             }
-            if (back < 4)
-                break;
-            back -= 4;
         }
         break;
     }
