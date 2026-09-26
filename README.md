@@ -12,16 +12,17 @@ NearChuckle_nx/
   source/
   vnx/
   mesa-sdk/
-  game/
+  lib/                 # host-side build input only
+  romfs/               # generated; packaged into the NRO
     lib/
 
-Put the Android ARM64 libraries in /switch/NearChuckle_nx/game/lib/.
+Put the Android ARM64 libraries in the host-side `lib/` directory (or set `EMBED_LIB_SOURCE` when building). The build packages them into the NRO under `romfs:/lib`.
 
-The main entry library is libFarCry.so. Other CryEngine and Android ARM64 dependencies should be placed in the same directory.
+The main entry library is libFarCry.so. Other CryEngine and Android ARM64 dependencies should be placed in the same host-side directory.
 
 Game data is expected under /switch/NearChuckle_nx/game/.
 
-config.txt controls the data path, library path, resolution, FOV, VSync, and Mesa driver.
+config.txt controls the data path, resolution, FOV, VSync, and Mesa driver. The `lib_dir` entry is kept for compatibility and is forced to `romfs:/lib` by the runtime.
 
 The NRO starts Far Cry directly. There is no launcher UI.
 
