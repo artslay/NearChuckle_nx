@@ -879,6 +879,52 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
     return ok;
 }
 
+extern "C" bool compatSaveFarCryConfiguration() {
+    // Call the actual non-virtual CSystem::SaveConfiguration() symbol. This
+    // preserves the engine's own serialization rules:
+    //   selected profile -> <profile>_system.cfg / <profile>_game.cfg
+    //   root system.cfg/game.cfg -> bootstrap/current root state
+    //
+    // This is intentionally callable only from the deferred Switch poll,
+    // never from fopen/open/Lua callbacks.
+    LoadedSo* sysSo = nullptr;
+    for (LoadedSo* so : g_loaded_sos) {
+        if (!so)
+            continue;
+        const char* p = so->path.c_str();
+        const char* base = std::strrchr(p, '/');
+        base = base ? base + 1 : p;
+        if (std::strcmp(base, "libCrySystem.so") == 0) {
+            sysSo = so;
+            break;
+        }
+    }
+    if (!sysSo)
+        return false;
+
+    using GetISystemFn = void* (*)();
+    auto getISystem =
+        reinterpret_cast<GetISystemFn>(sysSo->findSym("_Z10GetISystemv"));
+    if (!getISystem)
+        return false;
+
+    void* system = getISystem();
+    if (!system)
+        return false;
+
+    using SaveConfigurationFn = void (*)(void*);
+    auto saveConfiguration =
+        reinterpret_cast<SaveConfigurationFn>(
+            sysSo->findSym("_ZN7CSystem17SaveConfigurationEv"));
+    if (!saveConfiguration)
+        return false;
+
+    compatLog("PROFILE SAVE: calling real CSystem::SaveConfiguration()");
+    saveConfiguration(system);
+    compatLog("PROFILE SAVE: real CSystem::SaveConfiguration() returned");
+    return true;
+}
+
 // ─── Global symbol resolver ───────────────────────────────────────────────────
 // Checks our shim table FIRST so Switch-compatible implementations always win
 // over any Bionic copies embedded in libapplovin.so / libquack.so.
