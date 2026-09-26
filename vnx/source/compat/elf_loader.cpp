@@ -1112,18 +1112,80 @@ static bool compatReadFarCryBackgroundVideoConfig(const char* profile,
 
 namespace {
 
-static bool g_bg_video_initialized = false;
-static int g_bg_video_value = -1;
-static void* g_bg_video_last_cvar = nullptr;
-static bool g_bg_video_sink_installed = false;
 static volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
 static void* g_near_video_panel_start = nullptr;
 
 static int compatVideoPanelPlayGuard(void* self) {
-    // Background video is controlled by the persisted Switch-side CVar state.
-    // Do the check at the actual CUIVideoPanel::Play() entry so a later UI
-    // reload or Lua script cannot start Bink behind our back.
-    if (g_bg_video_value == 0)
+    // Original CryEngine treats ui_BackGroundVideo as a normal
+    // VF_DUMPTODISK console variable. The persisted profile config is the
+    // source of truth for this compatibility guard. Nothing is written or
+    // changed here.
+    int configuredValue = 1; // original CVar default
+
+    LoadedSo* sysSo = nullptr;
+    for (LoadedSo* so : g_loaded_sos) {
+        if (!so)
+            continue;
+        const char* p = so->path.c_str();
+        const char* base = std::strrchr(p, '/');
+        base = base ? base + 1 : p;
+        if (std::strcmp(base, "libCrySystem.so") == 0) {
+            sysSo = so;
+            break;
+        }
+    }
+
+    if (sysSo) {
+        using GetISystemFn = void* (*)();
+        auto getISystem =
+            reinterpret_cast<GetISystemFn>(sysSo->findSym("_Z10GetISystemv"));
+        if (getISystem) {
+            void* system = getISystem();
+            void*** systemVtable = reinterpret_cast<void***>(system);
+            if (systemVtable && *systemVtable) {
+                using GetIConsoleFn = void* (*)(void*);
+                auto getIConsole =
+                    reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
+                if (getIConsole) {
+                    void* console = getIConsole(system);
+                    void*** consoleVtable =
+                        reinterpret_cast<void***>(console);
+                    if (consoleVtable && *consoleVtable) {
+                        using GetCVarFn = void* (*)(void*, const char*, bool);
+                        auto getCVar =
+                            reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
+                        if (getCVar) {
+                            void* profileCvar =
+                                getCVar(console, "g_playerprofile", true);
+                            if (profileCvar) {
+                                void*** profileVtable =
+                                    reinterpret_cast<void***>(profileCvar);
+                                if (profileVtable && *profileVtable) {
+                                    using GetStringFn = char* (*)(void*);
+                                    auto getProfileString =
+                                        reinterpret_cast<GetStringFn>(
+                                            (*profileVtable)[3]);
+                                    const char* profile =
+                                        getProfileString
+                                            ? getProfileString(profileCvar)
+                                            : nullptr;
+                                    int savedValue = -1;
+                                    if (profile && *profile &&
+                                        compatReadFarCryBackgroundVideoConfig(
+                                            profile, savedValue) &&
+                                        savedValue >= 0) {
+                                        configuredValue = savedValue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (configuredValue == 0)
         return 0;
 
     const uint32_t offset = g_near_video_panel_player_offset;
@@ -1137,230 +1199,7 @@ static int compatVideoPanelPlayGuard(void* self) {
     return 1;
 }
 
-struct FarCryBackgroundVideoVarSink {
-    virtual bool OnBeforeVarChange(void* var, const char* newValue) {
-        if (!var || !newValue || !g_bg_video_initialized)
-            return true;
-
-        void*** varVtable = reinterpret_cast<void***>(var);
-        if (!varVtable || !*varVtable)
-            return true;
-
-        using GetNameFn = char* (*)(void*);
-        auto getName = reinterpret_cast<GetNameFn>((*varVtable)[13]);
-        if (!getName)
-            return true;
-
-        const char* name = getName(var);
-        if (!name || std::strcmp(name, "ui_BackGroundVideo") != 0)
-            return true;
-
-        const bool wantsEnable = std::atoi(newValue) != 0;
-        if (g_bg_video_value == 0 && wantsEnable) {
-            compatLog(
-                "PROFILE CVar SINK: blocked ui_BackGroundVideo=1 while background video is disabled");
-            return false;
-        }
-
-        return true;
-    }
-};
-
-static FarCryBackgroundVideoVarSink g_bg_video_sink;
-
-static bool compatInstallFarCryBackgroundVideoSink(void* console) {
-    if (!console || g_bg_video_sink_installed)
-        return true;
-
-    void*** consoleVtable = reinterpret_cast<void***>(console);
-    if (!consoleVtable || !*consoleVtable)
-        return false;
-
-    // IConsole::AddConsoleVarSink() is slot 47 in the real CryCommon
-    // interface used by the guest.
-    using AddSinkFn = void (*)(void*, void*);
-    auto addSink =
-        reinterpret_cast<AddSinkFn>((*consoleVtable)[47]);
-    if (!addSink)
-        return false;
-
-    addSink(console, &g_bg_video_sink);
-    g_bg_video_sink_installed = true;
-    compatLog("PROFILE CVar SINK: installed for ui_BackGroundVideo");
-    return true;
-}
-
 } // namespace
-
-extern "C" void compatPollFarCryBackgroundVideoSave() {
-    LoadedSo* sysSo = nullptr;
-    for (LoadedSo* so : g_loaded_sos) {
-        if (!so)
-            continue;
-        const char* p = so->path.c_str();
-        const char* base = std::strrchr(p, '/');
-        base = base ? base + 1 : p;
-        if (std::strcmp(base, "libCrySystem.so") == 0) {
-            sysSo = so;
-            break;
-        }
-    }
-    if (!sysSo)
-        return;
-
-    using GetISystemFn = void* (*)();
-    auto getISystem =
-        reinterpret_cast<GetISystemFn>(sysSo->findSym("_Z10GetISystemv"));
-    if (!getISystem)
-        return;
-
-    void* system = getISystem();
-    if (!system)
-        return;
-
-    void*** systemVtable = reinterpret_cast<void***>(system);
-    if (!systemVtable || !*systemVtable)
-        return;
-
-    using GetIConsoleFn = void* (*)(void*);
-    auto getIConsole =
-        reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
-    if (!getIConsole)
-        return;
-
-    void* console = getIConsole(system);
-    if (!console)
-        return;
-
-    void*** consoleVtable = reinterpret_cast<void***>(console);
-    if (!consoleVtable || !*consoleVtable)
-        return;
-
-    using GetCVarFn = void* (*)(void*, const char*, bool);
-    auto getCVar =
-        reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
-    if (!getCVar)
-        return;
-
-    void* cvar = getCVar(console, "ui_BackGroundVideo", true);
-    if (!cvar)
-        return;
-
-    if (!compatInstallFarCryBackgroundVideoSink(console))
-        return;
-
-    void*** cvarVtable = reinterpret_cast<void***>(cvar);
-    if (!cvarVtable || !*cvarVtable)
-        return;
-
-    using GetIValFn = int (*)(void*);
-    auto getIVal = reinterpret_cast<GetIValFn>((*cvarVtable)[1]);
-    if (!getIVal)
-        return;
-
-    int value = getIVal(cvar) != 0 ? 1 : 0;
-
-    if (!g_bg_video_initialized) {
-        int savedValue = -1;
-
-        void* profileCvar = getCVar(console, "g_playerprofile", true);
-        const char* profile = nullptr;
-        if (profileCvar) {
-            void*** profileVtable =
-                reinterpret_cast<void***>(profileCvar);
-            if (profileVtable && *profileVtable) {
-                using GetStringFn = char* (*)(void*);
-                auto getProfileString =
-                    reinterpret_cast<GetStringFn>((*profileVtable)[3]);
-                if (getProfileString)
-                    profile = getProfileString(profileCvar);
-            }
-        }
-
-        if (profile && *profile &&
-            compatReadFarCryBackgroundVideoConfig(profile, savedValue) &&
-            savedValue >= 0 && savedValue != value) {
-            using SetStringFn = void (*)(void*, const char*);
-            auto setString =
-                reinterpret_cast<SetStringFn>((*cvarVtable)[4]);
-            if (setString)
-                setString(cvar, savedValue ? "1" : "0");
-            value = savedValue;
-            compatLogFmt(
-                "PROFILE CVar: restored ui_BackGroundVideo=%d from %s_system.cfg",
-                value, profile);
-        }
-
-        g_bg_video_initialized = true;
-        g_bg_video_value = value;
-        g_bg_video_last_cvar = cvar;
-        compatLogFmt("PROFILE CVar: initial ui_BackGroundVideo=%d", value);
-        return;
-    }
-
-    if (cvar != g_bg_video_last_cvar) {
-        g_bg_video_last_cvar = cvar;
-        if (g_bg_video_value >= 0) {
-            using SetStringFn = void (*)(void*, const char*);
-            auto setString =
-                reinterpret_cast<SetStringFn>((*cvarVtable)[4]);
-            if (setString)
-                setString(cvar, g_bg_video_value ? "1" : "0");
-            compatLogFmt(
-                "PROFILE CVar: recreated ui_BackGroundVideo -> restored=%d",
-                g_bg_video_value);
-        }
-        return;
-    }
-
-    if (value == g_bg_video_value)
-        return;
-
-    // Once the user has disabled background video, do not let the engine's
-    // Main Menu/UI reinitialization silently turn it back on.
-    if (g_bg_video_value == 0 && value != 0) {
-        using SetStringFn = void (*)(void*, const char*);
-        auto setString =
-            reinterpret_cast<SetStringFn>((*cvarVtable)[4]);
-        if (setString)
-            setString(cvar, "0");
-        compatLog("PROFILE CVar: forced ui_BackGroundVideo back to 0");
-        g_bg_video_last_cvar = cvar;
-        return;
-    }
-
-    const int oldValue = g_bg_video_value;
-    g_bg_video_value = value;
-    compatLogFmt(
-        "PROFILE CVar: ui_BackGroundVideo user value %d -> %d",
-        oldValue, value);
-
-    const char* profile = nullptr;
-    void* profileCvar = getCVar(console, "g_playerprofile", true);
-    if (profileCvar) {
-        void*** profileVtable = reinterpret_cast<void***>(profileCvar);
-        if (profileVtable && *profileVtable) {
-            using GetStringFn = char* (*)(void*);
-            auto getProfileString =
-                reinterpret_cast<GetStringFn>((*profileVtable)[3]);
-            if (getProfileString)
-                profile = getProfileString(profileCvar);
-        }
-    }
-
-    const bool engineSaved = compatSaveFarCryConfiguration();
-    const bool fileSaved =
-        profile && *profile &&
-        compatWriteFarCryBackgroundVideoConfig(profile, value);
-
-    if (!engineSaved && !fileSaved) {
-        compatLog("PROFILE CVar: failed to save ui_BackGroundVideo");
-    } else {
-        compatLogFmt(
-            "PROFILE CVar: ui_BackGroundVideo=%d saved engine=%d file=%d",
-            value, engineSaved ? 1 : 0, fileSaved ? 1 : 0);
-    }
-}
 
 extern "C" bool compatSaveFarCryConfiguration() {
     // Call the actual non-virtual CSystem::SaveConfiguration() symbol. This
@@ -3010,272 +2849,6 @@ static bool patchFarCrySetVariableMissingCVar(LoadedSo* so, uint8_t* stage_base,
 // loader and from the Unity path. This helper just pulls the owning package id
 // out of the .so path (…/games/<pkg>/lib/<soname>) and forwards.
 
-static bool patchFarCryBackgroundVideoDefault(LoadedSo* so, uint8_t* stage_base,
-                                              uint64_t min_vaddr, size_t alloc_size) {
-    if (!so || !stage_base || !alloc_size)
-        return false;
-
-    const char* base = std::strrchr(so->path.c_str(), '/');
-    base = base ? base + 1 : so->path.c_str();
-    if (std::strcmp(base, "libCryGame.so") != 0)
-        return false;
-
-    // Android NearChuckle UICVars.cpp creates:
-    //   CreateVariable("ui_BackGroundVideo", "1", VF_DUMPTODISK, ...);
-    //
-    // When CUISystem::Reload()/CreateCVars() runs on Switch, the CVar can be
-    // recreated with that default before our profile poll gets a chance to
-    // restore the saved value. Patch only this CreateVariable call so a
-    // recreated CVar starts disabled. The Video Options screen can still set
-    // it to 1 explicitly later.
-    constexpr char kName[] = "ui_BackGroundVideo";
-    constexpr char kZero[] = "0";
-    constexpr char kOne[] = "1";
-
-    const uintptr_t image_base = reinterpret_cast<uintptr_t>(so->base);
-    const uint64_t mapped_start = image_base + min_vaddr;
-    const uint64_t mapped_end = mapped_start + alloc_size;
-    uint8_t* image = stage_base + min_vaddr;
-
-    auto is_adrp = [](uint32_t w) {
-        return (w & 0x9f000000u) == 0x90000000u;
-    };
-
-    auto is_add_imm = [](uint32_t w) {
-        return (w & 0xffc00000u) == 0x91000000u;
-    };
-
-    auto adrp_target = [](uint64_t pc, uint32_t insn) -> uint64_t {
-        int64_t imm21 = ((int64_t)((insn >> 5) & 0x7ffffu) |
-                         ((int64_t)((insn >> 29) & 0x3u) << 19));
-        if (imm21 & (1LL << 20))
-            imm21 |= ~((1LL << 21) - 1);
-        return (pc & ~0xfffULL) + (imm21 << 12);
-    };
-
-    auto add_target = [](uint64_t page, uint32_t insn) -> uint64_t {
-        return page + ((uint64_t)((insn >> 10) & 0xfff));
-    };
-
-    struct Ref {
-        uint64_t target = 0;
-        uint32_t* first = nullptr;
-        uint32_t* second = nullptr;
-        unsigned reg = 0;
-        size_t byte_off = 0;
-    };
-
-    auto make_ref = [&](size_t off, const char* wanted, Ref& out) -> bool {
-        if (off + 8 > alloc_size)
-            return false;
-
-        uint32_t* w = reinterpret_cast<uint32_t*>(image + off);
-        if (!is_adrp(w[0]) || !is_add_imm(w[1]))
-            return false;
-
-        const unsigned rd = w[0] & 31u;
-        const unsigned rd1 = w[1] & 31u;
-        const unsigned rn1 = (w[1] >> 5) & 31u;
-        if (rd1 != rd || rn1 != rd)
-            return false;
-
-        const uint64_t pc = image_base + min_vaddr + off;
-        const uint64_t page = adrp_target(pc, w[0]);
-        const uint64_t target = add_target(page, w[1]);
-
-        if (target < mapped_start ||
-            target + std::strlen(wanted) + 1 > mapped_end)
-            return false;
-
-        const uint64_t tv = target - image_base;
-        if (tv < min_vaddr || tv - min_vaddr >= alloc_size)
-            return false;
-
-        const char* s = reinterpret_cast<const char*>(
-            stage_base + (tv - min_vaddr));
-        if (std::strcmp(s, wanted) != 0)
-            return false;
-
-        out.target = target;
-        out.first = &w[0];
-        out.second = &w[1];
-        out.reg = rd;
-        out.byte_off = min_vaddr + off;
-        return true;
-    };
-
-    std::vector<Ref> nameRefs;
-    std::vector<Ref> zeroRefs;
-    std::vector<Ref> oneRefs;
-
-    for (size_t off = 0; off + 8 <= alloc_size; off += 4) {
-        Ref ref;
-        if (make_ref(off, kName, ref))
-            nameRefs.push_back(ref);
-        if (make_ref(off, kZero, ref))
-            zeroRefs.push_back(ref);
-        if (make_ref(off, kOne, ref))
-            oneRefs.push_back(ref);
-    }
-
-    if (nameRefs.empty()) {
-        compatLog("FARCRY BGVIDEO DEFAULT: no ARM64 xref to ui_BackGroundVideo found");
-        return false;
-    }
-    if (zeroRefs.empty()) {
-        compatLog("FARCRY BGVIDEO DEFAULT: no ARM64 xref to string '0' found");
-        return false;
-    }
-    if (oneRefs.empty()) {
-        compatLog("FARCRY BGVIDEO DEFAULT: no ARM64 xref to string '1' found");
-        return false;
-    }
-
-    Ref* selectedName = nullptr;
-    Ref* selectedOne = nullptr;
-    size_t bestNameOneDistance = SIZE_MAX;
-
-    for (Ref& nameRef : nameRefs) {
-        const size_t nameOff =
-            nameRef.byte_off >= min_vaddr
-                ? static_cast<size_t>(nameRef.byte_off - min_vaddr)
-                : 0;
-
-        // The four arguments to CreateVariable are loaded close together:
-        //   x0 = "ui_BackGroundVideo"
-        //   x1 = "1"
-        //   x2 = VF_DUMPTODISK
-        //   x3 = help string
-        //
-        // Find the nearest x1 -> "1" reference in the same small block.
-        for (Ref& oneRef : oneRefs) {
-            if (oneRef.reg != 1)
-                continue;
-
-            const size_t oneOff =
-                oneRef.byte_off >= min_vaddr
-                    ? static_cast<size_t>(oneRef.byte_off - min_vaddr)
-                    : 0;
-            const size_t distance = (oneOff > nameOff)
-                ? oneOff - nameOff
-                : nameOff - oneOff;
-            if (distance > 0x80)
-                continue;
-
-            if (distance < bestNameOneDistance) {
-                bestNameOneDistance = distance;
-                selectedName = &nameRef;
-                selectedOne = &oneRef;
-            }
-        }
-    }
-
-    if (!selectedName || !selectedOne) {
-        compatLog("FARCRY BGVIDEO DEFAULT: no nearby x1 -> \"1\" CreateVariable reference found");
-        return false;
-    }
-
-    // Reuse an existing nearby x1 -> "0" reference when possible. If there is
-    // no x1 -> "0" reference in the same block, we can still encode an ADRP+ADD
-    // pair to the global "0" literal ourselves.
-    Ref* selectedZero = nullptr;
-    size_t bestZeroDistance = SIZE_MAX;
-
-    const size_t nameOff =
-        selectedName->byte_off >= min_vaddr
-            ? static_cast<size_t>(selectedName->byte_off - min_vaddr)
-            : 0;
-
-    for (Ref& zeroRef : zeroRefs) {
-        if (zeroRef.reg != selectedOne->reg)
-            continue;
-
-        const size_t zeroOff =
-            zeroRef.byte_off >= min_vaddr
-                ? static_cast<size_t>(zeroRef.byte_off - min_vaddr)
-                : 0;
-        const size_t distance = (zeroOff > nameOff)
-            ? zeroOff - nameOff
-            : nameOff - zeroOff;
-        if (distance > 0x100)
-            continue;
-        if (distance < bestZeroDistance) {
-            bestZeroDistance = distance;
-            selectedZero = &zeroRef;
-        }
-    }
-
-    uint64_t zeroTarget = 0;
-    if (selectedZero) {
-        zeroTarget = selectedZero->target;
-    } else {
-        // Find the closest string "0" literal in the image, regardless of its
-        // register/reference form, using the read-only bytes as the anchor.
-        for (size_t off = 0; off + 2 <= alloc_size; off++) {
-            const char* s = reinterpret_cast<const char*>(image + off);
-            if (s[0] == '0' && s[1] == '\0') {
-                zeroTarget = image_base + min_vaddr + off;
-                const uint64_t dist =
-                    (zeroTarget > selectedOne->target)
-                        ? zeroTarget - selectedOne->target
-                        : selectedOne->target - zeroTarget;
-                if (dist < 0x10000)
-                    break;
-            }
-        }
-    }
-
-    if (!zeroTarget) {
-        compatLog("FARCRY BGVIDEO DEFAULT: could not locate literal string '0'");
-        return false;
-    }
-
-    auto encode_adrp = [](uint64_t pc, uint64_t target, unsigned rd) -> uint32_t {
-        const int64_t page_delta =
-            (static_cast<int64_t>(target & ~0xfffULL) -
-             static_cast<int64_t>(pc & ~0xfffULL)) >> 12;
-        if (page_delta < -(1LL << 20) || page_delta >= (1LL << 20))
-            return 0;
-        const uint32_t imm = static_cast<uint32_t>(page_delta) & 0x1fffffu;
-        return 0x90000000u |
-               ((imm & 0x3u) << 29) |
-               ((imm & 0x7ffffu) << 5) |
-               (rd & 31u);
-    };
-
-    auto encode_add = [](uint64_t target, unsigned rd) -> uint32_t {
-        const uint64_t imm12 = target & 0xfffULL;
-        return 0x91000000u |
-               (static_cast<uint32_t>(imm12) << 10) |
-               (rd << 5) | rd;
-    };
-
-    const uint64_t patch_pc = image_base + selectedOne->byte_off;
-    const uint32_t newAdrp =
-        encode_adrp(patch_pc, zeroTarget, selectedOne->reg);
-    const uint32_t newAdd =
-        encode_add(zeroTarget, selectedOne->reg);
-
-    if (!newAdrp || !newAdd) {
-        compatLog("FARCRY BGVIDEO DEFAULT: failed to encode default string relocation");
-        return false;
-    }
-
-    const uint32_t old0 = *selectedOne->first;
-    const uint32_t old1 = *selectedOne->second;
-    *selectedOne->first = newAdrp;
-    *selectedOne->second = newAdd;
-    armICacheInvalidate(selectedOne->first, 8);
-
-    compatLogFmt(
-        "FARCRY BGVIDEO DEFAULT: CreateVariable(ui_BackGroundVideo,1) -> 0 "
-        "at vaddr=0x%llx old=%08x %08x new=%08x %08x",
-        (unsigned long long)selectedOne->byte_off,
-        old0, old1, newAdrp, newAdd);
-    return true;
-}
-
-
 static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
                                  uint64_t min_vaddr, size_t alloc_size,
                                  const char* path) {
@@ -3349,8 +2922,8 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
         if (!patchFarCrySetVariableMissingCVar(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY SETVARIABLE: missing-CVar patch not applied");
 
-        if (!patchFarCryBackgroundVideoDefault(so, stage_base, min_vaddr, alloc_size))
-            compatLog("FARCRY BGVIDEO DEFAULT: patch not applied");
+        // ui_BackGroundVideo keeps the original default=1. The compatibility
+        // Play guard reads the selected profile's persisted config directly.
 
         // Keep CXGame::LoadConfiguration() intact. The profile path now uses
         // the corrected Android dirent ABI, so bypassing LoadConfiguration()
