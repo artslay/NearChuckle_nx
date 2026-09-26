@@ -50,6 +50,7 @@ void near_bink_cs_update(void);
 extern void compatPakLog(const char* fmt, ...);
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
+extern "C" bool compatActivateFarCryProfile(const char* profile);
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
 extern "C" {
@@ -887,6 +888,7 @@ static bool g_pendingProfileGameWritten = false;
 // remain "default", so the Switch filesystem shim mirrors the selected profile
 // for subsequent config/savegame accesses without touching guest object memory.
 static std::string g_activeProfile;
+static bool g_activeProfileCvarSet = false;
 
 static bool parseProfileConfigName(const std::string& path,
                                    const char* suffix,
@@ -3969,6 +3971,11 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         compatLogFmt("PROFILE FOPEN: %s mode=%s",
                      ioPath, mode ? mode : "?");
 
+    if (!g_activeProfile.empty() && !g_activeProfileCvarSet) {
+        g_activeProfileCvarSet =
+            compatActivateFarCryProfile(g_activeProfile.c_str());
+    }
+
     std::string redirectedProfilePath;
     if (profileWrite && normalizedPath == ioPathStorage &&
         !g_pendingProfileCreate.empty()) {
@@ -4040,9 +4047,15 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 asciiLower(probedProfile) != "default") {
                 g_pendingProfileCreate = probedProfile;
                 g_activeProfile = probedProfile;
+                g_activeProfileCvarSet = false;
                 g_pendingProfileSystemWritten = false;
                 g_pendingProfileGameWritten = false;
-                compatLogFmt("PROFILE ACTIVE: %s", g_activeProfile.c_str());
+
+                const bool cvarOk =
+                    compatActivateFarCryProfile(g_activeProfile.c_str());
+                g_activeProfileCvarSet = cvarOk;
+                compatLogFmt("PROFILE ACTIVE: %s cvar=%s",
+                             g_activeProfile.c_str(), cvarOk ? "SET" : "FAILED");
 
                 // Create the profile directory immediately when the UI has
                 // identified the new profile name. The original flow may
