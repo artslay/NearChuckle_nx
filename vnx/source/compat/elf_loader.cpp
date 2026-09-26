@@ -20,6 +20,8 @@ extern void compatLogFlush();
 extern void compatUiLog(const char* msg);
 extern void compatUiSetPct(int pct);
 extern "C" unsigned compatGuestGetFileSize(void* self, const char* path, unsigned flags);
+extern "C" unsigned compatGuestGetCompressedFileSize(void* self, char* filename);
+extern "C" unsigned compatGuestReadCompressedFile(void* self, char* filename, void* data, unsigned maxbitlen);
 extern "C" void compatGuestSetCallbackTimeQuota(void* self, int nMicroseconds);
 extern "C" bool compatGuestActivateReadStream(void* self);
 extern "C" uint32_t compatGuestCallReadFileEx(void* self);
@@ -2422,6 +2424,64 @@ static bool patchFarCryGetFileSize(LoadedSo* so, uint8_t* stage_base,
     return true;
 }
 
+static bool patchFarCryCompressedSaveFile(LoadedSo* so, uint8_t* stage_base,
+                                                uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* base = std::strrchr(so->path.c_str(), '/');
+    base = base ? base + 1 : so->path.c_str();
+    if (std::strcmp(base, "libCrySystem.so") != 0)
+        return false;
+
+    const uintptr_t imageBase = reinterpret_cast<uintptr_t>(so->base);
+
+    auto patchEntry = [&](const char* symbol, void* helper,
+                          const char* label) -> bool {
+        void* fn = so->findSym(symbol);
+        if (!fn) {
+            compatLogFmt("FARCRY SAVE IO: symbol not found: %s", symbol);
+            return false;
+        }
+
+        const uintptr_t addr = reinterpret_cast<uintptr_t>(fn);
+        if (addr < imageBase || addr - imageBase + 16 > alloc_size) {
+            compatLogFmt(
+                "FARCRY SAVE IO: symbol outside image %s fn=%p base=%p size=0x%llx",
+                symbol, fn, reinterpret_cast<void*>(imageBase),
+                (unsigned long long)alloc_size);
+            return false;
+        }
+
+        uint32_t* insn = reinterpret_cast<uint32_t*>(
+            stage_base + min_vaddr + (addr - imageBase));
+        const uint64_t helperAddr = reinterpret_cast<uint64_t>(helper);
+
+        insn[0] = 0x58000050u; // ldr x16, #+8
+        insn[1] = 0xd61f0200u; // br x16
+        std::memcpy(&insn[2], &helperAddr, sizeof(helperAddr));
+        armICacheInvalidate(insn, 16);
+
+        compatLogFmt(
+            "FARCRY SAVE IO: patched %s +0x%llx -> %p",
+            label, (unsigned long long)(addr - imageBase), helper);
+        return true;
+    };
+
+    const bool getSize = patchEntry(
+        "_ZN7CSystem21GetCompressedFileSizeEPc",
+        reinterpret_cast<void*>(&compatGuestGetCompressedFileSize),
+        "CSystem::GetCompressedFileSize");
+
+    const bool readFile = patchEntry(
+        "_ZN7CSystem19ReadCompressedFileEPcPvj",
+        reinterpret_cast<void*>(&compatGuestReadCompressedFile),
+        "CSystem::ReadCompressedFile");
+
+    return getSize && readFile;
+}
+
+
 static bool patchFarCryCallbackTimeQuota(LoadedSo* so, uint8_t* stage_base,
                                            uint64_t min_vaddr, size_t alloc_size) {
     if (!so || !stage_base || !alloc_size)
@@ -2785,6 +2845,8 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
 
         if (!patchFarCryGetFileSize(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY GETFILESIZE: patch not applied");
+        if (!patchFarCryCompressedSaveFile(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY SAVE IO: compressed save patch not applied");
         if (!patchFarCryVirtualPakStreaming(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY PAK STREAM: patch not applied");
         if (!patchFarCryCallbackTimeQuota(so, stage_base, min_vaddr, alloc_size))
