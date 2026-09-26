@@ -84,7 +84,7 @@ bool resolveSDLApi() {
     g_sdl.quit_subsystem = resolveSDL<SDL_QuitSubSystemFn>("SDL_QuitSubSystem");
     g_sdl.get_error = resolveSDL<SDL_GetErrorFn>("SDL_GetError");
     g_sdl.open_device_stream =
-        resolveSDL<SDL_OpenAudioDeviceStream>("SDL_OpenAudioDeviceStream");
+        resolveSDL<SDL_OpenAudioDeviceStreamFn>("SDL_OpenAudioDeviceStream");
     g_sdl.resume_stream_device =
         resolveSDL<SDL_ResumeAudioStreamDeviceFn>("SDL_ResumeAudioStreamDevice");
     g_sdl.pause_stream_device =
