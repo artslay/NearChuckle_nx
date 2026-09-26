@@ -1,3 +1,4 @@
+#include "config.h"
 #include "compat/loader.h"
 
 #include <switch.h>
