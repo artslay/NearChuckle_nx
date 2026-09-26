@@ -389,11 +389,10 @@ static PadState g_switch_pad = {};
 static u64 g_switch_input_previous = 0;
 static float g_switch_touch_x = 0.0f;
 static float g_switch_touch_y = 0.0f;
-static float g_switch_touch_virtual_x = 400.0f;
-static float g_switch_touch_virtual_y = 300.0f;
 static void* g_sdl_key_down = nullptr;
 static void* g_sdl_key_up = nullptr;
 static void* g_sdl_mouse = nullptr;
+static void* g_sdl_touch = nullptr;
 
 static void switchEmitKey(void* fn_ptr, int keycode, const char* name, bool down) {
     if (!fn_ptr)
@@ -431,17 +430,16 @@ static void switchEmitRelativeMouse(void* fn_ptr, float dx, float dy) {
        0, 2, dx, dy, JNI_TRUE); // MotionEvent.ACTION_MOVE
 }
 
-static void switchEmitTouchMouseMove(void* fn_ptr, float x, float y) {
+static void switchEmitTouch(void* fn_ptr, int action, float x, float y) {
     if (!fn_ptr)
         return;
 
-    using MouseFn = void (*)(void*, void*, int, int, float, float, jboolean);
-    const MouseFn fn = reinterpret_cast<MouseFn>(fn_ptr);
+    using TouchFn = void (*)(void*, void*, int, int, int, float, float, float);
+    const TouchFn fn = reinterpret_cast<TouchFn>(fn_ptr);
     fn(compatGet()->env_outer,
        reinterpret_cast<void*>(0x1001),
-       0, 2, x, y, JNI_FALSE); // ACTION_MOVE + absolute coordinates
+       0, 0, action, x, y, 1.0f);
 }
-
 
 static void switchInputResolveCallbacks() {
     if (g_sdl_key_down && g_sdl_key_up && g_sdl_mouse)
@@ -450,17 +448,18 @@ static void switchInputResolveCallbacks() {
     g_sdl_key_down = jniFindRegisteredNative("onNativeKeyDown", 0);
     g_sdl_key_up = jniFindRegisteredNative("onNativeKeyUp", 0);
     g_sdl_mouse = jniFindRegisteredNative("onNativeMouse", 0);
+    g_sdl_touch = jniFindRegisteredNative("onNativeTouch", 0);
 
     if (!g_switch_input_started) {
         g_switch_input_started = true;
-        compatLogFmt("SWITCH INPUT: SDL callbacks keyDown=%p keyUp=%p mouse=%p",
-                     g_sdl_key_down, g_sdl_key_up, g_sdl_mouse);
+        compatLogFmt("SWITCH INPUT: SDL callbacks keyDown=%p keyUp=%p mouse=%p touch=%p",
+                     g_sdl_key_down, g_sdl_key_up, g_sdl_mouse, g_sdl_touch);
     }
 }
 
 static void pollSwitchInputInternal() {
     switchInputResolveCallbacks();
-    if (!g_sdl_key_down && !g_sdl_key_up && !g_sdl_mouse)
+    if (!g_sdl_key_down && !g_sdl_key_up && !g_sdl_mouse && !g_sdl_touch)
         return;
 
     if (!g_switch_pad_initialized) {
@@ -470,7 +469,7 @@ static void pollSwitchInputInternal() {
         compatLog("SWITCH INPUT: libnx PadState initialized");
     }
 
-    if (g_sdl_mouse && !g_switch_touch_initialized) {
+    if (g_sdl_touch && !g_switch_touch_initialized) {
         hidInitializeTouchScreen();
         g_switch_touch_initialized = true;
         compatLog("SWITCH TOUCH: libnx TouchScreen initialized");
@@ -522,56 +521,37 @@ static void pollSwitchInputInternal() {
         }
     }
 
-    // Touchscreen -> logical pointer position + left click.
+    // Switch touch -> SDL Android native touch path.
     //
-    // The profile/menu ListView needs the actual logical pointer position.
-    // Translate Switch's 1280x720 touch coordinates into the game's 800x600
-    // UI space and send absolute SDL mouse events while the finger is down.
-    if (g_sdl_mouse && g_switch_touch_initialized) {
+    // The Android SDL glue receives normalized finger coordinates and converts
+    // them to absolute mouse events automatically when TOUCH_MOUSE_EVENTS is
+    // enabled (true by default on Android). This is the original SDL path used
+    // by the game and avoids the broken hand-made relative pointer conversion.
+    if (g_sdl_touch && g_switch_touch_initialized) {
         HidTouchScreenState touch = {};
         const size_t touch_samples = hidGetTouchScreenStates(&touch, 1);
         const bool touching = touch_samples > 0 && touch.count > 0;
 
         if (touching) {
-            const float x = (float)touch.touches[0].x;
-            const float y = (float)touch.touches[0].y;
-
-            // Switch touch coordinates are screen pixels. CSDLMouse keeps an
-            // 800x600 virtual pointer, starting at 400x300.
-            float target_x = x * (800.0f / 1280.0f);
-            float target_y = y * (600.0f / 720.0f);
-            target_x = std::max(0.0f, std::min(799.0f, target_x));
-            target_y = std::max(0.0f, std::min(599.0f, target_y));
+            const float x = static_cast<float>(touch.touches[0].x) /
+                            static_cast<float>(config.screen_width);
+            const float y = static_cast<float>(touch.touches[0].y) /
+                            static_cast<float>(config.screen_height);
 
             if (!g_switch_touch_down) {
                 g_switch_touch_down = true;
                 g_switch_touch_x = x;
                 g_switch_touch_y = y;
-
-                switchEmitTouchMouseMove(g_sdl_mouse, target_x, target_y);
-                g_switch_touch_virtual_x = target_x;
-                g_switch_touch_virtual_y = target_y;
-
-                switchEmitMouse(g_sdl_mouse, 1, 0, target_x, target_y, false); // left button down
-                compatLogFmt("SWITCH TOUCH: tap down x=%.0f y=%.0f -> virtual x=%.0f y=%.0f",
-                             x, y, target_x, target_y);
+                switchEmitTouch(g_sdl_touch, 0, x, y); // ACTION_DOWN
             } else {
-                if (target_x != g_switch_touch_virtual_x ||
-                    target_y != g_switch_touch_virtual_y)
-                    switchEmitTouchMouseMove(g_sdl_mouse, target_x, target_y);
-                g_switch_touch_virtual_x = target_x;
-                g_switch_touch_virtual_y = target_y;
+                if (x != g_switch_touch_x || y != g_switch_touch_y)
+                    switchEmitTouch(g_sdl_touch, 2, x, y); // ACTION_MOVE
                 g_switch_touch_x = x;
                 g_switch_touch_y = y;
             }
         } else if (g_switch_touch_down) {
             g_switch_touch_down = false;
-            switchEmitMouse(g_sdl_mouse, 0, 1,
-                            g_switch_touch_virtual_x, g_switch_touch_virtual_y,
-                            false); // left button up
-            compatLogFmt("SWITCH TOUCH: tap up x=%.0f y=%.0f -> virtual x=%.0f y=%.0f",
-                         g_switch_touch_x, g_switch_touch_y,
-                         g_switch_touch_virtual_x, g_switch_touch_virtual_y);
+            switchEmitTouch(g_sdl_touch, 1, g_switch_touch_x, g_switch_touch_y); // ACTION_UP
         }
     }
 
