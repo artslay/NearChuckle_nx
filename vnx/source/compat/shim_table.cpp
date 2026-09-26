@@ -1254,13 +1254,17 @@ static std::string remapActiveProfilePath(const std::string& input) {
     if (!isProfileFsPath(normalized))
         return normalized;
 
-    std::string active = getActiveFarCryProfile();
+    // A pending profile request is the newest operation. It must take
+    // precedence over the profile that was active before the user opened the
+    // profile dialog; otherwise the first creation attempt is written into the
+    // old profile and the next attempt appears under the first name.
+    std::string active = getPendingFarCryProfile();
     if (active.empty() ||
         active == "." ||
         active == ".." ||
         active.find('/') != std::string::npos ||
         active.find('\\') != std::string::npos) {
-        active = getPendingFarCryProfile();
+        active = getActiveFarCryProfile();
     }
 
     if (active.empty() ||
