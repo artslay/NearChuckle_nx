@@ -966,6 +966,30 @@ static std::string remapActiveProfilePath(const std::string& input) {
                            "Profiles/Player/" + g_activeProfile + "_system.cfg");
         replaceInsensitive("/Profiles/Player/default_system.cfg",
                            "/Profiles/Player/" + g_activeProfile + "_system.cfg");
+    } else {
+        // CSystem::SaveConfiguration() performs a second, root-level save after
+        // saving the explicitly selected profile. For Far Cry the game settings
+        // (including input bindings) belong to the selected profile's game.cfg,
+        // so once a non-default profile is active, redirect the root game.cfg
+        // back to that profile. Keep system.cfg unmodified: it must retain the
+        // selected g_playerprofile value for the next launch.
+        const size_t slash = lower.find_last_of('/');
+        const std::string base =
+            slash == std::string::npos ? lower : lower.substr(slash + 1);
+        if (base == "game.cfg") {
+            const std::string replacement =
+                "Profiles/Player/" + g_activeProfile + "_game.cfg";
+            if (slash == std::string::npos || lower == "./game.cfg") {
+                out = replacement;
+            } else if (lower == "/game.cfg") {
+                out = "/" + replacement;
+            } else if (lower == "/switch/nearchuckle_nx/game/game.cfg") {
+                out = "/switch/NearChuckle_nx/game/" +
+                      g_activeProfile + "_game.cfg";
+            } else {
+                // Do not hijack unrelated game.cfg files in subdirectories.
+            }
+        }
     }
 
     return out;
