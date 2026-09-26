@@ -52,7 +52,7 @@ extern void compatPakLog(const char* fmt, ...);
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 extern "C" bool compatActivateFarCryProfile(const char* profile);
 extern "C" bool compatGetFarCryProfile(char* out, size_t outSize);
-extern "C" bool compatWriteFarCryProfileSystemConfig(const char* profile);
+extern "C" bool compatSaveFarCryProfileConfiguration(const char* profile);
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
 extern "C" {
@@ -886,6 +886,7 @@ static std::string g_pendingProfileCreate;
 static bool g_pendingProfileSystemWritten = false;
 static bool g_pendingProfileGameWritten = false;
 static std::string g_pendingProfileSystemRefresh;
+static std::string g_pendingProfileActivation;
 
 // Effective profile selected by the profile-creation UI. The guest CVar can
 // remain "default", so the Switch filesystem shim mirrors the selected profile
@@ -1030,6 +1031,34 @@ static void syncActiveProfileFromGuestCvar() {
     }
 }
 
+static void queueExplicitProfileActivation(const std::string& input,
+                                              bool writeAccess) {
+    if (writeAccess)
+        return;
+
+    std::string profile;
+    if (!parseProfileConfigName(input, "_system.cfg", profile) &&
+        !parseProfileConfigName(input, "_game.cfg", profile))
+        return;
+
+    if (profile.empty() || asciiLower(profile) == "default")
+        return;
+
+    if (profile.find('/') != std::string::npos ||
+        profile.find('\\') != std::string::npos)
+        return;
+
+    // Game:LoadConfiguration(profile) passes explicit profile filenames to
+    // CXGame::LoadConfiguration(). Do not call ICVar::Set() from fopen/open:
+    // that callback is still inside the Lua -> filesystem call chain.
+    // Mirror the path immediately, then apply the real g_playerprofile CVar
+    // after the load returns from the guest callback.
+    g_activeProfile = profile;
+    g_activeProfileCvarSet = false;
+    g_pendingProfileActivation = profile;
+    compatLogFmt("PROFILE SWITCH PENDING: %s", profile.c_str());
+}
+
 static std::string remapRootProfileSystemRead(const std::string& input) {
     if (g_activeProfile.empty() || asciiLower(g_activeProfile) == "default")
         return input;
@@ -1050,16 +1079,50 @@ static std::string remapRootProfileSystemRead(const std::string& input) {
 
 
 void compatProcessPendingFarCryProfile() {
-    if (g_pendingProfileSystemRefresh.empty())
-        return;
+    std::string profile;
+    bool saveProfile = false;
 
-    const std::string profile = g_pendingProfileSystemRefresh;
-    if (compatWriteFarCryProfileSystemConfig(profile.c_str())) {
-        g_activeProfile = profile;
-        g_activeProfileCvarSet = true;
-        g_pendingProfileSystemRefresh.clear();
-        compatLogFmt("PROFILE SYSTEM CFG PENDING: completed %s", profile.c_str());
+    if (!g_pendingProfileSystemRefresh.empty()) {
+        profile = g_pendingProfileSystemRefresh;
+        saveProfile = true;
+    } else if (!g_pendingProfileActivation.empty()) {
+        profile = g_pendingProfileActivation;
+    } else {
+        return;
     }
+
+    if (saveProfile) {
+        // This is now outside fopen() / Lua callback context. The engine's
+        // own serializer writes the complete *_system.cfg and *_game.cfg.
+        if (!compatSaveFarCryProfileConfiguration(profile.c_str())) {
+            compatLogFmt("PROFILE SAVE PENDING: FAILED %s", profile.c_str());
+            return;
+        }
+        compatLogFmt("PROFILE SAVE PENDING: completed %s", profile.c_str());
+        g_pendingProfileSystemRefresh.clear();
+    }
+
+    // Creation and explicit LoadConfiguration() both converge here. Apply the
+    // real engine CVar only after the guest-side filesystem/config operation
+    // has returned.
+    if (!compatActivateFarCryProfile(profile.c_str())) {
+        compatLogFmt("PROFILE SWITCH PENDING: CVar activation failed %s",
+                     profile.c_str());
+        return;
+    }
+
+    g_activeProfile = profile;
+    g_activeProfileCvarSet = true;
+    if (g_pendingProfileActivation == profile)
+        g_pendingProfileActivation.clear();
+
+    if (g_pendingProfileCreate == profile) {
+        g_pendingProfileCreate.clear();
+        g_pendingProfileSystemWritten = false;
+        g_pendingProfileGameWritten = false;
+    }
+
+    compatLogFmt("PROFILE ACTIVE: %s", profile.c_str());
 }
 
 static void ensureProfileCreateDirectories(const std::string& profile) {
@@ -4055,8 +4118,13 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         lowerPath.find("_system.cfg") != std::string::npos ||
         lowerPath.find("_game.cfg") != std::string::npos;
 
-    if (configPath)
+    if (configPath) {
         syncActiveProfileFromGuestCvar();
+        queueExplicitProfileActivation(normalizedPath,
+                                        mode && (mode[0] == 'w' ||
+                                                 mode[0] == 'a' ||
+                                                 mode[0] == '+'));
+    }
 
     const bool configWrite =
         mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
@@ -4166,6 +4234,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 asciiLower(probedProfile) != "default") {
                 g_pendingProfileCreate = probedProfile;
                 g_pendingProfileSystemRefresh = probedProfile;
+                g_pendingProfileActivation = probedProfile;
                 g_activeProfile = probedProfile;
                 g_activeProfileCvarSet = false;
                 g_pendingProfileSystemWritten = false;
@@ -4375,8 +4444,12 @@ static int stub_open(const char* path, int flags, ...) {
         lowerPath.find("_system.cfg") != std::string::npos ||
         lowerPath.find("_game.cfg") != std::string::npos;
 
-    if (configPath)
+    if (configPath) {
         syncActiveProfileFromGuestCvar();
+        queueExplicitProfileActivation(
+            normalizedPath,
+            (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0);
+    }
 
     const bool openWrite =
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
