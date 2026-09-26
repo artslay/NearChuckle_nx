@@ -255,11 +255,15 @@ static bool suppressCompatNoise(const char* msg) {
         normalized.find("gl vertex upload") == 0 ||
         normalized.find("gl draw") == 0;
 
+    const bool switchTouchNoise =
+        normalized.find("switch touch:") == 0;
+
     return normalized.find("pak mem trace") == 0 ||
            normalized.find("farcry getfilesize") == 0 ||
            normalized.find("opendir ") == 0 ||
            normalized.find("pak virtual") == 0 ||
            normalized.find("switch input") == 0 ||
+           switchTouchNoise ||
            normalized.find("sdl: swap heartbeat[") == 0 ||
            normalized.find("pak caf hit:") == 0 ||
            normalized.find("texture format '.tga' is deprecated") != std::string::npos ||
