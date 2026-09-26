@@ -669,9 +669,10 @@ static void pollSwitchInputInternal() {
 } // namespace
 
 void compatNotifyFarCrySaveGameLoadStarted() {
+    // Do not touch PadState here: this callback can run before the Switch pad
+    // is initialized, while CSystem::ReadCompressedFile() is still in the
+    // middle of the guest call stack.
     g_farcry_save_load_input_suppressed = true;
-    g_switch_input_previous = padGetButtons(&g_switch_pad);
-    g_switch_touch_down = false;
     compatLog("SAVE LOAD INPUT: suppressing Switch input until controls are released");
 }
 
