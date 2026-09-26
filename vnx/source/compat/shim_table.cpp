@@ -52,6 +52,7 @@ extern void compatPakLog(const char* fmt, ...);
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 extern "C" bool compatActivateFarCryProfile(const char* profile);
 extern "C" bool compatGetFarCryProfile(char* out, size_t outSize);
+extern "C" bool compatWriteFarCryProfileSystemConfig(const char* profile);
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
 extern "C" {
@@ -1028,51 +1029,6 @@ static void syncActiveProfileFromGuestCvar() {
     }
 }
 
-static void activateProfileFromExplicitConfigPath(
-    const std::string& input, bool writeAccess) {
-    if (writeAccess)
-        return;
-
-    std::string profile;
-    bool matched = false;
-
-    if (parseProfileConfigName(input, "_system.cfg", profile) ||
-        parseProfileConfigName(input, "_game.cfg", profile)) {
-        matched = true;
-    }
-
-    if (!matched || profile.empty())
-        return;
-
-    if (asciiLower(profile) == "default") {
-        g_activeProfile.clear();
-        g_activeProfileCvarSet = true;
-        return;
-    }
-
-    if (profile.find('/') != std::string::npos ||
-        profile.find('\\') != std::string::npos)
-        return;
-
-    // Game:LoadConfiguration(<profile>) explicitly opens this profile's
-    // *_system.cfg and *_game.cfg. Make that profile the real current
-    // g_playerprofile before the next filesystem operation, so subsequent
-    // saves and path generation continue to use the profile just selected.
-    if (g_activeProfile != profile) {
-        const bool cvarOk = compatActivateFarCryProfile(profile.c_str());
-        if (cvarOk) {
-            g_activeProfile = profile;
-            g_activeProfileCvarSet = true;
-            compatLogFmt("PROFILE EXPLICIT LOAD: %s -> active", profile.c_str());
-        } else {
-            g_activeProfile = profile;
-            g_activeProfileCvarSet = false;
-            compatLogFmt("PROFILE EXPLICIT LOAD: %s -> CVar switch FAILED",
-                         profile.c_str());
-        }
-    }
-}
-
 static std::string remapRootProfileSystemRead(const std::string& input) {
     if (g_activeProfile.empty() || asciiLower(g_activeProfile) == "default")
         return input;
@@ -1091,42 +1047,20 @@ static std::string remapRootProfileSystemRead(const std::string& input) {
     return input;
 }
 
-static void seedProfileSystemConfig(const std::string& profile,
-                                      const std::string& systemCfg) {
-    if (profile.empty() || asciiLower(profile) == "default")
+
+void compatProcessPendingFarCryProfile() {
+    if (g_pendingProfileCreate.empty())
         return;
 
-    FILE* src = ::fopen("system.cfg", "rb");
-    FILE* dst = ::fopen(systemCfg.c_str(), "wb");
-    if (!dst) {
-        if (src)
-            ::fclose(src);
-        return;
+    const std::string profile = g_pendingProfileCreate;
+    if (compatWriteFarCryProfileSystemConfig(profile.c_str())) {
+        g_activeProfile = profile;
+        g_activeProfileCvarSet = true;
+        g_pendingProfileCreate.clear();
+        g_pendingProfileSystemWritten = false;
+        g_pendingProfileGameWritten = false;
+        compatLogFmt("PROFILE SYSTEM CFG PENDING: completed %s", profile.c_str());
     }
-
-    bool wroteProfile = false;
-    char line[1024];
-    while (src && std::fgets(line, sizeof(line), src)) {
-        const char* p = line;
-        while (*p && std::isspace((unsigned char)*p))
-            ++p;
-
-        if (std::strncmp(p, "g_playerprofile", 15) == 0 &&
-            (p[15] == ' ' || p[15] == '\t' || p[15] == '=')) {
-            std::fprintf(dst, "g_playerprofile = \"%s\"\r\n", profile.c_str());
-            wroteProfile = true;
-        } else {
-            std::fputs(line, dst);
-        }
-    }
-
-    if (src)
-        ::fclose(src);
-
-    if (!wroteProfile)
-        std::fprintf(dst, "g_playerprofile = \"%s\"\r\n", profile.c_str());
-
-    ::fclose(dst);
 }
 
 static void ensureProfileCreateDirectories(const std::string& profile) {
@@ -1141,16 +1075,16 @@ static void ensureProfileCreateDirectories(const std::string& profile) {
     ::mkdir("Profiles/Player", 0755);
     ::mkdir(profileDir.c_str(), 0755);
 
-    // The new profile must start with a real system configuration. Copy the
-    // current root system.cfg snapshot and replace g_playerprofile with the
-    // newly selected profile. This avoids recursively calling
-    // CSystem::SaveConfiguration() from inside fopen(), which is unsafe while
-    // the profile Lua callback is still executing.
-    seedProfileSystemConfig(profile, systemCfg);
+    // Keep the filenames present for profile discovery. The complete system
+    // configuration is serialized on the next normal frame through
+    // IConsole::DumpCVars(), outside this filesystem callback.
+    FILE* f = ::fopen(systemCfg.c_str(), "ab");
+    if (f)
+        ::fclose(f);
 
-    // game.cfg is seeded by the normal engine serializer when the profile is
-    // first saved. Keep the file present so profile discovery sees it.
-    FILE* f = ::fopen(gameCfg.c_str(), "ab");
+    // game.cfg is populated by the normal engine serializer when the profile
+    // is first saved. Keep the file present so profile discovery sees it.
+    f = ::fopen(gameCfg.c_str(), "ab");
     if (f)
         ::fclose(f);
 }
@@ -4128,9 +4062,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const bool configWrite =
         mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
 
-    if (configPath)
-        activateProfileFromExplicitConfigPath(normalizedPath, configWrite);
-
     std::string activePath = remapActiveProfilePath(normalizedPath);
 
     // The engine first loads root system.cfg to discover g_playerprofile.
@@ -4164,11 +4095,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     if (profileIo)
         compatLogFmt("PROFILE FOPEN: %s mode=%s",
                      ioPath, mode ? mode : "?");
-
-    if (!g_activeProfile.empty() && !g_activeProfileCvarSet) {
-        g_activeProfileCvarSet =
-            compatActivateFarCryProfile(g_activeProfile.c_str());
-    }
 
     std::string redirectedProfilePath;
     if (profileWrite && normalizedPath == ioPathStorage &&
@@ -4245,11 +4171,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 g_pendingProfileSystemWritten = false;
                 g_pendingProfileGameWritten = false;
 
-                const bool cvarOk =
-                    compatActivateFarCryProfile(g_activeProfile.c_str());
-                g_activeProfileCvarSet = cvarOk;
-                compatLogFmt("PROFILE ACTIVE: %s cvar=%s",
-                             g_activeProfile.c_str(), cvarOk ? "SET" : "FAILED");
+                g_activeProfileCvarSet = false;
 
                 // Create the profile directory immediately when the UI has
                 // identified the new profile name. The original flow may
@@ -4460,9 +4382,6 @@ static int stub_open(const char* path, int flags, ...) {
 
     const bool openWrite =
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
-
-    if (configPath)
-        activateProfileFromExplicitConfigPath(normalizedPath, openWrite);
 
     std::string ioPathStorage = remapActiveProfilePath(normalizedPath);
 
