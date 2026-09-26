@@ -1076,8 +1076,17 @@ static bool compatWriteFarCryBackgroundVideoConfig(const char* profile, int valu
     return ok;
 }
 
+namespace {
+
+static bool g_bg_video_initialized = false;
+static int g_bg_video_value = -1;
+static void* g_bg_video_last_cvar = nullptr;
+static bool g_bg_video_sink_installed = false;
+static bool g_bg_video_screen_is_options = false;
+static uint64_t g_bg_video_last_screen_tick = 0;
+
 static bool compatGetFarCryFocusScreenName(void* system,
-                                            std::string& outName) {
+                                           std::string& outName) {
     outName.clear();
     if (!system)
         return false;
@@ -1106,23 +1115,13 @@ static bool compatGetFarCryFocusScreenName(void* system,
     if (!executeBuffer)
         return false;
 
-    // CScriptObjectUI exposes UI:GetFocusScreen(), while CUIScreen exposes
-    // GetName(). Ask Lua for the active screen only when this CVar changes;
-    // this avoids any per-frame script overhead.
-    static unsigned sequence = 0;
-    char globalName[64];
-    char script[512];
-    std::snprintf(globalName, sizeof(globalName),
-                  "__near_bg_focus_screen_%u", ++sequence);
-    const int n = std::snprintf(
-        script, sizeof(script),
-        "%s = \"\"; local s = UI:GetFocusScreen(); "
-        "if s then %s = s:GetName(); end",
-        globalName, globalName);
-    if (n <= 0 || static_cast<size_t>(n) >= sizeof(script))
-        return false;
+    constexpr const char* kGlobal = "__near_bg_focus_screen";
+    const char* script =
+        "__near_bg_focus_screen = \"\"; "
+        "local s = UI:GetFocusScreen(); "
+        "if s then __near_bg_focus_screen = s:GetName(); end";
 
-    if (!executeBuffer(scriptSystem, script, static_cast<size_t>(n)))
+    if (!executeBuffer(scriptSystem, script, std::strlen(script)))
         return false;
 
     using GetGlobalStringFn =
@@ -1133,7 +1132,7 @@ static bool compatGetFarCryFocusScreenName(void* system,
         return false;
 
     const char* value = nullptr;
-    if (!getGlobalString(scriptSystem, globalName, value))
+    if (!getGlobalString(scriptSystem, kGlobal, value))
         return false;
 
     if (value && *value)
@@ -1141,11 +1140,81 @@ static bool compatGetFarCryFocusScreenName(void* system,
     return true;
 }
 
-extern "C" void compatPollFarCryBackgroundVideoSave() {
-    static bool initialized = false;
-    static int lastValue = -1;
-    static void* lastCvar = nullptr;
+static bool compatBgVideoIsVideoOptions(void* system) {
+    std::string screen;
+    if (!compatGetFarCryFocusScreenName(system, screen))
+        return false;
 
+    std::string lower = screen;
+    for (char& ch : lower)
+        ch = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(ch)));
+
+    g_bg_video_screen_is_options =
+        lower.find("video") != std::string::npos ||
+        lower.find("graphic") != std::string::npos ||
+        lower.find("options") != std::string::npos;
+
+    return true;
+}
+
+struct FarCryBackgroundVideoVarSink {
+    virtual bool OnBeforeVarChange(void* var, const char* newValue) {
+        if (!var || !newValue || !g_bg_video_initialized)
+            return true;
+
+        void*** varVtable = reinterpret_cast<void***>(var);
+        if (!varVtable || !*varVtable)
+            return true;
+
+        using GetNameFn = char* (*)(void*);
+        auto getName = reinterpret_cast<GetNameFn>((*varVtable)[13]);
+        if (!getName)
+            return true;
+
+        const char* name = getName(var);
+        if (!name || std::strcmp(name, "ui_BackGroundVideo") != 0)
+            return true;
+
+        const bool wantsEnable = std::atoi(newValue) != 0;
+        if (g_bg_video_value == 0 && wantsEnable &&
+            !g_bg_video_screen_is_options) {
+            compatLogFmt(
+                "PROFILE CVar SINK: blocked ui_BackGroundVideo=1 on non-video screen");
+            return false;
+        }
+
+        return true;
+    }
+};
+
+static FarCryBackgroundVideoVarSink g_bg_video_sink;
+
+static bool compatInstallFarCryBackgroundVideoSink(void* console) {
+    if (!console || g_bg_video_sink_installed)
+        return true;
+
+    void*** consoleVtable = reinterpret_cast<void***>(console);
+    if (!consoleVtable || !*consoleVtable)
+        return false;
+
+    // IConsole::AddConsoleVarSink() is slot 47 in the real CryCommon
+    // interface used by the guest.
+    using AddSinkFn = void (*)(void*, void*);
+    auto addSink =
+        reinterpret_cast<AddSinkFn>((*consoleVtable)[47]);
+    if (!addSink)
+        return false;
+
+    addSink(console, &g_bg_video_sink);
+    g_bg_video_sink_installed = true;
+    compatLog("PROFILE CVar SINK: installed for ui_BackGroundVideo");
+    return true;
+}
+
+} // namespace
+
+extern "C" void compatPollFarCryBackgroundVideoSave() {
     LoadedSo* sysSo = nullptr;
     for (LoadedSo* so : g_loaded_sos) {
         if (!so)
@@ -1162,7 +1231,8 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
         return;
 
     using GetISystemFn = void* (*)();
-    auto getISystem = reinterpret_cast<GetISystemFn>(sysSo->findSym("_Z10GetISystemv"));
+    auto getISystem =
+        reinterpret_cast<GetISystemFn>(sysSo->findSym("_Z10GetISystemv"));
     if (!getISystem)
         return;
 
@@ -1175,7 +1245,8 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
         return;
 
     using GetIConsoleFn = void* (*)(void*);
-    auto getIConsole = reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
+    auto getIConsole =
+        reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
     if (!getIConsole)
         return;
 
@@ -1188,135 +1259,86 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
         return;
 
     using GetCVarFn = void* (*)(void*, const char*, bool);
-    auto getCVar = reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
+    auto getCVar =
+        reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
     if (!getCVar)
         return;
 
     void* cvar = getCVar(console, "ui_BackGroundVideo", true);
     if (!cvar)
-        return; // UI CVar has not been created yet.
+        return;
+
+    if (!compatInstallFarCryBackgroundVideoSink(console))
+        return;
+
+    // Refresh the UI screen cache at most 10 times per second. It is cached
+    // because the sink must be able to reject the reset synchronously without
+    // executing Lua recursively from OnBeforeVarChange().
+    const u64 now = armGetSystemTick();
+    const u64 freq = armGetSystemTickFreq();
+    if (freq != 0 &&
+        (g_bg_video_last_screen_tick == 0 ||
+         now - g_bg_video_last_screen_tick >= freq / 10)) {
+        if (compatBgVideoIsVideoOptions(system))
+            g_bg_video_last_screen_tick = now;
+    }
 
     void*** cvarVtable = reinterpret_cast<void***>(cvar);
     if (!cvarVtable || !*cvarVtable)
         return;
 
-    using GetStringFn = char* (*)(void*);
     using GetIValFn = int (*)(void*);
     auto getIVal = reinterpret_cast<GetIValFn>((*cvarVtable)[1]);
     if (!getIVal)
         return;
 
-    int value = getIVal(cvar) != 0 ? 1 : 0;
+    const int value = getIVal(cvar) != 0 ? 1 : 0;
 
-    // CUISystem::Reload() calls ReleaseCVars() and CreateCVars() again.
-    // The recreated ui_BackGroundVideo starts from its hardcoded default "1".
-    // A value change caused by that recreation is not a user change and must
-    // never be written back over the selected profile.
-    if (initialized && cvar != lastCvar) {
-        using SetStringFn = void (*)(void*, const char*);
-        auto setString =
-            reinterpret_cast<SetStringFn>((*cvarVtable)[4]);
-        if (setString && lastValue >= 0) {
-            const char* restored = lastValue ? "1" : "0";
-            setString(cvar, restored);
-            value = lastValue;
-            compatLogFmt("PROFILE CVar: ui_BackGroundVideo recreated; restored=%d",
-                         value);
-        }
-        lastCvar = cvar;
+    if (!g_bg_video_initialized) {
+        g_bg_video_initialized = true;
+        g_bg_video_value = value;
+        g_bg_video_last_cvar = cvar;
+        compatLogFmt("PROFILE CVar: initial ui_BackGroundVideo=%d", value);
         return;
     }
 
-    if (!initialized) {
-        // ui_BackGroundVideo is created by CUISystem::CreateCVars(), which is
-        // later than the initial profile load. That creation uses "1" as the
-        // default and can therefore overwrite a stored profile value of 0.
-        // Once the CVar actually exists, re-run the selected profile's real
-        // LoadConfiguration() so the stored value is applied after creation.
-        void* profileCvar = getCVar(console, "g_playerprofile", true);
-        const char* profile = nullptr;
-        if (profileCvar) {
-            void*** profileVtable = reinterpret_cast<void***>(profileCvar);
-            if (profileVtable && *profileVtable) {
-                auto getProfileString =
-                    reinterpret_cast<GetStringFn>((*profileVtable)[3]);
-                if (getProfileString)
-                    profile = getProfileString(profileCvar);
-            }
-        }
-
-        if (profile && *profile) {
-            compatLogFmt("PROFILE CVar: UI created; reloading profile=%s",
-                         profile);
-            if (!compatLoadFarCryProfileConfiguration(profile)) {
-                compatLogFmt("PROFILE CVar: profile reload failed for %s",
-                             profile);
-            }
-
-            // Read it again because LoadConfiguration() may have changed the
-            // value from the UI CVar's default 1 to the stored 0.
-            value = getIVal(cvar) != 0 ? 1 : 0;
-            compatLogFmt("PROFILE CVar: ui_BackGroundVideo after profile load=%d",
-                         value);
-        }
-
-        initialized = true;
-        lastValue = value;
-        lastCvar = cvar;
-        return;
-    }
-
-    if (value == lastValue)
-        return;
-
-    // Far Cry's menu scripts may reset this CVar while switching back to the
-    // Main Menu. A real user change 0 -> 1 can only come from the Video Options
-    // screen. Reject a 0 -> 1 change from any other screen and restore the
-    // persisted value instead of turning the expensive Bink background back on.
-    if (lastValue == 0 && value == 1) {
-        std::string screenName;
-        const bool haveScreen =
-            compatGetFarCryFocusScreenName(system, screenName);
-        std::string lowerScreen = screenName;
-        for (char& ch : lowerScreen)
-            ch = static_cast<char>(
-                std::tolower(static_cast<unsigned char>(ch)));
-
-        if (!haveScreen || lowerScreen.find("video") == std::string::npos) {
+    if (cvar != g_bg_video_last_cvar) {
+        g_bg_video_last_cvar = cvar;
+        if (g_bg_video_value >= 0) {
             using SetStringFn = void (*)(void*, const char*);
             auto setString =
                 reinterpret_cast<SetStringFn>((*cvarVtable)[4]);
             if (setString)
-                setString(cvar, "0");
-
+                setString(cvar, g_bg_video_value ? "1" : "0");
             compatLogFmt(
-                "PROFILE CVar: rejected bg video reset on screen=%s; restored=0",
-                haveScreen ? screenName.c_str() : "(unknown)");
-            return;
+                "PROFILE CVar: recreated ui_BackGroundVideo -> restored=%d",
+                g_bg_video_value);
         }
-
-        compatLogFmt(
-            "PROFILE CVar: accepted bg video enable from screen=%s",
-            screenName.c_str());
+        return;
     }
 
-    compatLogFmt("PROFILE CVar: ui_BackGroundVideo changed %d -> %d; saving profile",
-                 lastValue, value);
-    lastValue = value;
+    if (value == g_bg_video_value)
+        return;
+
+    const int oldValue = g_bg_video_value;
+    g_bg_video_value = value;
+
+    compatLogFmt(
+        "PROFILE CVar: ui_BackGroundVideo user value %d -> %d",
+        oldValue, value);
 
     const char* profile = nullptr;
     void* profileCvar = getCVar(console, "g_playerprofile", true);
     if (profileCvar) {
         void*** profileVtable = reinterpret_cast<void***>(profileCvar);
         if (profileVtable && *profileVtable) {
+            using GetStringFn = char* (*)(void*);
             auto getProfileString =
                 reinterpret_cast<GetStringFn>((*profileVtable)[3]);
             if (getProfileString)
                 profile = getProfileString(profileCvar);
         }
     }
-
-    lastCvar = cvar;
 
     const bool engineSaved = compatSaveFarCryConfiguration();
     const bool fileSaved =
@@ -1326,8 +1348,9 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
     if (!engineSaved && !fileSaved) {
         compatLog("PROFILE CVar: failed to save ui_BackGroundVideo");
     } else {
-        compatLogFmt("PROFILE CVar: ui_BackGroundVideo=%d saved engine=%d file=%d",
-                     value, engineSaved ? 1 : 0, fileSaved ? 1 : 0);
+        compatLogFmt(
+            "PROFILE CVar: ui_BackGroundVideo=%d saved engine=%d file=%d",
+            value, engineSaved ? 1 : 0, fileSaved ? 1 : 0);
     }
 }
 
