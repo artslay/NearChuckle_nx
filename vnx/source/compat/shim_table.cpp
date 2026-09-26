@@ -6697,6 +6697,160 @@ static_assert(offsetof(AndroidDirentCompat, d_name) == 19,
 static_assert(sizeof(AndroidDirentCompat) == 280,
               "Android dirent size must be 280");
 
+// CXGame::GetPlayerProfilePath() on the Android/Linux build does not use
+// stat() to locate the profile root. It explicitly scans "." and
+// "Profiles/" with opendir/readdir and checks dirent::d_type. The Switch
+// newlib directory ABI is different, so provide a tiny Android-layout view
+// for exactly these two directories. Physical entries are copied into the
+// view and the required Profiles/Player entries are guaranteed to exist as
+// DT_DIR even when the underlying filesystem reports DT_UNKNOWN.
+
+struct ProfileCompatDir {
+    std::string directory;
+    std::vector<std::pair<std::string, uint8_t>> entries;
+    size_t pos = 0;
+    AndroidDirentCompat current = {};
+};
+
+static Mutex g_profile_dir_lock;
+static std::unordered_set<DIR*> g_profile_dirs;
+
+static bool isProfileCompatDirectory(const std::string& path) {
+    const std::string lower = asciiLower(path);
+    return lower == "." || lower == "./" ||
+           lower == "profiles" || lower == "profiles/";
+}
+
+static bool profileCompatOwns(DIR* dir) {
+    if (!dir)
+        return false;
+    mutexLock(&g_profile_dir_lock);
+    const bool found = g_profile_dirs.find(dir) != g_profile_dirs.end();
+    mutexUnlock(&g_profile_dir_lock);
+    return found;
+}
+
+static void profileCompatAddEntry(
+    ProfileCompatDir* state, const char* name, uint8_t type) {
+    if (!state || !name || !*name)
+        return;
+
+    for (const auto& item : state->entries) {
+        if (asciiLower(item.first) == asciiLower(name))
+            return;
+    }
+    state->entries.emplace_back(name, type);
+}
+
+static DIR* profileCompatOpen(const char* directory) {
+    if (!directory || !isProfileCompatDirectory(directory))
+        return nullptr;
+
+    ProfileCompatDir* state = new ProfileCompatDir();
+    if (!state)
+        return nullptr;
+
+    state->directory = directory;
+
+    // Merge the real directory contents where possible. The returned object
+    // uses the Android/Bionic dirent layout regardless of the Switch native
+    // layout, so the guest's d_type/d_name accesses are safe.
+    if (DIR* physical = ::opendir(directory)) {
+        while (dirent* ent = ::readdir(physical)) {
+            if (!ent->d_name[0] ||
+                std::strcmp(ent->d_name, ".") == 0 ||
+                std::strcmp(ent->d_name, "..") == 0)
+                continue;
+
+            uint8_t type = (uint8_t)ent->d_type;
+            std::string full = directory;
+            if (full == ".")
+                full = "./";
+            else if (!full.empty() && full.back() != '/')
+                full.push_back('/');
+            full += ent->d_name;
+
+            struct stat st = {};
+            if (::stat(full.c_str(), &st) == 0) {
+                if (S_ISDIR(st.st_mode))
+                    type = DT_DIR;
+                else if (S_ISLNK(st.st_mode))
+                    type = DT_LNK;
+                else if (S_ISREG(st.st_mode))
+                    type = DT_REG;
+            }
+
+            profileCompatAddEntry(state, ent->d_name, type);
+        }
+        ::closedir(physical);
+    }
+
+    // These are the two names GetPlayerProfilePath() must find.
+    const std::string lower = asciiLower(directory);
+    if (lower == "." || lower == "./")
+        profileCompatAddEntry(state, "Profiles", DT_DIR);
+    else
+        profileCompatAddEntry(state, "Player", DT_DIR);
+
+    std::sort(state->entries.begin(), state->entries.end(),
+              [](const auto& a, const auto& b) {
+                  return asciiLower(a.first) < asciiLower(b.first);
+              });
+
+    DIR* handle = reinterpret_cast<DIR*>(state);
+    mutexLock(&g_profile_dir_lock);
+    g_profile_dirs.insert(handle);
+    mutexUnlock(&g_profile_dir_lock);
+
+    compatLogFmt("PROFILE DIR COMPAT: %s entries=%zu",
+                 directory, state->entries.size());
+    return handle;
+}
+
+static struct dirent* profileCompatRead(DIR* dir) {
+    mutexLock(&g_profile_dir_lock);
+    auto it = g_profile_dirs.find(dir);
+    if (it == g_profile_dirs.end()) {
+        mutexUnlock(&g_profile_dir_lock);
+        return nullptr;
+    }
+
+    ProfileCompatDir* state = reinterpret_cast<ProfileCompatDir*>(dir);
+    if (state->pos >= state->entries.size()) {
+        mutexUnlock(&g_profile_dir_lock);
+        return nullptr;
+    }
+
+    const auto& item = state->entries[state->pos++];
+    state->current = AndroidDirentCompat{};
+
+    const size_t maxName = sizeof(state->current.d_name) - 1;
+    const size_t copy = item.first.size() < maxName
+        ? item.first.size() : maxName;
+    std::memcpy(state->current.d_name, item.first.c_str(), copy);
+    state->current.d_name[copy] = '\0';
+    state->current.d_type = item.second;
+    state->current.d_reclen =
+        (uint16_t)((offsetof(AndroidDirentCompat, d_name) + copy + 1 + 7) & ~7u);
+
+    mutexUnlock(&g_profile_dir_lock);
+    return reinterpret_cast<struct dirent*>(&state->current);
+}
+
+static int profileCompatClose(DIR* dir) {
+    mutexLock(&g_profile_dir_lock);
+    auto it = g_profile_dirs.find(dir);
+    if (it == g_profile_dirs.end()) {
+        mutexUnlock(&g_profile_dir_lock);
+        return -1;
+    }
+    g_profile_dirs.erase(it);
+    ProfileCompatDir* state = reinterpret_cast<ProfileCompatDir*>(dir);
+    mutexUnlock(&g_profile_dir_lock);
+    delete state;
+    return 0;
+}
+
 struct VirtualPakDir {
     std::string directory;
     std::vector<std::string> names;
@@ -6940,6 +7094,9 @@ static struct dirent* stub_readdir(DIR* dir) {
     if (!dir)
         return nullptr;
 
+    if (profileCompatOwns(dir))
+        return profileCompatRead(dir);
+
     if (vpakDirOwns(dir))
         return vpakDirRead(dir);
 
@@ -6981,6 +7138,8 @@ static struct dirent* stub_readdir(DIR* dir) {
 static int stub_closedir(DIR* dir) {
     if (!dir)
         return -1;
+    if (profileCompatOwns(dir))
+        return profileCompatClose(dir);
     if (vpakDirOwns(dir))
         return vpakDirClose(dir);
 
@@ -6997,6 +7156,9 @@ static int stub_closedir(DIR* dir) {
 static struct dirent* stub_readdir64(DIR* dir) {
     if (!dir)
         return nullptr;
+
+    if (profileCompatOwns(dir))
+        return profileCompatRead(dir);
 
     if (vpakDirOwns(dir))
         return vpakDirRead(dir);
@@ -7032,6 +7194,15 @@ static struct dirent* stub_readdir64(DIR* dir) {
 
 static DIR* stub_opendir(const char* path) {
     const std::string normalizedPath = normalizeSwitchFsPath(path);
+
+    // GetPlayerProfilePath() has a fixed two-step directory probe:
+    // opendir(".") -> find "Profiles", then opendir("Profiles") ->
+    // find "Player". Give those probes the Android/Bionic dirent layout they
+    // expect; ordinary directories continue through the normal path below.
+    if (isProfileCompatDirectory(normalizedPath))
+        if (DIR* profileDir = profileCompatOpen(normalizedPath.c_str()))
+            return profileDir;
+
     const std::string ioPathStorage = remapActiveProfilePath(normalizedPath);
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
