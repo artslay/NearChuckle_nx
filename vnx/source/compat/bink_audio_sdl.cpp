@@ -154,6 +154,12 @@ void updateStream(BinkStream* stream) {
         return;
 
     const int missing = MIN_QUEUED_BUFFERS - queued;
+
+    // BinkDecAudioCallback is frame-gated by MoviePlayerData::lastFramePos:
+    // after one successful callback for the current video frame, subsequent
+    // callbacks from this same CS_Update() must not queue the same frame again.
+    // Keep that contract explicit here even if a guest callback implementation
+    // ever returns success more than once.
     for (int i = 0; i < missing; ++i) {
         std::memset(stream->scratch.data(), 0xFF, stream->scratch.size());
 
@@ -182,6 +188,10 @@ void updateStream(BinkStream* stream) {
         alSourceQueueBuffers(stream->source, 1, &stream_buffer);
 
         ++queued;
+        // A Bink CS_Update corresponds to the current decoded video frame.
+        // Never queue another buffer from the same update: the callback data
+        // represents that same frame and would otherwise be repeated/echoed.
+        break;
     }
 
     if (state != AL_PLAYING && state != AL_PAUSED &&
