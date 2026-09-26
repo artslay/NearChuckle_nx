@@ -968,7 +968,7 @@ extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile) {
     }
 
     compatLogFmt("PROFILE CONFIG: loading selected profile=%s", profile);
-    const bool ok = executeBuffer(script, static_cast<size_t>(n));
+    const bool ok = executeBuffer(scriptSystem, script, static_cast<size_t>(n));
     compatLogFmt("PROFILE CONFIG: Game:LoadConfiguration result=%s",
                  ok ? "OK" : "FAIL");
     return ok;
@@ -1872,41 +1872,6 @@ static bool patchFarCryDisplayInfoDefault(LoadedSo* so, uint8_t* stage_base,
         "FARCRY SAVE LIST A/B: patched GetSaveGameList +0x%llx old=%08x %08x new=%08x %08x",
         (unsigned long long)off, old0, old1, insn[0], insn[1]);
     return true;
-}
-
-// Temporary A/B: bypass CXGame::LoadConfiguration(). The fault stack repeatedly
-// contained libCryGame.so +0xf9718, identified as LoadConfiguration +0x60.
-// Therefore the current function start is +0xf96b8 for this exact Android lib.
-// Returning immediately avoids both system.cfg handling and game.cfg parsing while
-// leaving renderer, input, PAK and the rest of the game initialization untouched.
-static void patchFarCrySkipLoadConfiguration(LoadedSo* so, uint8_t* stage_base,
-                                              uint64_t min_vaddr, size_t alloc_size) {
-    if (!so || !stage_base)
-        return;
-
-    const char* path = so->path.c_str();
-    const char* base = std::strrchr(path, '/');
-    base = base ? base + 1 : path;
-    if (std::strcmp(base, "libCryGame.so") != 0)
-        return;
-
-    constexpr uint64_t kOffset = 0xF96B8;
-    if (kOffset < min_vaddr || kOffset + 4 > alloc_size) {
-        compatLogFmt("FARCRY LOADCFG A/B: offset +0x%llx outside image size=0x%llx",
-                     (unsigned long long)kOffset,
-                     (unsigned long long)alloc_size);
-        return;
-    }
-
-    uint8_t* target = stage_base + min_vaddr + kOffset;
-    uint32_t* insn = reinterpret_cast<uint32_t*>(target);
-    const uint32_t old = *insn;
-    compatLogFmt("FARCRY LOADCFG A/B: candidate path=%s base=%p +0x%llx old=%08x",
-                 path, (void*)insn, (unsigned long long)kOffset, old);
-    *insn = 0xD65F03C0u; // RET
-    armICacheInvalidate(target, 4);
-    compatLogFmt("FARCRY LOADCFG A/B: patched +0x%llx old=%08x new=%08x",
-                 (unsigned long long)kOffset, old, *insn);
 }
 
 // Far Cry's Android build reaches CScriptSystem::SetGlobalTagHandlerString()
