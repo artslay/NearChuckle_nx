@@ -2275,13 +2275,10 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
         if (!patchVideoPanelIsPlaying(so, stage_base, min_vaddr, alloc_size))
             compatLog("VIDEO PANEL PATCH: not applied");
 
-        // Keep the Android profile path logic intact, but bypass only the
-        // compiler-generated diagnostic trap branches inside GetPlayerProfilePath().
-        // The real Switch Profiles/Player directory and dirent d_type handling are
-        // already provided above; this prevents the Android-only impossible-state
-        // BRK path from aborting profile creation/discovery on Switch.
-        if (!patchFarCryProfilePathTrapBranches(so, stage_base, min_vaddr, alloc_size))
-            compatLog("FARCRY PROFILE PATH: patch not applied");
+        // Do not rewrite GetPlayerProfilePath() trap/control-flow here.
+        // The branch-level workaround was shown to redirect execution into the
+        // stack-check failure path (+0xd5f44). Keep the original Android function
+        // intact and fix its filesystem ABI at the readdir layer instead.
 
         // Do not patch the CryInput/CryGame input callbacks. The Android
         // SDL input bridge in runtime.cpp now delivers real Switch HID events
