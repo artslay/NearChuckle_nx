@@ -34,3 +34,8 @@ Build from the devkitPro MSYS2 shell with:
 The runtime log is written to:
 
   /switch/NearChuckle_nx/nearchuckle_debug.log
+
+
+### Embedded Android libraries
+
+Android ARM64 `.so` dependencies are packaged into the NRO RomFS under `romfs:/lib`. The Switch no longer needs a runtime `/switch/NearChuckle_nx/game/lib` directory. By default the build reads guest libraries from the host-side `./lib` directory; an alternative source can be supplied with `EMBED_LIB_SOURCE=/path/to/lib make`.
