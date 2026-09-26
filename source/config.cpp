@@ -71,7 +71,7 @@ int read_config(const char* path) {
     std::memset(&config, 0, sizeof(config));
 
     set_string(config.data_root, sizeof(config.data_root), "/switch/NearChuckle_nx/game");
-    set_string(config.lib_dir, sizeof(config.lib_dir), "/switch/NearChuckle_nx/game/lib");
+    set_string(config.lib_dir, sizeof(config.lib_dir), "romfs:/lib");
     set_string(config.mesa_driver, sizeof(config.mesa_driver), "zink");
 
     config.screen_width = 1280;
