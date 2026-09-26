@@ -51,6 +51,7 @@ extern void compatPakLog(const char* fmt, ...);
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 extern "C" bool compatActivateFarCryProfile(const char* profile);
+extern "C" bool compatSaveFarCryConfiguration();
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
 extern "C" {
@@ -1078,7 +1079,20 @@ void compatProcessPendingFarCryProfile() {
         (asciiLower(profile) == "default") ? std::string() : profile;
     g_pendingProfileActivation.clear();
 
-    if (g_pendingProfileCreate == profile) {
+    const bool creatingProfile =
+        !g_pendingProfileCreate.empty() &&
+        asciiLower(g_pendingProfileCreate) == asciiLower(profile);
+
+    if (creatingProfile) {
+        // The profile UI may only have created empty placeholder files. Now
+        // that the real g_playerprofile is active and we are outside the Lua
+        // callback, let CrySystem's own serializer populate the profile with
+        // every VF_DUMPTODISK CVar plus the normal game/input configuration.
+        if (!compatSaveFarCryConfiguration()) {
+            compatLogFmt("PROFILE SAVE: engine serializer failed %s",
+                         profile.c_str());
+            return;
+        }
         g_pendingProfileCreate.clear();
         g_pendingProfileSystemWritten = false;
         g_pendingProfileGameWritten = false;
