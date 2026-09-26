@@ -102,8 +102,8 @@ prepare_romfs:
 	@rm -rf "$(EMBED_LIB_DIR)"
 	@mkdir -p "$(EMBED_LIB_DIR)"
 	@find "$(EMBED_LIB_SOURCE)" -maxdepth 1 -type f -name '*.so' -exec cp -fL {} "$(EMBED_LIB_DIR)/" \;
-	@test -n "$(find "$(EMBED_LIB_DIR)" -maxdepth 1 -type f -name '*.so' -print -quit)" || { echo "ERROR: no .so files found in $(EMBED_LIB_SOURCE)"; exit 1; }
-	@echo "Embedded guest libraries: $(find "$(EMBED_LIB_DIR)" -maxdepth 1 -type f -name '*.so' | wc -l)"
+	@test -n "$$(find "$(EMBED_LIB_DIR)" -maxdepth 1 -type f -name '*.so' -print -quit)" || { echo "ERROR: no .so files found in $(EMBED_LIB_SOURCE)"; exit 1; }
+	@echo "Embedded guest libraries: $$(find "$(EMBED_LIB_DIR)" -maxdepth 1 -type f -name '*.so' | wc -l)"
 
 clean:
 	@echo clean ...
