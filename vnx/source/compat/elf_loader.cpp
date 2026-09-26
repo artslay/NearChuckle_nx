@@ -1104,7 +1104,7 @@ struct FarCryBackgroundVideoVarSink {
         // the original engine would have consumed the saved script/config
         // value before applying default "1".
         if (std::strcmp(name, "ui_BackGroundVideo") == 0 &&
-            current && current[0] == ' ' &&
+            current && current[0] == '\0' &&
             std::strcmp(newValue, "1") == 0) {
             void* system = nullptr;
             void* console = nullptr;
@@ -1150,7 +1150,7 @@ struct FarCryBackgroundVideoVarSink {
         // the normal Switch poll, after the CVar setter has completed.
         if (!g_farcry_config_save_in_progress &&
             g_farcry_config_persistence_armed &&
-            current && current[0] != ' ' &&
+            current && current[0] != '\0' &&
             std::strcmp(current, newValue) != 0 &&
             compatIsFarCryPersistentGraphicsCVar(name)) {
             g_farcry_config_dirty = true;
