@@ -961,7 +961,7 @@ extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile) {
     char script[384];
     const int n = std::snprintf(
         script, sizeof(script),
-        "Game:LoadConfiguration(\\\"%s\\\")", escaped);
+        "Game:LoadConfiguration(\"%s\")", escaped);
     if (n <= 0 || static_cast<size_t>(n) >= sizeof(script)) {
         compatLog("PROFILE CONFIG: script command buffer overflow");
         return false;
