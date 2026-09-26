@@ -923,6 +923,26 @@ static bool loadFarCryProfileMarker(std::string& profile) {
     return true;
 }
 
+static Mutex g_active_farcry_profile_lock;
+static std::string g_active_farcry_profile;
+
+extern "C" void compatSetActiveFarCryProfile(const char* profile) {
+    if (!validFarCryProfileName(profile))
+        return;
+
+    mutexLock(&g_active_farcry_profile_lock);
+    g_active_farcry_profile = profile;
+    mutexUnlock(&g_active_farcry_profile_lock);
+}
+
+static std::string getActiveFarCryProfile() {
+    std::string profile;
+    mutexLock(&g_active_farcry_profile_lock);
+    profile = g_active_farcry_profile;
+    mutexUnlock(&g_active_farcry_profile_lock);
+    return profile;
+}
+
 static Mutex g_pending_farcry_profile_lock;
 static std::string g_pending_farcry_profile;
 
@@ -1233,12 +1253,20 @@ static std::string remapActiveProfilePath(const std::string& input) {
     if (!isProfileFsPath(normalized))
         return normalized;
 
-    const std::string pending = getPendingFarCryProfile();
-    if (pending.empty() ||
-        pending == "." ||
-        pending == ".." ||
-        pending.find('/') != std::string::npos ||
-        pending.find('\\') != std::string::npos)
+    std::string active = getActiveFarCryProfile();
+    if (active.empty() ||
+        active == "." ||
+        active == ".." ||
+        active.find('/') != std::string::npos ||
+        active.find('\\') != std::string::npos) {
+        active = getPendingFarCryProfile();
+    }
+
+    if (active.empty() ||
+        active == "." ||
+        active == ".." ||
+        active.find('/') != std::string::npos ||
+        active.find('\\') != std::string::npos)
         return normalized;
 
     const std::string lower = asciiLower(normalized);
@@ -1276,16 +1304,16 @@ static std::string remapActiveProfilePath(const std::string& input) {
     if (currentName.empty() || currentName.find('/') != std::string::npos)
         return normalized;
 
-    if (currentName == pending)
+    if (currentName == active)
         return normalized;
 
     const std::string base = normalized.substr(0, nameStart);
-    const std::string target = base + pending + suffix;
+    const std::string target = base + active + suffix;
 
     // The guest SaveConfiguration() opens the destination directly. Ensure
     // the target directory exists before fopen() so the very first selected
     // profile is not lost when the engine is still on "default".
-    const std::string profileDir = base + pending;
+    const std::string profileDir = base + active;
     if (::mkdir(profileDir.c_str(), 0755) != 0 && errno != EEXIST) {
         compatLogFmt("PROFILE DIR REDIRECT FAIL: %s errno=%d",
                      profileDir.c_str(), errno);
@@ -1345,6 +1373,11 @@ void compatProcessPendingFarCryProfile() {
                      profile.c_str());
         return;
     }
+
+    // Keep the selected profile as the active save target for the rest of
+    // this process. Later CSystem::SaveConfiguration() calls must still write
+    // to this profile after the one-shot selection request is consumed.
+    compatSetActiveFarCryProfile(profile.c_str());
 
     mutexLock(&g_pending_farcry_profile_lock);
     if (g_pending_farcry_profile == profile)
