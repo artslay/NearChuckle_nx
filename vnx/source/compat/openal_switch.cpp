@@ -95,7 +95,6 @@ unsigned g_unqueue_log_count=0;
 unsigned g_listener_log_count=0;
 unsigned g_mix_log_count=0;
 unsigned g_output_log_count=0;
-unsigned g_movie_tone_frames=0;
 
 Buffer* getBuffer(ALuint id) {
     return id<kMaxBuffers && id ? (g_buffers[id].used ? &g_buffers[id] : nullptr) : nullptr;
@@ -117,7 +116,7 @@ void mixSource(Source& s, float* dst, size_t frames) {
     // decoder delivers valid PCM, but the decoded track is substantially quieter
     // than regular game audio on the Switch path. Apply a targeted gain only to
     // this movie source; all other OpenAL sources keep the game's requested gain.
-    const float movie_boost = (&s == &g_sources[32]) ? 32.0f : 1.0f;
+    const float movie_boost = 1.0f;
 
     for(size_t o=0;o<frames;o++) {
         while(s.current<s.queue.size()) {
@@ -239,20 +238,6 @@ void mixBlock(int16_t* out) {
     int64_t accum=0;
     for(size_t i=0;i<kFrames*2;i++) {
         int sample=static_cast<int>(std::lrintf(std::clamp(mix[i],-1.0f,1.0f)*32767.0f));
-
-        // One-shot audout path test: inject a short audible 440 Hz tone into
-        // the first ~250 ms of movie playback. This bypasses all Bink/OpenAL
-        // sample-content uncertainty while still using the exact same
-        // AudioOutBuffer/audout path as the real movie PCM.
-        if(movie_active && g_movie_tone_frames < 12000) {
-            const double phase = (static_cast<double>(g_movie_tone_frames) * 440.0) / kRate;
-            const int tone = static_cast<int>(std::lrint(std::sin(phase * 6.283185307179586) * 10000.0));
-            sample = std::clamp(tone, -32768, 32767);
-            if((i & 1u) == 0) {
-                // Count one frame per stereo pair.
-                ++g_movie_tone_frames;
-            }
-        }
 
         out[i]=static_cast<int16_t>(sample);
         const int a=std::abs(sample);
