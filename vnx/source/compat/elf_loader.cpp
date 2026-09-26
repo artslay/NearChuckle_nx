@@ -1116,82 +1116,7 @@ static bool g_bg_video_initialized = false;
 static int g_bg_video_value = -1;
 static void* g_bg_video_last_cvar = nullptr;
 static bool g_bg_video_sink_installed = false;
-static bool g_bg_video_screen_is_options = false;
-static uint64_t g_bg_video_last_screen_tick = 0;
 static uint64_t g_bg_video_disabled_tick = 0;
-
-static bool compatGetFarCryFocusScreenName(void* system,
-                                           std::string& outName) {
-    outName.clear();
-    if (!system)
-        return false;
-
-    void*** systemVtable = reinterpret_cast<void***>(system);
-    if (!systemVtable || !*systemVtable)
-        return false;
-
-    using GetIScriptSystemFn = void* (*)(void*);
-    auto getIScriptSystem =
-        reinterpret_cast<GetIScriptSystemFn>((*systemVtable)[25]);
-    if (!getIScriptSystem)
-        return false;
-
-    void* scriptSystem = getIScriptSystem(system);
-    if (!scriptSystem)
-        return false;
-
-    void*** scriptVtable = reinterpret_cast<void***>(scriptSystem);
-    if (!scriptVtable || !*scriptVtable)
-        return false;
-
-    using ExecuteBufferFn = bool (*)(void*, const char*, size_t);
-    auto executeBuffer =
-        reinterpret_cast<ExecuteBufferFn>((*scriptVtable)[3]);
-    if (!executeBuffer)
-        return false;
-
-    constexpr const char* kGlobal = "__near_bg_focus_screen";
-    const char* script =
-        "__near_bg_focus_screen = \"\"; "
-        "local s = UI:GetFocusScreen(); "
-        "if s then __near_bg_focus_screen = s:GetName(); end";
-
-    if (!executeBuffer(scriptSystem, script, std::strlen(script)))
-        return false;
-
-    using GetGlobalStringFn =
-        bool (*)(void*, const char*, const char*&);
-    auto getGlobalString =
-        reinterpret_cast<GetGlobalStringFn>((*scriptVtable)[41]);
-    if (!getGlobalString)
-        return false;
-
-    const char* value = nullptr;
-    if (!getGlobalString(scriptSystem, kGlobal, value))
-        return false;
-
-    if (value && *value)
-        outName = value;
-    return true;
-}
-
-static bool compatBgVideoIsVideoOptions(void* system) {
-    std::string screen;
-    if (!compatGetFarCryFocusScreenName(system, screen))
-        return false;
-
-    std::string lower = screen;
-    for (char& ch : lower)
-        ch = static_cast<char>(
-            std::tolower(static_cast<unsigned char>(ch)));
-
-    g_bg_video_screen_is_options =
-        lower.find("video") != std::string::npos ||
-        lower.find("graphic") != std::string::npos ||
-        lower.find("options") != std::string::npos;
-
-    return true;
-}
 
 struct FarCryBackgroundVideoVarSink {
     virtual bool OnBeforeVarChange(void* var, const char* newValue) {
@@ -1215,21 +1140,18 @@ struct FarCryBackgroundVideoVarSink {
         if (g_bg_video_value == 0 && wantsEnable) {
             const u64 now = armGetSystemTick();
             const u64 freq = armGetSystemTickFreq();
-            const u64 cooldown = freq != 0 ? (freq * 3) / 4 : 0;
+            const u64 cooldown = freq != 0 ? freq * 3 : 0;
             const bool withinCooldown =
                 freq != 0 && g_bg_video_disabled_tick != 0 &&
                 now >= g_bg_video_disabled_tick &&
                 now - g_bg_video_disabled_tick < cooldown;
 
-            if (!g_bg_video_screen_is_options || withinCooldown) {
+            if (withinCooldown) {
                 compatLogFmt(
-                    "PROFILE CVar SINK: blocked ui_BackGroundVideo=1 screenOptions=%d cooldown=%d",
-                    g_bg_video_screen_is_options ? 1 : 0,
-                    withinCooldown ? 1 : 0);
+                    "PROFILE CVar SINK: blocked ui_BackGroundVideo=1 cooldown=%d",
+                    1);
                 return false;
             }
-
-            compatLog("PROFILE CVar SINK: accepted ui_BackGroundVideo=1 from video options");
         }
 
         return true;
@@ -1318,18 +1240,6 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
 
     if (!compatInstallFarCryBackgroundVideoSink(console))
         return;
-
-    // Refresh the UI screen cache at most 10 times per second. It is cached
-    // because the sink must be able to reject the reset synchronously without
-    // executing Lua recursively from OnBeforeVarChange().
-    const u64 now = armGetSystemTick();
-    const u64 freq = armGetSystemTickFreq();
-    if (freq != 0 &&
-        (g_bg_video_last_screen_tick == 0 ||
-         now - g_bg_video_last_screen_tick >= freq / 10)) {
-        if (compatBgVideoIsVideoOptions(system))
-            g_bg_video_last_screen_tick = now;
-    }
 
     void*** cvarVtable = reinterpret_cast<void***>(cvar);
     if (!cvarVtable || !*cvarVtable)
