@@ -18,6 +18,7 @@
 // the guest receives the same key/mouse events it would receive from SDL's
 // Android Java frontend.
 extern void* jniFindRegisteredNative(const char* name, int occurrence);
+extern void compatProcessPendingFarCryProfile();
 
 static CompatLayer g_compat = {};
 static Mutex g_log_lock;
@@ -581,6 +582,11 @@ static void pollSwitchInputInternal() {
 
 void compatPollSwitchInput() {
     pollSwitchInputInternal();
+
+    // Profile creation is initiated from the guest filesystem callback.
+    // Complete the system-config serialization only after that callback has
+    // returned, using the real IConsole::DumpCVars() path.
+    compatProcessPendingFarCryProfile();
 }
 
 void compatLog(const char* msg) {
