@@ -520,36 +520,43 @@ static void pollSwitchInputInternal() {
         }
     }
 
-    // Switch touch -> absolute mouse position + left click.
+    // Switch touch -> move the Far Cry virtual cursor to the touch point
+    // and perform a normal left click there.
     //
-    // onNativeMouse(relative=false) receives coordinates in the SDL window's
-    // pixel space. The game/UI then applies its own 800x600 virtual scaling.
-    // Do not pre-scale the Switch touchscreen coordinates here.
+    // CSDLMouse is permanently in relative mode. Its default sensitivity is
+    // 0.2 and it multiplies the resulting delta by 4 when updating the
+    // 800x600 virtual cursor, so one raw SDL relative unit = 0.8 virtual px.
     if (g_sdl_mouse && g_switch_touch_initialized) {
         HidTouchScreenState touch = {};
         const size_t touch_samples = hidGetTouchScreenStates(&touch, 1);
         const bool touching = touch_samples > 0 && touch.count > 0;
 
-        if (touching) {
-            const float x = static_cast<float>(touch.touches[0].x);
-            const float y = static_cast<float>(touch.touches[0].y);
+        if (touching && !g_switch_touch_down) {
+            const float target_x = std::max(0.0f, std::min(
+                799.0f,
+                static_cast<float>(touch.touches[0].x) * 799.0f /
+                    std::max(1.0f, static_cast<float>(config.screen_width - 1))));
+            const float target_y = std::max(0.0f, std::min(
+                599.0f,
+                static_cast<float>(touch.touches[0].y) * 599.0f /
+                    std::max(1.0f, static_cast<float>(config.screen_height - 1))));
 
-            if (!g_switch_touch_down) {
-                g_switch_touch_down = true;
-                g_switch_touch_x = x;
-                g_switch_touch_y = y;
-                switchEmitMouse(g_sdl_mouse, 0, 2, x, y, false); // move cursor
-                switchEmitMouse(g_sdl_mouse, 1, 0, x, y, false); // LMB down
-            } else if (x != g_switch_touch_x || y != g_switch_touch_y) {
-                // Keep the cursor under the finger while held.
-                g_switch_touch_x = x;
-                g_switch_touch_y = y;
-                switchEmitMouse(g_sdl_mouse, 0, 2, x, y, false); // absolute move
-            }
-        } else if (g_switch_touch_down) {
+            const float dx = (target_x - g_switch_cursor_virtual_x) / 0.8f;
+            const float dy = (target_y - g_switch_cursor_virtual_y) / 0.8f;
+
+            if (dx != 0.0f || dy != 0.0f)
+                switchEmitRelativeMouse(g_sdl_mouse, dx, dy);
+
+            g_switch_cursor_virtual_x = target_x;
+            g_switch_cursor_virtual_y = target_y;
+            g_switch_touch_down = true;
+            g_switch_touch_x = target_x;
+            g_switch_touch_y = target_y;
+
+            switchEmitMouse(g_sdl_mouse, 1, 0, 0.0f, 0.0f, true); // LMB down
+        } else if (!touching && g_switch_touch_down) {
             g_switch_touch_down = false;
-            switchEmitMouse(g_sdl_mouse, 0, 1,
-                            g_switch_touch_x, g_switch_touch_y, false); // LMB up
+            switchEmitMouse(g_sdl_mouse, 0, 1, 0.0f, 0.0f, true); // LMB up
         }
     }
     g_switch_input_previous = held;
