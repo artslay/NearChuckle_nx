@@ -673,6 +673,9 @@ void compatNotifyFarCrySaveGameLoadStarted() {
     // is initialized, while CSystem::ReadCompressedFile() is still in the
     // middle of the guest call stack.
     g_farcry_save_load_input_suppressed = true;
+    // Keep g_switch_touch_down intact if the load was started by a touch.
+    // The next poll will sample HidTouchScreenState with the same API used by
+    // the normal touch path and clear it only after the finger is released.
     compatLog("SAVE LOAD INPUT: suppressing Switch input until controls are released");
 }
 
@@ -694,9 +697,9 @@ void compatPollSwitchInput() {
         g_switch_input_previous = held;
 
         if (g_switch_touch_initialized) {
-            touchPosition touch = {};
-            const u32 count = hidTouchRead(&touch, 1);
-            g_switch_touch_down = (count != 0);
+            HidTouchScreenState touch = {};
+            const size_t touch_samples = hidGetTouchScreenStates(&touch, 1);
+            g_switch_touch_down = touch_samples > 0 && touch.count > 0;
         }
 
         if (held == 0 && !g_switch_touch_down) {
