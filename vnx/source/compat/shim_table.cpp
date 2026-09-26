@@ -3964,6 +3964,13 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 g_pendingProfileCreate = probedProfile;
                 g_pendingProfileSystemWritten = false;
                 g_pendingProfileGameWritten = false;
+
+                // Create the profile directory immediately when the UI has
+                // identified the new profile name. The original flow may
+                // enumerate Profiles/Player again before the following
+                // default-config write, so delaying mkdir until that write
+                // makes the newly created profile invisible to the menu.
+                ensureProfileCreateDirectories(g_pendingProfileCreate);
                 compatLogFmt("PROFILE PENDING CREATE: %s",
                              g_pendingProfileCreate.c_str());
             }
