@@ -371,17 +371,16 @@ static constexpr SwitchKeyBinding kSwitchKeyBindings[] = {
     {HidNpadButton_A,          66,  "A -> ENTER"},
     {HidNpadButton_B,          62,  "B -> SPACE"},
     {HidNpadButton_X,          46,  "X -> R"},
-    {HidNpadButton_Y,          33,  "Y -> E"},
+    {HidNpadButton_Y,          34,  "Y -> F"},
     {HidNpadButton_L,          31,  "L -> C"},
-    {HidNpadButton_R,          113, "R -> LCTRL"},
+    {HidNpadButton_R,          59,  "R -> SHIFT"},
+    {HidNpadButton_StickR,      40, "R STICK CLICK -> L"},
     {HidNpadButton_Plus,       111, "PLUS -> ESCAPE"},
     {HidNpadButton_Minus,       61, "MINUS -> TAB"},
 
-    // Digital pad stays available as Android DPAD keys for menu navigation.
-    {HidNpadButton_Up,          19, "DPAD UP"},
+    // Digital pad -> Far Cry actions / mouse wheel.
+    {HidNpadButton_Up,          48, "DPAD UP -> T"},
     {HidNpadButton_Down,        50, "DPAD DOWN -> V"},
-    {HidNpadButton_Left,        21, "DPAD LEFT"},
-    {HidNpadButton_Right,       22, "DPAD RIGHT"},
 
     // Left stick -> classic Far Cry WASD movement. Each direction is sampled
     // as a digital key so it also works with the original Android input path.
@@ -617,6 +616,19 @@ static void pollSwitchInputInternal() {
                 std::max(0.0f, std::min(599.0f,
                     g_switch_cursor_virtual_y + dy * 0.8f));
         }
+
+        // D-pad Left/Right -> real mouse wheel events.
+        // SDL Android maps MotionEvent.ACTION_SCROLL (8) to mouse-wheel input,
+        // with the vertical scroll amount passed in Y.
+        const bool old_dpad_left = (g_switch_input_previous & HidNpadButton_Left) != 0;
+        const bool new_dpad_left = (held & HidNpadButton_Left) != 0;
+        const bool old_dpad_right = (g_switch_input_previous & HidNpadButton_Right) != 0;
+        const bool new_dpad_right = (held & HidNpadButton_Right) != 0;
+
+        if (new_dpad_left && !old_dpad_left)
+            switchEmitMouse(g_sdl_mouse, 0, 8, 0.0f, 1.0f, true);  // wheel up
+        if (new_dpad_right && !old_dpad_right)
+            switchEmitMouse(g_sdl_mouse, 0, 8, 0.0f, -1.0f, true); // wheel down
     }
 
     // Switch touch -> move the Far Cry virtual cursor to the touch point
