@@ -799,6 +799,15 @@ static bool isFsTraceSym(const char* n) {
            strcmp(n, "read") == 0 || strcmp(n, "lseek") == 0;
 }
 
+static bool isBinkAudioTraceSym(const char* n) {
+    if (!n || !*n) return false;
+    return strcmp(n, "CS_Stream_Create") == 0 ||
+           strcmp(n, "CS_Stream_Play") == 0 ||
+           strcmp(n, "CS_Stream_Stop") == 0 ||
+           strcmp(n, "CS_Stream_Close") == 0 ||
+           strcmp(n, "CS_Update") == 0;
+}
+
 static bool isCtypeTraceSym(const char* n) {
     if (!n || !*n) return false;
     return strcmp(n, "_ctype_") == 0 ||
@@ -819,7 +828,8 @@ static bool isCtypeTraceSym(const char* n) {
 }
 static void* resolveSymbol(const char* name) {
     if (!name || !name[0]) return nullptr;
-    const bool trace = isAllocSym(name) || isFsTraceSym(name) || isCtypeTraceSym(name);
+    const bool trace = isAllocSym(name) || isFsTraceSym(name) ||
+                       isCtypeTraceSym(name) || isBinkAudioTraceSym(name);
 
     // Successful bindings are stable for the lifetime of this process under
     // the resolver's existing first-loaded-definition semantics. Check the
