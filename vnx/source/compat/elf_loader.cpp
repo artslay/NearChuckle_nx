@@ -1017,7 +1017,7 @@ static bool compatReadFarCryBackgroundVideoConfig(
         char key[128] = {};
         char value[64] = {};
         if (std::sscanf(
-                line, " %127[^= ] = "%63[01]"", key, value) == 2 &&
+                line, " %127[^= ] = \"%63[01]\"", key, value) == 2 &&
             std::strcmp(key, "ui_BackGroundVideo") == 0) {
             outValue = (value[0] == '0') ? 0 : 1;
             std::fclose(f);
