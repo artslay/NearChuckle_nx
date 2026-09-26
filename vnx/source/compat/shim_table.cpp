@@ -4221,13 +4221,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             ? lowerPath
             : lowerPath.substr(baseSlash + 1);
 
-    const bool configPath =
-        lowerPath.find("profiles/player/") != std::string::npos ||
-        baseName == "system.cfg" ||
-        baseName == "game.cfg" ||
-        lowerPath.find("_system.cfg") != std::string::npos ||
-        lowerPath.find("_game.cfg") != std::string::npos;
-
     const bool configWrite =
         mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
 
@@ -4556,13 +4549,6 @@ static int stub_open(const char* path, int flags, ...) {
         baseSlash == std::string::npos
             ? lowerPath
             : lowerPath.substr(baseSlash + 1);
-
-    const bool configPath =
-        lowerPath.find("profiles/player/") != std::string::npos ||
-        baseName == "system.cfg" ||
-        baseName == "game.cfg" ||
-        lowerPath.find("_system.cfg") != std::string::npos ||
-        lowerPath.find("_game.cfg") != std::string::npos;
 
     const bool openWrite =
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
