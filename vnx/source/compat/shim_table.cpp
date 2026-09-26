@@ -1377,10 +1377,13 @@ void compatProcessPendingFarCryProfile() {
 
     if (hasSystem || hasGame) {
         if (!compatLoadFarCryProfileConfiguration(profile.c_str())) {
-            compatLogFmt("PROFILE LOAD: failed for %s", profile.c_str());
-        } else {
-            compatLogFmt("PROFILE LOAD: applied %s", profile.c_str());
+            // The guest UI/ScriptSystem may not have been initialized yet.
+            // Keep the pending request so the next Switch poll can retry once
+            // Game:LoadConfiguration is callable.
+            compatLogFmt("PROFILE LOAD: deferred for %s", profile.c_str());
+            return;
         }
+        compatLogFmt("PROFILE LOAD: applied %s", profile.c_str());
     } else {
         // A genuinely new profile still needs the engine-generated config
         // files. Save only in that case, after activation has selected the
