@@ -878,6 +878,11 @@ static std::string g_pendingProfileCreate;
 static bool g_pendingProfileSystemWritten = false;
 static bool g_pendingProfileGameWritten = false;
 
+// Effective profile selected by the profile-creation UI. The guest CVar can
+// remain "default", so the Switch filesystem shim mirrors the selected profile
+// for subsequent config/savegame accesses without touching guest object memory.
+static std::string g_activeProfile;
+
 static bool parseProfileConfigName(const std::string& path,
                                    const char* suffix,
                                    std::string& profile) {
@@ -913,6 +918,47 @@ static bool parseProfileConfigName(const std::string& path,
         profile.erase(0, first);
 
     return !profile.empty();
+}
+
+static std::string remapActiveProfilePath(const std::string& input) {
+    if (g_activeProfile.empty() || asciiLower(g_activeProfile) == "default")
+        return input;
+
+    std::string out = input;
+    std::string lower = asciiLower(out);
+    const std::string profile = asciiLower(g_activeProfile);
+
+    auto replaceAll = [&](const std::string& fromLower,
+                          const std::string& replacement) {
+        size_t pos = 0;
+        while ((pos = lower.find(fromLower, pos)) != std::string::npos) {
+            out.replace(pos, fromLower.size(), replacement);
+            lower.replace(pos, fromLower.size(), replacement);
+            pos += replacement.size();
+        }
+    };
+
+    replaceAll("/profiles/player/default/savegames/",
+               "/profiles/player/" + profile + "/savedgames/");
+    replaceAll("profiles/player/default/savegames/",
+               "Profiles/Player/" + g_activeProfile + "/savedgames/");
+
+    replaceAll("/profiles/player/default/",
+               "/profiles/player/" + profile + "/");
+    replaceAll("profiles/player/default/",
+               "Profiles/Player/" + g_activeProfile + "/");
+
+    replaceAll("/profiles/player/default_game.cfg",
+               "/profiles/player/" + profile + "_game.cfg");
+    replaceAll("profiles/player/default_game.cfg",
+               "Profiles/Player/" + g_activeProfile + "_game.cfg");
+
+    replaceAll("/profiles/player/default_system.cfg",
+               "/profiles/player/" + profile + "_system.cfg");
+    replaceAll("profiles/player/default_system.cfg",
+               "Profiles/Player/" + g_activeProfile + "_system.cfg");
+
+    return out;
 }
 
 static void ensureProfileCreateDirectories(const std::string& profile) {
@@ -3892,8 +3938,15 @@ static FILE* makeSyntheticAlphaGradientDds() {
 
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
-    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const std::string normalizedPath = normalizeSwitchFsPath(path);
+    const std::string activePath = remapActiveProfilePath(normalizedPath);
+    const std::string ioPathStorage =
+        (activePath != normalizedPath) ? activePath : normalizedPath;
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
+
+    if (activePath != normalizedPath)
+        compatLogFmt("PROFILE ACTIVE REDIRECT: %s -> %s",
+                     normalizedPath.c_str(), activePath.c_str());
 
     rememberActiveLevelPak(ioPath);
 
@@ -3909,7 +3962,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                      ioPath, mode ? mode : "?");
 
     std::string redirectedProfilePath;
-    if (profileWrite && !g_pendingProfileCreate.empty()) {
+    if (profileWrite && normalizedPath == ioPathStorage &&
+        !g_pendingProfileCreate.empty()) {
         std::string target;
         if (parseProfileConfigName(ioPathStorage, "_system.cfg", target) &&
             asciiLower(target) == "default") {
@@ -3977,8 +4031,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             if (parseProfileConfigName(ioPathStorage, "_system.cfg", probedProfile) &&
                 asciiLower(probedProfile) != "default") {
                 g_pendingProfileCreate = probedProfile;
+                g_activeProfile = probedProfile;
                 g_pendingProfileSystemWritten = false;
                 g_pendingProfileGameWritten = false;
+                compatLogFmt("PROFILE ACTIVE: %s", g_activeProfile.c_str());
 
                 // Create the profile directory immediately when the UI has
                 // identified the new profile name. The original flow may
