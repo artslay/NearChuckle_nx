@@ -974,6 +974,88 @@ extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile) {
     return ok;
 }
 
+extern "C" void compatPollFarCryBackgroundVideoSave() {
+    static bool initialized = false;
+    static int lastValue = -1;
+
+    LoadedSo* sysSo = nullptr;
+    for (LoadedSo* so : g_loaded_sos) {
+        if (!so)
+            continue;
+        const char* p = so->path.c_str();
+        const char* base = std::strrchr(p, '/');
+        base = base ? base + 1 : p;
+        if (std::strcmp(base, "libCrySystem.so") == 0) {
+            sysSo = so;
+            break;
+        }
+    }
+    if (!sysSo)
+        return;
+
+    using GetISystemFn = void* (*)();
+    auto getISystem = reinterpret_cast<GetISystemFn>(sysSo->findSym("_Z10GetISystemv"));
+    if (!getISystem)
+        return;
+
+    void* system = getISystem();
+    if (!system)
+        return;
+
+    void*** systemVtable = reinterpret_cast<void***>(system);
+    if (!systemVtable || !*systemVtable)
+        return;
+
+    using GetIConsoleFn = void* (*)(void*);
+    auto getIConsole = reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
+    if (!getIConsole)
+        return;
+
+    void* console = getIConsole(system);
+    if (!console)
+        return;
+
+    void*** consoleVtable = reinterpret_cast<void***>(console);
+    if (!consoleVtable || !*consoleVtable)
+        return;
+
+    using GetCVarFn = void* (*)(void*, const char*, bool);
+    auto getCVar = reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
+    if (!getCVar)
+        return;
+
+    void* cvar = getCVar(console, "ui_BackGroundVideo", true);
+    if (!cvar)
+        return; // UI CVar has not been created yet.
+
+    void*** cvarVtable = reinterpret_cast<void***>(cvar);
+    if (!cvarVtable || !*cvarVtable)
+        return;
+
+    using GetIValFn = int (*)(void*);
+    auto getIVal = reinterpret_cast<GetIValFn>((*cvarVtable)[1]);
+    if (!getIVal)
+        return;
+
+    const int value = getIVal(cvar) != 0 ? 1 : 0;
+    if (!initialized) {
+        initialized = true;
+        lastValue = value;
+        return;
+    }
+
+    if (value == lastValue)
+        return;
+
+    compatLogFmt("PROFILE CVar: ui_BackGroundVideo changed %d -> %d; saving profile",
+                 lastValue, value);
+    lastValue = value;
+
+    if (!compatSaveFarCryConfiguration()) {
+        compatLog("PROFILE CVar: failed to save ui_BackGroundVideo");
+    }
+}
+
 extern "C" bool compatSaveFarCryConfiguration() {
     // Call the actual non-virtual CSystem::SaveConfiguration() symbol. This
     // preserves the engine's own serialization rules:
