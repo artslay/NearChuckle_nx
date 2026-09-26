@@ -1132,11 +1132,100 @@ static int stub__mkdirat(int dirfd, const char* path, mode_t mode) {
     return stub_mkdirat(dirfd, path, mode);
 }
 
-// Profile selection belongs to the guest CryEngine.
-// The Switch layer only adapts the Android directory ABI; it must not keep a
-// second active-profile state or infer profile changes from fopen/rmdir calls.
+// A profile switch is requested by the guest CryEngine from inside the
+// profile menu. The engine then immediately serializes the CURRENT profile
+// before our safe poll point can activate the new CVar value. During that
+// narrow window, route profile config writes to the requested profile.
+// This is not a second active-profile state: g_pending_farcry_profile is the
+// engine's own pending selection captured from its config load path.
+static std::string getPendingFarCryProfile() {
+    std::string profile;
+    mutexLock(&g_pending_farcry_profile_lock);
+    profile = g_pending_farcry_profile;
+    mutexUnlock(&g_pending_farcry_profile_lock);
+    return profile;
+}
+
 static std::string remapActiveProfilePath(const std::string& input) {
-    return input;
+    const std::string normalized = [&]() {
+        std::string value = input;
+        for (char& c : value) {
+            if ((unsigned char)c == 92)
+                c = '/';
+        }
+        return value;
+    }();
+
+    if (!isProfileFsPath(normalized))
+        return normalized;
+
+    const std::string pending = getPendingFarCryProfile();
+    if (pending.empty() ||
+        pending == "." ||
+        pending == ".." ||
+        pending.find('/') != std::string::npos ||
+        pending.find('\\\\') != std::string::npos)
+        return normalized;
+
+    const std::string lower = asciiLower(normalized);
+    const size_t marker = lower.rfind("profiles/player/");
+    if (marker == std::string::npos)
+        return normalized;
+
+    const size_t nameStart = marker + std::strlen("profiles/player/");
+    const char* suffix = nullptr;
+    const std::string suffixGame = "_game.cfg";
+    const std::string suffixSystem = "_system.cfg";
+
+    if (lower.size() > suffixGame.size() &&
+        lower.compare(lower.size() - suffixGame.size(),
+                      suffixGame.size(), suffixGame) == 0) {
+        suffix = "_game.cfg";
+    } else if (lower.size() > suffixSystem.size() &&
+               lower.compare(lower.size() - suffixSystem.size(),
+                             suffixSystem.size(), suffixSystem) == 0) {
+        suffix = "_system.cfg";
+    } else {
+        return normalized;
+    }
+
+    const size_t suffixLen = std::strlen(suffix);
+    if (normalized.size() <= nameStart + suffixLen)
+        return normalized;
+
+    const size_t suffixStart = normalized.size() - suffixLen;
+    if (suffixStart <= nameStart)
+        return normalized;
+
+    const std::string currentName =
+        normalized.substr(nameStart, suffixStart - nameStart);
+    if (currentName.empty() || currentName.find('/') != std::string::npos)
+        return normalized;
+
+    if (currentName == pending)
+        return normalized;
+
+    const std::string base = normalized.substr(0, nameStart);
+    const std::string target = base + pending + suffix;
+
+    // The guest SaveConfiguration() opens the destination directly. Ensure
+    // the target directory exists before fopen() so the very first selected
+    // profile is not lost when the engine is still on "default".
+    const std::string profileDir = base + pending;
+    if (::mkdir(profileDir.c_str(), 0755) != 0 && errno != EEXIST) {
+        compatLogFmt("PROFILE DIR REDIRECT FAIL: %s errno=%d",
+                     profileDir.c_str(), errno);
+    } else {
+        const std::string saveDir = profileDir + "/savegames";
+        if (::mkdir(saveDir.c_str(), 0755) != 0 && errno != EEXIST) {
+            compatLogFmt("PROFILE SAVE DIR REDIRECT FAIL: %s errno=%d",
+                         saveDir.c_str(), errno);
+        }
+    }
+
+    compatLogFmt("PROFILE WRITE REDIRECT: %s -> %s",
+                 normalized.c_str(), target.c_str());
+    return target;
 }
 
 extern "C" void compatMarkFarCryMainLoopReady() {
@@ -4114,7 +4203,15 @@ static FILE* makeSyntheticAlphaGradientDds() {
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string normalizedPath = normalizeSwitchFsPath(path);
-    const char* ioPath = path ? normalizedPath.c_str() : nullptr;
+    const bool writeMode = profileModeWrites(mode);
+    const bool requestedProfileIo =
+        !normalizedPath.empty() && isProfileFsPath(normalizedPath);
+
+    std::string ioPathStorage = normalizedPath;
+    if (requestedProfileIo && writeMode)
+        ioPathStorage = remapActiveProfilePath(normalizedPath);
+
+    const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
     rememberActiveLevelPak(ioPath);
 
@@ -4122,11 +4219,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
-    const bool profileIo = ioPath && isProfileFsPath(ioPath);
-    const bool writeMode = profileModeWrites(mode);
+    const bool profileIo = requestedProfileIo;
     if (profileIo)
         compatLogFmt("PROFILE FOPEN: %s mode=%s",
-                     ioPath, mode ? mode : "?");
+                     normalizedPath.c_str(), mode ? mode : "?");
 
     // LoadConfiguration(<name>) reaches this read even when <name> has never
     // been created. Remember the requested profile for the deferred CVar update,
