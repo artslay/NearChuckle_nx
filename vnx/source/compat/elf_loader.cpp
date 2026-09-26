@@ -762,6 +762,12 @@ static void indexLoadedSoSymbols(LoadedSo* so) {
 }
 
 extern "C" bool compatActivateFarCryProfile(const char* profile) {
+    // Exact CryCommon vtable order for this build:
+    // ISystem::GetIConsole() = 24, IConsole::GetCVar() = 20,
+    // IConsole::ExecuteString() = 32, ICVar::GetString()/Set() = 3/4.
+    // Nearby slots are different methods (ISystem[27] is GetISoundSystem,
+    // IConsole[21] is GetFont), so using them here can jump directly into
+    // unrelated guest code with the profile arguments and corrupt execution.
     if (!profile || !*profile)
         return false;
 
@@ -809,7 +815,7 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
 
     using GetIConsoleFn = void* (*)(void*);
     auto getIConsole =
-        reinterpret_cast<GetIConsoleFn>((*systemVtable)[27]);
+        reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
     void* console = getIConsole(system);
     if (!console) {
         compatLog("PROFILE CVAR: GetIConsole returned NULL");
@@ -824,7 +830,7 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
 
     using GetCVarFn = void* (*)(void*, const char*, bool);
     auto getCVar =
-        reinterpret_cast<GetCVarFn>((*consoleVtable)[21]);
+        reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
     void* cvar = getCVar(console, "g_playerprofile", true);
     if (!cvar) {
         compatLog("PROFILE CVAR: g_playerprofile not found");
@@ -863,7 +869,7 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
     // command, rather than relying only on the ICVar object's setter.
     using ExecuteStringFn = void (*)(void*, const char*, bool, bool);
     auto executeString =
-        reinterpret_cast<ExecuteStringFn>((*consoleVtable)[33]);
+        reinterpret_cast<ExecuteStringFn>((*consoleVtable)[32]);
 
     char command[512];
     std::snprintf(command, sizeof(command),
