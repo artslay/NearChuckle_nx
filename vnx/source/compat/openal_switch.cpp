@@ -113,10 +113,6 @@ void resetSource(Source& s) {
 void mixSource(Source& s, float* dst, size_t frames) {
     if(s.state!=AL_PLAYING || s.queue.empty()) return;
 
-    // CryMovie uses dedicated OpenAL source 32 for the intro stream. Its Bink
-    // decoder delivers valid PCM, but the decoded track is substantially quieter
-    // than regular game audio on the Switch path. Apply a targeted gain only to
-    // this movie source; all other OpenAL sources keep the game's requested gain.
     for(size_t o=0;o<frames;o++) {
         while(s.current<s.queue.size()) {
             Buffer* b=getBuffer(s.queue[s.current]);
@@ -491,7 +487,11 @@ void alGenSources(ALsizei n,ALuint* ids) {
 void alDeleteSources(ALsizei n,const ALuint* ids) {
     if(n<0||(!ids&&n)){setError(AL_INVALID_VALUE);return;}
     mutexLock(&g_audio.lock);
-    for(ALsizei i=0;i<n;i++) if(Source* s=getSource(ids[i])) {resetSource(*s);s->used=false;}
+    for(ALsizei i=0;i<n;i++) if(Source* s=getSource(ids[i])) {
+        resetSource(*s);
+        s->play_requested=false;
+        s->used=false;
+    }
     mutexUnlock(&g_audio.lock);
 }
 ALboolean alIsSource(ALuint id){return getSource(id)?AL_TRUE:AL_FALSE;}
@@ -597,8 +597,14 @@ void alSourceQueueBuffers(ALuint id,ALsizei n,const ALuint*v){
         s->queue.push_back(v[i]);
     }
 
-    if(s->play_requested && !s->queue.empty() && s->state != AL_PAUSED)
+    if(s->play_requested && !s->queue.empty() && s->state != AL_PAUSED) {
+        if(s->state != AL_PLAYING && g_play_log_count < 16) {
+            compatLogFmt("AUDIO: deferred stream start source=%u queued=%u",
+                         static_cast<unsigned>(id),
+                         static_cast<unsigned>(s->queue.size()));
+        }
         s->state=AL_PLAYING;
+    }
 
     if(g_queue_log_count<16) {
         compatLogFmt("AUDIO: alSourceQueueBuffers[%u] source=%u n=%d total=%u",
