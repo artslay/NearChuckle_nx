@@ -4055,42 +4055,58 @@ static bool compatIsSaveGameFilePath(const char* path) {
 // SaveName() in the original Far Cry source sanitizes every non-alphanumeric
 // character before appending ".sav". Consequently the menu can pass "foo.sav"
 // to Game:Load(), while CXGame::Load() asks the filesystem for
-// "foo_sav.sav". The real file remains "foo.sav". Resolve that exact
-// original filename here without changing the guest save/load code.
-static std::string compatNormalizeSaveGameLookupPath(const char* path) {
-    std::string normalized = normalizeSwitchFsPath(path);
-    if (normalized.empty())
-        return normalized;
+// "foo_sav.sav". The real file remains "foo.sav". Keep exact-name lookup first,
+// then try the sanitized-name correction only when the exact file is absent.
+static bool compatOpenSaveGameCandidate(const std::string& candidate,
+                                        std::string& openedPath,
+                                        FILE*& outFile) {
+    outFile = std::fopen(candidate.c_str(), "rb");
+    if (outFile) {
+        openedPath = candidate;
+        return true;
+    }
 
-    const std::string lower = asciiLower(normalized);
-    const std::string suffix = "_sav.sav";
-    if (lower.size() <= suffix.size() ||
-        lower.compare(lower.size() - suffix.size(),
-                      suffix.size(), suffix) != 0)
-        return normalized;
+    std::string resolved;
+    if (resolvePathCaseInsensitive(candidate.c_str(), resolved) &&
+        resolved != candidate) {
+        outFile = std::fopen(resolved.c_str(), "rb");
+        if (outFile) {
+            openedPath = resolved;
+            return true;
+        }
+    }
 
-    const size_t suffixStart = normalized.size() - suffix.size();
-    return normalized.substr(0, suffixStart) + ".sav";
+    return false;
 }
 
 static FILE* compatOpenSaveGameFile(const char* path, std::string& openedPath) {
-    openedPath = compatNormalizeSaveGameLookupPath(path);
+    openedPath = normalizeSwitchFsPath(path);
     if (openedPath.empty())
         return nullptr;
 
-    FILE* file = std::fopen(openedPath.c_str(), "rb");
-    if (file)
+    FILE* file = nullptr;
+
+    // Never rewrite a legitimate existing filename.
+    if (compatOpenSaveGameCandidate(openedPath, openedPath, file))
         return file;
 
-    // Preserve normal case-insensitive Switch filesystem behavior as a fallback.
-    std::string resolved;
-    if (resolvePathCaseInsensitive(openedPath.c_str(), resolved) &&
-        resolved != openedPath) {
-        file = std::fopen(resolved.c_str(), "rb");
-        if (file) {
-            openedPath = resolved;
+    // CXGame::Load() sanitizes the ".sav" passed by the menu into "_sav.sav".
+    // Undo only that transformation, one layer at a time, until a real file
+    // is found. This also makes repeated LoadLatest() calls work.
+    std::string candidate = openedPath;
+    while (true) {
+        std::string lower = asciiLower(candidate);
+        const std::string suffix = "_sav.sav";
+        if (lower.size() <= suffix.size() ||
+            lower.compare(lower.size() - suffix.size(),
+                          suffix.size(), suffix) != 0)
+            break;
+
+        const size_t suffixStart = candidate.size() - suffix.size();
+        candidate = candidate.substr(0, suffixStart) + ".sav";
+
+        if (compatOpenSaveGameCandidate(candidate, openedPath, file))
             return file;
-        }
     }
 
     return nullptr;
