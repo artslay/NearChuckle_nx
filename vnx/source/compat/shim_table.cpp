@@ -873,7 +873,7 @@ static int stub__mkdirat(int dirfd, const char* path, mode_t mode) {
 
 // The profile UI can probe a new profile's *_system.cfg and then issue the
 // generic save call while g_playerprofile is still "default". Preserve that
-// requested name for the immediately following configuration write.
+// requested name for the immediately following default config write.
 static std::string g_pendingProfileCreate;
 
 static bool parseProfileConfigName(const std::string& path,
@@ -897,11 +897,6 @@ static bool parseProfileConfigName(const std::string& path,
 
     profile = path.substr(nameStart, suffixStart - nameStart);
     return !profile.empty();
-}
-
-static std::string profileConfigPath(const std::string& profile,
-                                     const char* fileName) {
-    return std::string("Profiles/Player/") + profile + "/" + fileName;
 }
 
 static void ensureProfileCreateDirectories(const std::string& profile) {
@@ -3890,11 +3885,11 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (parseProfileConfigName(ioPathStorage, "_system.cfg", target) &&
             asciiLower(target) == "default") {
             redirectedProfilePath =
-                profileConfigPath(g_pendingProfileCreate, "system.cfg");
+                std::string("Profiles/Player/") + g_pendingProfileCreate + "_system.cfg";
         } else if (parseProfileConfigName(ioPathStorage, "_game.cfg", target) &&
                    asciiLower(target) == "default") {
             redirectedProfilePath =
-                profileConfigPath(g_pendingProfileCreate, "game.cfg");
+                std::string("Profiles/Player/") + g_pendingProfileCreate + "_game.cfg";
         }
 
         if (!redirectedProfilePath.empty()) {
@@ -3996,12 +3991,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     if (!shaderIo && !vpakOwns(f))
         logShaderScriptDiagnostics(f, ioPath);
 
-    if (f && !redirectedProfilePath.empty()) {
-        std::string target;
-        if (parseProfileConfigName(ioPathStorage, "_game.cfg", target) &&
-            asciiLower(target) == "default")
-            g_pendingProfileCreate.clear();
-    }
+    if (f && !redirectedProfilePath.empty())
+        g_pendingProfileCreate.clear();
 
     if (videoIo)
         g_near_video_open_failed = 0;
