@@ -872,6 +872,191 @@ static bool getProfileGameBaseName(const std::string& path,
     return !profileBase.empty();
 }
 
+static bool getDirectProfileName(const std::string& path,
+                                 std::string& profileName,
+                                 std::string& normalizedDir) {
+    normalizedDir = path;
+    for (char& c : normalizedDir) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    while (normalizedDir.size() > 1 && normalizedDir.back() == '/')
+        normalizedDir.pop_back();
+
+    const std::string lower = asciiLower(normalizedDir);
+    const std::string prefix = "profiles/player/";
+    if (lower.rfind(prefix, 0) != 0)
+        return false;
+
+    const size_t start = prefix.size();
+    if (start >= normalizedDir.size())
+        return false;
+
+    const std::string tail = normalizedDir.substr(start);
+    if (tail.empty() || tail.find('/') != std::string::npos)
+        return false;
+
+    profileName = tail;
+    return true;
+}
+
+static bool copyNativeFileIfMissing(const std::string& source,
+                                    const std::string& destination) {
+    struct stat st = {};
+    if (::stat(destination.c_str(), &st) == 0)
+        return true;
+
+    FILE* in = ::fopen(source.c_str(), "rb");
+    if (!in)
+        return false;
+
+    FILE* out = ::fopen(destination.c_str(), "wb");
+    if (!out) {
+        const int savedErrno = errno;
+        std::fclose(in);
+        errno = savedErrno;
+        return false;
+    }
+
+    char buffer[32 * 1024];
+    bool ok = true;
+    while (true) {
+        const size_t n = std::fread(buffer, 1, sizeof(buffer), in);
+        if (n) {
+            if (std::fwrite(buffer, 1, n, out) != n) {
+                ok = false;
+                break;
+            }
+        }
+        if (n < sizeof(buffer)) {
+            if (std::ferror(in))
+                ok = false;
+            break;
+        }
+    }
+
+    std::fclose(out);
+    std::fclose(in);
+
+    if (!ok) {
+        ::remove(destination.c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool ensureProfileConfigPairForDirectory(
+    const std::string& profileDirectory) {
+    std::string profileName;
+    std::string normalizedDir;
+    if (!getDirectProfileName(profileDirectory, profileName, normalizedDir))
+        return false;
+
+    std::string base = normalizedDir;
+    base.resize(base.size() - profileName.size());
+
+    const std::string systemPath = base + profileName + "_system.cfg";
+    const std::string gamePath   = base + profileName + "_game.cfg";
+    const std::string defaultSystem = base + "default_system.cfg";
+    const std::string defaultGame   = base + "default_game.cfg";
+
+    struct stat stSystem = {};
+    struct stat stGame = {};
+    const bool haveSystem = (::stat(systemPath.c_str(), &stSystem) == 0);
+    const bool haveGame   = (::stat(gamePath.c_str(), &stGame) == 0);
+
+    bool changed = false;
+
+    if (!haveSystem) {
+        if (copyNativeFileIfMissing(defaultSystem, systemPath)) {
+            FILE* systemFile = ::fopen(systemPath.c_str(), "ab");
+            if (systemFile) {
+                std::fprintf(systemFile,
+                             "g_playerprofile = \"%s\"\r\n",
+                             profileName.c_str());
+                std::fclose(systemFile);
+                changed = true;
+            }
+        } else {
+            FILE* systemFile = ::fopen(systemPath.c_str(), "wb");
+            if (systemFile) {
+                std::fprintf(systemFile,
+                             "-- [System-Configuration]\r\n"
+                             "-- [Switch profile bootstrap]\r\n"
+                             "g_playerprofile = \"%s\"\r\n",
+                             profileName.c_str());
+                std::fclose(systemFile);
+                changed = true;
+            }
+        }
+    }
+
+    if (!haveGame) {
+        if (copyNativeFileIfMissing(defaultGame, gamePath)) {
+            changed = true;
+        } else {
+            FILE* gameFile = ::fopen(gamePath.c_str(), "wb");
+            if (gameFile) {
+                std::fprintf(gameFile,
+                             "-- [Game-Configuration]\r\n");
+                std::fclose(gameFile);
+                changed = true;
+            }
+        }
+    }
+
+    if (changed) {
+        compatLogFmt("PROFILE PAIR READY: %s -> %s_system.cfg + %s_game.cfg",
+                     normalizedDir.c_str(), profileName.c_str(),
+                     profileName.c_str());
+    }
+    return changed || (haveSystem && haveGame);
+}
+
+static bool ensureProfileConfigPairForPath(
+    const std::string& configPath) {
+    std::string normalized = configPath;
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    const std::string lower = asciiLower(normalized);
+    const char* suffixes[] = {"_system.cfg", "_game.cfg"};
+    const char* suffix = nullptr;
+    for (const char* candidate : suffixes) {
+        const size_t len = std::strlen(candidate);
+        if (lower.size() > len &&
+            lower.compare(lower.size() - len, len, candidate) == 0) {
+            suffix = candidate;
+            break;
+        }
+    }
+    if (!suffix)
+        return false;
+
+    const size_t slash = normalized.find_last_of('/');
+    if (slash == std::string::npos)
+        return false;
+
+    const std::string fileName = normalized.substr(slash + 1);
+    const std::string profileName =
+        fileName.substr(0, fileName.size() - std::strlen(suffix));
+    if (profileName.empty())
+        return false;
+
+    const std::string base = normalized.substr(0, slash + 1);
+    const std::string profileDirectory = base + profileName;
+
+    struct stat stDir = {};
+    if (::stat(profileDirectory.c_str(), &stDir) != 0 ||
+        !S_ISDIR(stDir.st_mode))
+        return false;
+
+    return ensureProfileConfigPairForDirectory(profileDirectory);
+}
+
 static void ensureProfileSystemConfigForGameWrite(
     const std::string& openedGamePath) {
     std::string profileName;
@@ -881,10 +1066,6 @@ static void ensureProfileSystemConfigForGameWrite(
     if (!isProfileFsPath(openedGamePath))
         return;
 
-    // The native CScriptObjectGame::SaveConfiguration() creates the profile
-    // directory after serializing both config files. If the native system
-    // config write is skipped on this ABI, keep the directory visible to the
-    // same ScanDirectory("profiles/player", SCANDIR_SUBDIRS, ...) path.
     std::string profileDir = openedGamePath.substr(
         0, openedGamePath.size() -
         (profileName.size() + std::strlen("_game.cfg")));
@@ -894,33 +1075,7 @@ static void ensureProfileSystemConfigForGameWrite(
                      profileDir.c_str(), errno);
     }
 
-    std::string systemPath = openedGamePath.substr(
-        0, openedGamePath.size() - std::strlen("_game.cfg"));
-    systemPath += "_system.cfg";
-
-    struct stat st = {};
-    if (::stat(systemPath.c_str(), &st) == 0)
-        return;
-
-    FILE* systemFile = ::fopen(systemPath.c_str(), "wb");
-    if (!systemFile) {
-        compatLogFmt("PROFILE SYSTEM CREATE FAIL: %s errno=%d",
-                     systemPath.c_str(), errno);
-        return;
-    }
-
-    // CXGame::SaveConfiguration() normally writes the complete dumped CVar
-    // set here. Keep the bootstrap variable present even when the native
-    // system-config write did not reach the Switch filesystem layer; this is
-    // enough for profile discovery and for the selected profile to bootstrap
-    // on the next launch. A later native save overwrites this file normally.
-    std::fprintf(systemFile,
-                 "-- [System-Configuration]\\r\\n"
-                 "-- [Switch profile bootstrap]\\r\\n"
-                 "g_playerprofile = \"%s\"\r\n",
-                 profileName.c_str());
-    std::fclose(systemFile);
-    compatLogFmt("PROFILE SYSTEM CREATE: %s", systemPath.c_str());
+    (void)ensureProfileConfigPairForDirectory(profileDir);
 }
 
 static int stub_mkdir(const char* path, mode_t mode) {
