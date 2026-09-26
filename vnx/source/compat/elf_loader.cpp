@@ -1340,7 +1340,7 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
     if (!getIVal)
         return;
 
-    const int value = getIVal(cvar) != 0 ? 1 : 0;
+    int value = getIVal(cvar) != 0 ? 1 : 0;
 
     if (!g_bg_video_initialized) {
         int savedValue = -1;
