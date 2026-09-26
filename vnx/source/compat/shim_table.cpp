@@ -11007,7 +11007,6 @@ static int stub_rmdir(const char* path) {
         !g_activeProfile.empty() &&
         asciiLower(removedProfile) == asciiLower(g_activeProfile)) {
         g_pendingProfileActivation = "default";
-        g_activeProfileCvarSet = false;
         compatLogFmt("PROFILE RMDIR ACTIVE: %s -> default pending",
                      removedProfile.c_str());
     }
