@@ -52,7 +52,6 @@ extern void compatPakLog(const char* fmt, ...);
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 extern "C" bool compatActivateFarCryProfile(const char* profile);
 extern "C" bool compatGetFarCryProfile(char* out, size_t outSize);
-extern "C" bool compatSaveFarCryConfiguration();
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
 extern "C" {
@@ -885,7 +884,6 @@ static int stub__mkdirat(int dirfd, const char* path, mode_t mode) {
 static std::string g_pendingProfileCreate;
 static bool g_pendingProfileSystemWritten = false;
 static bool g_pendingProfileGameWritten = false;
-static bool g_profileSeedSaveInProgress = false;
 
 // Effective profile selected by the profile-creation UI. The guest CVar can
 // remain "default", so the Switch filesystem shim mirrors the selected profile
@@ -1093,6 +1091,44 @@ static std::string remapRootProfileSystemRead(const std::string& input) {
     return input;
 }
 
+static void seedProfileSystemConfig(const std::string& profile,
+                                      const std::string& systemCfg) {
+    if (profile.empty() || asciiLower(profile) == "default")
+        return;
+
+    FILE* src = ::fopen("system.cfg", "rb");
+    FILE* dst = ::fopen(systemCfg.c_str(), "wb");
+    if (!dst) {
+        if (src)
+            ::fclose(src);
+        return;
+    }
+
+    bool wroteProfile = false;
+    char line[1024];
+    while (src && std::fgets(line, sizeof(line), src)) {
+        const char* p = line;
+        while (*p && std::isspace((unsigned char)*p))
+            ++p;
+
+        if (std::strncmp(p, "g_playerprofile", 15) == 0 &&
+            (p[15] == ' ' || p[15] == '\t' || p[15] == '=')) {
+            std::fprintf(dst, "g_playerprofile = \"%s\"\r\n", profile.c_str());
+            wroteProfile = true;
+        } else {
+            std::fputs(line, dst);
+        }
+    }
+
+    if (src)
+        ::fclose(src);
+
+    if (!wroteProfile)
+        std::fprintf(dst, "g_playerprofile = \"%s\"\r\n", profile.c_str());
+
+    ::fclose(dst);
+}
+
 static void ensureProfileCreateDirectories(const std::string& profile) {
     if (profile.empty() || asciiLower(profile) == "default")
         return;
@@ -1105,15 +1141,16 @@ static void ensureProfileCreateDirectories(const std::string& profile) {
     ::mkdir("Profiles/Player", 0755);
     ::mkdir(profileDir.c_str(), 0755);
 
-    // Create both profile configuration files immediately. The real
-    // SaveConfiguration() write will reopen these exact paths and replace
-    // their contents. Keeping the files in Player is also important for
-    // profile discovery on the next ScanDirectory pass.
-    FILE* f = ::fopen(systemCfg.c_str(), "ab");
-    if (f)
-        ::fclose(f);
+    // The new profile must start with a real system configuration. Copy the
+    // current root system.cfg snapshot and replace g_playerprofile with the
+    // newly selected profile. This avoids recursively calling
+    // CSystem::SaveConfiguration() from inside fopen(), which is unsafe while
+    // the profile Lua callback is still executing.
+    seedProfileSystemConfig(profile, systemCfg);
 
-    f = ::fopen(gameCfg.c_str(), "ab");
+    // game.cfg is seeded by the normal engine serializer when the profile is
+    // first saved. Keep the file present so profile discovery sees it.
+    FILE* f = ::fopen(gameCfg.c_str(), "ab");
     if (f)
         ::fclose(f);
 }
@@ -4223,19 +4260,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 compatLogFmt("PROFILE PENDING CREATE: %s",
                              g_pendingProfileCreate.c_str());
 
-                // The profile UI can create the two filenames before the
-                // normal save call reaches them. Seed the new profile through
-                // the real engine serializer now, rather than leaving the
-                // placeholder *_system.cfg empty. DumpCVars() and the action
-                // map serializer therefore remain the single source of truth.
-                if (cvarOk && !g_profileSeedSaveInProgress) {
-                    g_profileSeedSaveInProgress = true;
-                    const bool saved = compatSaveFarCryConfiguration();
-                    g_profileSeedSaveInProgress = false;
-                    compatLogFmt("PROFILE SEED SAVE: %s",
-                                 saved ? "OK" : "FAILED");
-                }
-            }
+                    }
         }
 
         // Shader-cache files are not language assets, but valid precompiled
