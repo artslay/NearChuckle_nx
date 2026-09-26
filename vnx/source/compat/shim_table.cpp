@@ -1094,6 +1094,11 @@ static std::string remapRootProfileSystemRead(const std::string& input) {
 
 extern "C" void compatMarkFarCryMainLoopReady() {
     g_farCryMainLoopReady = true;
+
+    // Do not call the guest CVar interface from fopen/open while CryEngine is
+    // still initializing its subsystems. Sync once at the first safe point
+    // after the main game loop has been entered.
+    syncActiveProfileFromGuestCvar();
 }
 
 void compatProcessPendingFarCryProfile() {
@@ -4223,17 +4228,11 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         lowerPath.find("_system.cfg") != std::string::npos ||
         lowerPath.find("_game.cfg") != std::string::npos;
 
-    if (configPath)
-        syncActiveProfileFromGuestCvar();
-
     const bool configWrite =
         mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
 
     const bool explicitProfileConfig =
         isExplicitProfileConfigPath(normalizedPath) && !configWrite;
-
-    if (isExplicitProfileConfigPath(normalizedPath))
-        queueExplicitProfileActivation(normalizedPath, configWrite);
 
     std::string activePath = explicitProfileConfig
         ? normalizedPath
@@ -4310,6 +4309,9 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         : redirectedProfilePath.c_str();
 
     FILE* f = fopen(openPath, mode);
+
+    if (f && explicitProfileConfig)
+        queueExplicitProfileActivation(normalizedPath, false);
 
     if (!f && ioPath) {
         std::string resolved;
@@ -4562,17 +4564,11 @@ static int stub_open(const char* path, int flags, ...) {
         lowerPath.find("_system.cfg") != std::string::npos ||
         lowerPath.find("_game.cfg") != std::string::npos;
 
-    if (configPath)
-        syncActiveProfileFromGuestCvar();
-
     const bool openWrite =
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
 
     const bool explicitProfileConfig =
         isExplicitProfileConfigPath(normalizedPath) && !openWrite;
-
-    if (isExplicitProfileConfigPath(normalizedPath))
-        queueExplicitProfileActivation(normalizedPath, openWrite);
 
     std::string ioPathStorage = explicitProfileConfig
         ? normalizedPath
@@ -4638,6 +4634,9 @@ static int stub_open(const char* path, int flags, ...) {
         compatLogFmt("open SHADER REQUEST: path=%s flags=0x%x", ioPath, flags);
 
     int fd = doOpen(ioPath);
+
+    if (fd >= 0 && !openWrite && isExplicitProfileConfigPath(normalizedPath))
+        queueExplicitProfileActivation(normalizedPath, false);
 
     if (shaderSourceOpen)
         compatLogFmt("open SHADER DIRECT: path=%s result=%s fd=%d",
