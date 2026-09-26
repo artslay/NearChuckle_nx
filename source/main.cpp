@@ -21,6 +21,7 @@ extern void compatUiInit();
 extern void compatUiShutdown();
 extern void compatStartupTimerBegin();
 extern void* jniFindRegisteredNative(const char* name, int occurrence);
+extern "C" bool compatSaveFarCryConfiguration();
 
 struct SoFile {
     std::string path;
@@ -644,6 +645,16 @@ int main(int, char**) {
     compatUiShutdown();
 
     int rc = run_farcry(game_so);
+
+    // Mirror the original CSystem::ShutDown()->SaveConfiguration() path.
+    // The guest Linux/Android build returns from shutdown instead of calling
+    // process exit, so this final host-side save is the last chance to persist
+    // the active profile's current control/graphics CVars before teardown.
+    if (!compatSaveFarCryConfiguration()) {
+        compatLog("PROFILE SAVE: final CSystem::SaveConfiguration() failed");
+    } else {
+        compatLog("PROFILE SAVE: final configuration persisted");
+    }
 
     compatLogFmt("Far Cry returned %d", rc);
     compatLogFlush();
