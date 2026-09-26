@@ -60,6 +60,7 @@ struct Source {
     ALint state=AL_INITIAL;
     bool looping=false;
     bool relative=false;
+    bool play_requested=false;
     float gain=1.0f, pitch=1.0f;
     float pos[3]={0,0,0};
     float ref=1.0f, maxdist=1000000.0f, rolloff=1.0f, mingain=0.0f, maxgain=1.0f;
@@ -116,8 +117,6 @@ void mixSource(Source& s, float* dst, size_t frames) {
     // decoder delivers valid PCM, but the decoded track is substantially quieter
     // than regular game audio on the Switch path. Apply a targeted gain only to
     // this movie source; all other OpenAL sources keep the game's requested gain.
-    const float movie_boost = 1.0f;
-
     for(size_t o=0;o<frames;o++) {
         while(s.current<s.queue.size()) {
             Buffer* b=getBuffer(s.queue[s.current]);
@@ -158,7 +157,7 @@ void mixSource(Source& s, float* dst, size_t frames) {
                 // this mode; applying world-space attenuation to them can
                 // make the cutscene track effectively inaudible.
                 if(s.relative) {
-                    const float v=mono*s.gain*g_listener_gain*movie_boost;
+                    const float v=mono*s.gain*g_listener_gain;
                     left=v*0.70710678f;
                     right=v*0.70710678f;
                 } else {
@@ -172,14 +171,14 @@ void mixSource(Source& s, float* dst, size_t frames) {
                     if(dist>=s.maxdist) att=0.0f;
                     att=std::clamp(att,s.mingain,s.maxgain);
                     const float pan=std::clamp(dx/std::max(1.0f,dist),-1.0f,1.0f);
-                    const float v=mono*s.gain*g_listener_gain*att*movie_boost;
+                    const float v=mono*s.gain*g_listener_gain*att;
                     left=v*0.5f*(1.0f-pan);
                     right=v*0.5f*(1.0f+pan);
                 }
             } else {
                 const size_t p0=i0*2, p1=i1*2;
-                left=(b->pcm[p0]+(b->pcm[p1]-b->pcm[p0])*frac)/32768.0f*s.gain*g_listener_gain*movie_boost;
-                right=(b->pcm[p0+1]+(b->pcm[p1+1]-b->pcm[p0+1])*frac)/32768.0f*s.gain*g_listener_gain*movie_boost;
+                left=(b->pcm[p0]+(b->pcm[p1]-b->pcm[p0])*frac)/32768.0f*s.gain*g_listener_gain;
+                right=(b->pcm[p0+1]+(b->pcm[p1+1]-b->pcm[p0+1])*frac)/32768.0f*s.gain*g_listener_gain;
             }
             dst[o*2]+=left;
             dst[o*2+1]+=right;
@@ -500,13 +499,20 @@ void alSourcePlay(ALuint id){
     mutexLock(&g_audio.lock);
     Source*s=getSource(id);
     if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
-    if(s->queue.empty()){mutexUnlock(&g_audio.lock);setError(AL_INVALID_OPERATION);return;}
-    s->state=AL_PLAYING;
+
+    // CrySoundSystem's Bink stream path may call alSourcePlay() before the
+    // first streaming buffer has been queued. Keep the play request pending
+    // instead of rejecting it; alSourceQueueBuffers() will start the source
+    // as soon as the first buffer arrives.
+    s->play_requested=true;
+    if(!s->queue.empty())
+        s->state=AL_PLAYING;
+
     if(g_play_log_count<16) {
-        compatLogFmt("AUDIO: alSourcePlay[%u] source=%u queued=%u looping=%d gain=%.3f pitch=%.3f",
+        compatLogFmt("AUDIO: alSourcePlay[%u] source=%u queued=%u looping=%d gain=%.3f pitch=%.3f pending=%d",
                      g_play_log_count, static_cast<unsigned>(id),
                      static_cast<unsigned>(s->queue.size()), s->looping ? 1 : 0,
-                     s->gain, s->pitch);
+                     s->gain, s->pitch, s->queue.empty() ? 1 : 0);
         ++g_play_log_count;
     }
     mutexUnlock(&g_audio.lock);
@@ -523,6 +529,7 @@ void alSourceStop(ALuint id){
     Source*s=getSource(id);
     if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
     s->state=AL_STOPPED;s->current=0;s->processed=0;s->sample_pos=0;
+    s->play_requested=false;
     mutexUnlock(&g_audio.lock);
 }
 void alSourceRewind(ALuint id){
@@ -530,6 +537,7 @@ void alSourceRewind(ALuint id){
     Source*s=getSource(id);
     if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
     s->state=AL_INITIAL;s->current=0;s->processed=0;s->sample_pos=0;
+    s->play_requested=false;
     mutexUnlock(&g_audio.lock);
 }
 void alSourcei(ALuint id,ALenum p,ALint v){
@@ -545,6 +553,7 @@ void alSourcei(ALuint id,ALenum p,ALint v){
     else if(p==AL_BUFFER){
         if(v&&!getBuffer(v)){mutexUnlock(&g_audio.lock);setError(AL_INVALID_VALUE);return;}
         resetSource(*s);
+        s->play_requested=false;
         if(v)s->queue.push_back(v);
         s->state=AL_INITIAL;
     } else if(p!=AL_SOURCE_RELATIVE) {
@@ -587,6 +596,10 @@ void alSourceQueueBuffers(ALuint id,ALsizei n,const ALuint*v){
         if(!getBuffer(v[i])){setError(AL_INVALID_NAME);break;}
         s->queue.push_back(v[i]);
     }
+
+    if(s->play_requested && !s->queue.empty() && s->state != AL_PAUSED)
+        s->state=AL_PLAYING;
+
     if(g_queue_log_count<16) {
         compatLogFmt("AUDIO: alSourceQueueBuffers[%u] source=%u n=%d total=%u",
                      g_queue_log_count, static_cast<unsigned>(id), static_cast<int>(n),
