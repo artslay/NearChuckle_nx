@@ -10603,6 +10603,22 @@ struct ShimEntry { const char* name; void* ptr; };
 extern "C" void near_openal_tls_local_context_init();
 extern "C" int near_openal_cxa_thread_atexit(void (*dtor)(void*), void* obj, void* dso);
 
+extern "C" {
+    struct CS_STREAM;
+    using NearCSStreamCallback =
+        signed char (*)(CS_STREAM*, void*, int, void*);
+
+    void* near_bink_cs_stream_create(NearCSStreamCallback callback,
+                                      int length,
+                                      unsigned int mode,
+                                      int samplerate,
+                                      void* userdata);
+    int near_bink_cs_stream_play(int channel, CS_STREAM* stream);
+    signed char near_bink_cs_stream_stop(CS_STREAM* stream);
+    signed char near_bink_cs_stream_close(CS_STREAM* stream);
+    void near_bink_cs_update(void);
+}
+
 // Switch-native OpenAL compatibility backend (libnx audout).
 extern "C" {
     struct ALCdevice;
@@ -10721,6 +10737,14 @@ static const ShimEntry g_shims[] = {
     {"alDisable", (void*)alDisable},
     {"alFinish", (void*)alFinish},
     {"alFlush", (void*)alFlush},
+
+    // ── Bink video audio: SDL3 stream backend ───────────────────────────────
+    {"CS_Stream_Create", (void*)near_bink_cs_stream_create},
+    {"CS_Stream_Play",   (void*)near_bink_cs_stream_play},
+    {"CS_Stream_Stop",   (void*)near_bink_cs_stream_stop},
+    {"CS_Stream_Close",  (void*)near_bink_cs_stream_close},
+    {"CS_Update",        (void*)near_bink_cs_update},
+
     // ── zlib (linked; games decompress their own assets with it) ───────────
     {"inflate",         (void*)inflate},
     {"inflateEnd",      (void*)inflateEnd},

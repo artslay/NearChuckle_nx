@@ -60,7 +60,6 @@ struct Source {
     ALint state=AL_INITIAL;
     bool looping=false;
     bool relative=false;
-    bool play_requested=false;
     float gain=1.0f, pitch=1.0f;
     float pos[3]={0,0,0};
     float ref=1.0f, maxdist=1000000.0f, rolloff=1.0f, mingain=0.0f, maxgain=1.0f;
@@ -489,7 +488,6 @@ void alDeleteSources(ALsizei n,const ALuint* ids) {
     mutexLock(&g_audio.lock);
     for(ALsizei i=0;i<n;i++) if(Source* s=getSource(ids[i])) {
         resetSource(*s);
-        s->play_requested=false;
         s->used=false;
     }
     mutexUnlock(&g_audio.lock);
@@ -499,20 +497,13 @@ void alSourcePlay(ALuint id){
     mutexLock(&g_audio.lock);
     Source*s=getSource(id);
     if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
-
-    // CrySoundSystem's Bink stream path may call alSourcePlay() before the
-    // first streaming buffer has been queued. Keep the play request pending
-    // instead of rejecting it; alSourceQueueBuffers() will start the source
-    // as soon as the first buffer arrives.
-    s->play_requested=true;
-    if(!s->queue.empty())
-        s->state=AL_PLAYING;
-
+    if(s->queue.empty()){mutexUnlock(&g_audio.lock);setError(AL_INVALID_OPERATION);return;}
+    s->state=AL_PLAYING;
     if(g_play_log_count<16) {
-        compatLogFmt("AUDIO: alSourcePlay[%u] source=%u queued=%u looping=%d gain=%.3f pitch=%.3f pending=%d",
+        compatLogFmt("AUDIO: alSourcePlay[%u] source=%u queued=%u looping=%d gain=%.3f pitch=%.3f",
                      g_play_log_count, static_cast<unsigned>(id),
                      static_cast<unsigned>(s->queue.size()), s->looping ? 1 : 0,
-                     s->gain, s->pitch, s->queue.empty() ? 1 : 0);
+                     s->gain, s->pitch);
         ++g_play_log_count;
     }
     mutexUnlock(&g_audio.lock);
@@ -529,7 +520,6 @@ void alSourceStop(ALuint id){
     Source*s=getSource(id);
     if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
     s->state=AL_STOPPED;s->current=0;s->processed=0;s->sample_pos=0;
-    s->play_requested=false;
     mutexUnlock(&g_audio.lock);
 }
 void alSourceRewind(ALuint id){
@@ -595,15 +585,6 @@ void alSourceQueueBuffers(ALuint id,ALsizei n,const ALuint*v){
     for(ALsizei i=0;i<n;i++){
         if(!getBuffer(v[i])){setError(AL_INVALID_NAME);break;}
         s->queue.push_back(v[i]);
-    }
-
-    if(s->play_requested && !s->queue.empty() && s->state != AL_PAUSED) {
-        if(s->state != AL_PLAYING && g_play_log_count < 16) {
-            compatLogFmt("AUDIO: deferred stream start source=%u queued=%u",
-                         static_cast<unsigned>(id),
-                         static_cast<unsigned>(s->queue.size()));
-        }
-        s->state=AL_PLAYING;
     }
 
     if(g_queue_log_count<16) {
