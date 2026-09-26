@@ -974,6 +974,27 @@ extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile) {
 
 namespace {
 
+static volatile bool g_farcry_config_dirty = false;
+static volatile bool g_farcry_config_save_in_progress = false;
+static volatile bool g_farcry_config_persistence_armed = false;
+static volatile uint64_t g_farcry_config_dirty_tick = 0;
+
+static bool compatIsFarCryPersistentGraphicsCVar(const char* name) {
+    if (!name || !*name)
+        return false;
+
+    // CryEngine's graphics/system settings are predominantly r_* and sys_*.
+    // Keep game_fov and the UI background-video switch explicit because they
+    // are also exposed through the graphics/options screens.
+    if (std::strncmp(name, "r_", 2) == 0 ||
+        std::strncmp(name, "sys_", 4) == 0 ||
+        std::strncmp(name, "e_", 2) == 0 ||
+        std::strncmp(name, "game_", 5) == 0)
+        return true;
+
+    return std::strcmp(name, "ui_BackGroundVideo") == 0;
+}
+
 static bool compatReadFarCryBackgroundVideoConfig(
     const char* profile, int& outValue) {
     outValue = -1;
@@ -996,7 +1017,7 @@ static bool compatReadFarCryBackgroundVideoConfig(
         char key[128] = {};
         char value[64] = {};
         if (std::sscanf(
-                line, " %127[^= ] = \"%63[01]\"", key, value) == 2 &&
+                line, " %127[^= ] = "%63[01]"", key, value) == 2 &&
             std::strcmp(key, "ui_BackGroundVideo") == 0) {
             outValue = (value[0] == '0') ? 0 : 1;
             std::fclose(f);
@@ -1068,7 +1089,7 @@ struct FarCryBackgroundVideoVarSink {
             return true;
 
         const char* name = getName(var);
-        if (!name || std::strcmp(name, "ui_BackGroundVideo") != 0)
+        if (!name)
             return true;
 
         using GetStringFn = char* (*)(void*);
@@ -1082,7 +1103,8 @@ struct FarCryBackgroundVideoVarSink {
         // Set(default) during CreateVariable(). This is the exact point where
         // the original engine would have consumed the saved script/config
         // value before applying default "1".
-        if (current && current[0] == '\0' &&
+        if (std::strcmp(name, "ui_BackGroundVideo") == 0 &&
+            current && current[0] == ' ' &&
             std::strcmp(newValue, "1") == 0) {
             void* system = nullptr;
             void* console = nullptr;
@@ -1123,6 +1145,18 @@ struct FarCryBackgroundVideoVarSink {
             }
         }
 
+        // The CryEngine interface only exposes an OnBeforeVarChange callback.
+        // Mark a changed, already-initialized graphics CVar and persist it from
+        // the normal Switch poll, after the CVar setter has completed.
+        if (!g_farcry_config_save_in_progress &&
+            g_farcry_config_persistence_armed &&
+            current && current[0] != ' ' &&
+            std::strcmp(current, newValue) != 0 &&
+            compatIsFarCryPersistentGraphicsCVar(name)) {
+            g_farcry_config_dirty = true;
+            g_farcry_config_dirty_tick = armGetSystemTick();
+        }
+
         initialized = true;
         return true;
     }
@@ -1153,11 +1187,17 @@ static bool compatInstallFarCryBackgroundVideoSink() {
 
     addSink(console, &g_bg_video_sink);
     g_bg_video_sink_installed = true;
-    compatLog("PROFILE CVar: ui_BackGroundVideo config sink installed");
+    compatLog("PROFILE CVar: ui_BackGroundVideo config/persistence sink installed");
     return true;
 }
 
 } // namespace
+
+extern "C" void compatArmFarCryConfigurationPersistence() {
+    g_farcry_config_persistence_armed = true;
+    g_farcry_config_dirty = false;
+    g_farcry_config_dirty_tick = 0;
+}
 
 extern "C" void compatEnsureFarCryBackgroundVideoSink() {
     (void)compatInstallFarCryBackgroundVideoSink();
@@ -1168,9 +1208,6 @@ extern "C" bool compatSaveFarCryConfiguration() {
     // preserves the engine's own serialization rules:
     //   selected profile -> <profile>_system.cfg / <profile>_game.cfg
     //   root system.cfg/game.cfg -> bootstrap/current root state
-    //
-    // This is intentionally callable only from the deferred Switch poll,
-    // never from fopen/open/Lua callbacks.
     LoadedSo* sysSo = nullptr;
     for (LoadedSo* so : g_loaded_sos) {
         if (!so)
@@ -1203,13 +1240,38 @@ extern "C" bool compatSaveFarCryConfiguration() {
     if (!saveConfiguration)
         return false;
 
+    g_farcry_config_save_in_progress = true;
     compatLog("PROFILE SAVE: calling real CSystem::SaveConfiguration()");
     saveConfiguration(system);
     compatLog("PROFILE SAVE: real CSystem::SaveConfiguration() returned");
+    g_farcry_config_save_in_progress = false;
     return true;
 }
 
-// ─── Global symbol resolver ───────────────────────────────────────────────────
+extern "C" void compatFlushFarCryConfigurationIfDirty() {
+    if (!g_farcry_config_persistence_armed ||
+        !g_farcry_config_dirty ||
+        g_farcry_config_save_in_progress)
+        return;
+
+    const u64 now = armGetSystemTick();
+    const u64 freq = armGetSystemTickFreq();
+    const u64 delay = freq ? (freq / 5) : 0; // 200 ms debounce.
+    if (delay && now - g_farcry_config_dirty_tick < delay)
+        return;
+
+    g_farcry_config_dirty = false;
+    if (!compatSaveFarCryConfiguration()) {
+        g_farcry_config_dirty = true;
+        g_farcry_config_dirty_tick = now;
+        compatLog("PROFILE SAVE: deferred graphics save failed");
+        return;
+    }
+
+    compatLog("PROFILE SAVE: deferred graphics settings persisted");
+}
+
+// ─── Global symbol resolver ───────────────────────────────────────────────────// ─── Global symbol resolver ───────────────────────────────────────────────────
 // Checks our shim table FIRST so Switch-compatible implementations always win
 // over any Bionic copies embedded in libapplovin.so / libquack.so.
 // Allocator entry points are worth saying out loud. sh_free counted 10 calls
