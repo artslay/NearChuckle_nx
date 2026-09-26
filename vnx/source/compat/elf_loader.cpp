@@ -915,7 +915,7 @@ extern "C" bool compatGetFarCryProfile(char* out, size_t outSize) {
 
     using GetIConsoleFn = void* (*)(void*);
     auto getIConsole =
-        reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
+        reinterpret_cast<GetIConsoleFn>((*systemVtable)[28]);
     if (!getIConsole)
         return false;
 
