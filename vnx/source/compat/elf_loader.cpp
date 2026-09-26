@@ -2474,7 +2474,7 @@ static bool patchFarCryCompressedSaveFile(LoadedSo* so, uint8_t* stage_base,
         "CSystem::GetCompressedFileSize");
 
     const bool readFile = patchEntry(
-        "_ZN7CSystem19ReadCompressedFileEPcPvj",
+        "_ZN7CSystem22ReadCompressedFileEPcPvj",
         reinterpret_cast<void*>(&compatGuestReadCompressedFile),
         "CSystem::ReadCompressedFile");
 
