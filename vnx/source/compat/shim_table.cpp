@@ -920,11 +920,9 @@ static void ensureProfileCreateDirectories(const std::string& profile) {
         return;
 
     const std::string profileDir = "Profiles/Player/" + profile;
-    const std::string saveDir = profileDir + "/savedgames";
     ::mkdir("Profiles", 0755);
     ::mkdir("Profiles/Player", 0755);
     ::mkdir(profileDir.c_str(), 0755);
-    ::mkdir(saveDir.c_str(), 0755);
 }
 
 static int stub_fstat64(int fd, void* out) {
