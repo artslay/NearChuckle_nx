@@ -886,10 +886,11 @@ static bool getDirectProfileName(const std::string& path,
 
     const std::string lower = asciiLower(normalizedDir);
     const std::string prefix = "profiles/player/";
-    if (lower.rfind(prefix, 0) != 0)
+    const size_t marker = lower.rfind(prefix);
+    if (marker == std::string::npos)
         return false;
 
-    const size_t start = prefix.size();
+    const size_t start = marker + prefix.size();
     if (start >= normalizedDir.size())
         return false;
 
@@ -4149,6 +4150,17 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         }
     }
 
+    // A profile directory can exist before its two root config files. The
+    // native CryEngine profile loader expects both <name>_system.cfg and
+    // <name>_game.cfg, so repair that pair before falling through to PAK lookup.
+    if (!f && !writeMode && profileIo) {
+        if (ensureProfileConfigPairForPath(ioPath)) {
+            f = fopen(ioPath, mode);
+            if (f)
+                openedPath = ioPath ? ioPath : "";
+        }
+    }
+
     if (!f && !writeMode) {
         FILE* pakFile = tryOpenFromPaks(ioPath, mode);
         if (pakFile) {
@@ -7077,6 +7089,32 @@ static struct dirent* stub_readdir(DIR* dir) {
         unsigned& count = g_readdirCounts[dir];
         ++count;
 
+        const std::string enumDir = asciiLower(it->second);
+        std::string enumDirNorm = enumDir;
+        while (enumDirNorm.size() > 1 && enumDirNorm.back() == '/')
+            enumDirNorm.pop_back();
+        const bool profileListDir =
+            enumDirNorm == "profiles/player" ||
+            (enumDirNorm.size() > std::strlen("/profiles/player") &&
+             enumDirNorm.compare(enumDirNorm.size() - std::strlen("/profiles/player"),
+                                 std::strlen("/profiles/player"),
+                                 "/profiles/player") == 0);
+
+        // ScanDirectory("profiles/player", SCANDIR_SUBDIRS) is what the
+        // original menu uses to obtain profile names. A directory by itself
+        // is not a complete profile: the following LoadConfiguration call
+        // needs <name>_system.cfg and <name>_game.cfg at the same level.
+        if (profileListDir && compat.d_type == DT_DIR &&
+            compat.d_name[0] != '\0' &&
+            std::strcmp(compat.d_name, ".") != 0 &&
+            std::strcmp(compat.d_name, "..") != 0) {
+            std::string profileDir = it->second;
+            if (profileDir.empty() || profileDir.back() != '/')
+                profileDir += '/';
+            profileDir += compat.d_name;
+            (void)ensureProfileConfigPairForDirectory(profileDir);
+        }
+
         if (isProfileFsPath(it->second))
             compatLogFmt("PROFILE ENUM: %s -> %s type=%u",
                          it->second.c_str(), compat.d_name,
@@ -7139,6 +7177,28 @@ static struct dirent* stub_readdir64(DIR* dir) {
 
         unsigned& count = g_readdirCounts[dir];
         ++count;
+
+        const std::string enumDir = asciiLower(it->second);
+        std::string enumDirNorm = enumDir;
+        while (enumDirNorm.size() > 1 && enumDirNorm.back() == '/')
+            enumDirNorm.pop_back();
+        const bool profileListDir =
+            enumDirNorm == "profiles/player" ||
+            (enumDirNorm.size() > std::strlen("/profiles/player") &&
+             enumDirNorm.compare(enumDirNorm.size() - std::strlen("/profiles/player"),
+                                 std::strlen("/profiles/player"),
+                                 "/profiles/player") == 0);
+        if (profileListDir && compat.d_type == DT_DIR &&
+            compat.d_name[0] != '\0' &&
+            std::strcmp(compat.d_name, ".") != 0 &&
+            std::strcmp(compat.d_name, "..") != 0) {
+            std::string profileDir = it->second;
+            if (profileDir.empty() || profileDir.back() != '/')
+                profileDir += '/';
+            profileDir += compat.d_name;
+            (void)ensureProfileConfigPairForDirectory(profileDir);
+        }
+
         return reinterpret_cast<struct dirent*>(&compat);
     }
     return ent;
