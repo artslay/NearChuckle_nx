@@ -1,4 +1,5 @@
 #include "compat/loader.h"
+#include "config.h"
 #include <switch.h>
 #include <cstring>
 #include <cstdio>
@@ -979,49 +980,73 @@ extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile) {
 static bool compatReadFarCryBackgroundVideoConfig(const char* profile,
                                                int& outValue) {
     outValue = -1;
-    if (!profile || !*profile)
-        return false;
 
-    char path[512];
-    const int pathLen = std::snprintf(
-        path, sizeof(path),
-        "Profiles/Player/%s_system.cfg", profile);
-    if (pathLen <= 0 || static_cast<size_t>(pathLen) >= sizeof(path))
-        return false;
+    auto readConfigFile = [&](const char* path) -> bool {
+        if (!path || !*path)
+            return false;
 
-    FILE* f = std::fopen(path, "rb");
-    if (!f)
-        return false;
+        FILE* f = std::fopen(path, "rb");
+        if (!f)
+            return false;
 
-    char line[512];
-    while (std::fgets(line, sizeof(line), f)) {
-        char key[128] = {};
-        char value[64] = {};
-        if (std::sscanf(line, " %127[^= ] = \"%63[01]\"", key, value) == 2) {
-            if (std::strcmp(key, "ui_BackGroundVideo") == 0) {
+        char line[512];
+        while (std::fgets(line, sizeof(line), f)) {
+            char key[128] = {};
+            char value[64] = {};
+            if (std::sscanf(line, " %127[^= ] = "%63[01]"",
+                            key, value) == 2 &&
+                std::strcmp(key, "ui_BackGroundVideo") == 0) {
                 outValue = (value[0] == '0') ? 0 : 1;
                 std::fclose(f);
                 return true;
             }
         }
+
+        std::fclose(f);
+        return false;
+    };
+
+    // Original Far Cry keeps the currently selected profile's settings
+    // mirrored into the root system.cfg. Read that file first, exactly as the
+    // normal engine configuration path does.
+    char rootPath[512];
+    const char* root = config.data_root[0]
+        ? config.data_root
+        : "/switch/NearChuckle_nx/game";
+    const int rootLen = std::snprintf(
+        rootPath, sizeof(rootPath), "%s/system.cfg", root);
+    if (rootLen > 0 && static_cast<size_t>(rootLen) < sizeof(rootPath) &&
+        readConfigFile(rootPath)) {
+        return true;
     }
 
-    std::fclose(f);
-    return false;
-}
+    // Fallback for a profile that has been created but not yet mirrored to the
+    // root configuration.
+    if (!profile || !*profile)
+        return false;
 
+    char profilePath[512];
+    const int profileLen = std::snprintf(
+        profilePath, sizeof(profilePath),
+        "%s/Profiles/Player/%s_system.cfg", root, profile);
+    if (profileLen <= 0 ||
+        static_cast<size_t>(profileLen) >= sizeof(profilePath))
+        return false;
+
+    return readConfigFile(profilePath);
+}
 namespace {
 
 static volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
 static void* g_near_video_panel_start = nullptr;
 
 static int compatVideoPanelPlayGuard(void* self) {
-    // Original CryEngine treats ui_BackGroundVideo as a normal
-    // VF_DUMPTODISK console variable. The persisted profile config is the
-    // source of truth for this compatibility guard. Nothing is written or
-    // changed here.
+    // Original CryEngine uses ui_BackGroundVideo as a normal CVar whose
+    // persisted value comes from the system/profile configuration. The guard
+    // only reads that persisted value; it never modifies the CVar or config.
     int configuredValue = 1; // original CVar default
 
+    const char* profile = nullptr;
     LoadedSo* sysSo = nullptr;
     for (LoadedSo* so : g_loaded_sos) {
         if (!so)
@@ -1065,17 +1090,8 @@ static int compatVideoPanelPlayGuard(void* self) {
                                     auto getProfileString =
                                         reinterpret_cast<GetStringFn>(
                                             (*profileVtable)[3]);
-                                    const char* profile =
-                                        getProfileString
-                                            ? getProfileString(profileCvar)
-                                            : nullptr;
-                                    int savedValue = -1;
-                                    if (profile && *profile &&
-                                        compatReadFarCryBackgroundVideoConfig(
-                                            profile, savedValue) &&
-                                        savedValue >= 0) {
-                                        configuredValue = savedValue;
-                                    }
+                                    if (getProfileString)
+                                        profile = getProfileString(profileCvar);
                                 }
                             }
                         }
@@ -1084,6 +1100,11 @@ static int compatVideoPanelPlayGuard(void* self) {
             }
         }
     }
+
+    int savedValue = -1;
+    if (compatReadFarCryBackgroundVideoConfig(profile, savedValue) &&
+        savedValue >= 0)
+        configuredValue = savedValue;
 
     if (configuredValue == 0)
         return 0;
