@@ -1101,10 +1101,10 @@ extern "C" void compatRestoreFarCryBackgroundVideoCVar() {
 }
 
 static int compatVideoPanelPlayGuard(void* self) {
-    // The CVar has already been restored from the selected profile by
-    // compatRestoreFarCryBackgroundVideoCVar(). Play only consults the current
-    // CVar value; it never changes the CVar or any config file.
-    int enabled = 1;
+    // ui_BackGroundVideo is a normal CryEngine CVar. Its value is restored
+    // from the selected profile when the UI CVar is recreated. Play only
+    // consults that current CVar; it does not change configuration.
+    int enabled = 1; // original CVar default
 
     void* system = nullptr;
     void* console = nullptr;
@@ -1132,25 +1132,6 @@ static int compatVideoPanelPlayGuard(void* self) {
 
     if (!enabled)
         return 0;
-
-
-namespace {
-
-static volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
-static void* g_near_video_panel_start = nullptr;
-
-static int compatVideoPanelPlayGuard(void* self) {
-    // Original Far Cry uses ui_BackGroundVideo as a normal VF_DUMPTODISK
-    // CVar. The active value is restored by the normal configuration path.
-    // On Switch, this compatibility guard only reads that persisted config;
-    // it never changes the CVar or any config file.
-    int configuredValue = 1; // original CVar default
-
-    int savedValue = -1;
-    if (compatReadFarCryBackgroundVideoConfig(nullptr, savedValue) &&
-        savedValue >= 0)
-        configuredValue = savedValue;
-
 
     const uint32_t offset = g_near_video_panel_player_offset;
     void* startFn = g_near_video_panel_start;
