@@ -761,6 +761,102 @@ static void indexLoadedSoSymbols(LoadedSo* so) {
     }
 }
 
+extern "C" bool compatActivateFarCryProfile(const char* profile) {
+    if (!profile || !*profile)
+        return false;
+
+    LoadedSo* gameSo = nullptr;
+    for (LoadedSo* so : g_loaded_sos) {
+        if (!so)
+            continue;
+        const char* p = so->path.c_str();
+        const char* base = std::strrchr(p, '/');
+        base = base ? base + 1 : p;
+        if (std::strcmp(base, "libCryGame.so") == 0) {
+            gameSo = so;
+            break;
+        }
+    }
+
+    if (!gameSo) {
+        compatLog("PROFILE CVAR: libCryGame.so not loaded yet");
+        return false;
+    }
+
+    // rohit-n/NearChuckle's Far Cry game module defines a global GetISystem().
+    // Use the guest function and then the exact virtual interface order from
+    // CryCommon: ISystem::GetIConsole() is slot 24, IConsole::GetCVar() slot
+    // 20, and ICVar::Set(const char*) slot 4.
+    using GetISystemFn = void* (*)();
+    GetISystemFn getISystem =
+        reinterpret_cast<GetISystemFn>(gameSo->findSym("_Z10GetISystemv"));
+    if (!getISystem) {
+        compatLog("PROFILE CVAR: GetISystem symbol not found");
+        return false;
+    }
+
+    void* system = getISystem();
+    if (!system) {
+        compatLog("PROFILE CVAR: GetISystem returned NULL");
+        return false;
+    }
+
+    void*** systemVtable = reinterpret_cast<void***>(system);
+    if (!systemVtable || !*systemVtable) {
+        compatLog("PROFILE CVAR: invalid ISystem vtable");
+        return false;
+    }
+
+    using GetIConsoleFn = void* (*)(void*);
+    auto getIConsole =
+        reinterpret_cast<GetIConsoleFn>((*systemVtable)[24]);
+    void* console = getIConsole(system);
+    if (!console) {
+        compatLog("PROFILE CVAR: GetIConsole returned NULL");
+        return false;
+    }
+
+    void*** consoleVtable = reinterpret_cast<void***>(console);
+    if (!consoleVtable || !*consoleVtable) {
+        compatLog("PROFILE CVAR: invalid IConsole vtable");
+        return false;
+    }
+
+    using GetCVarFn = void* (*)(void*, const char*, bool);
+    auto getCVar =
+        reinterpret_cast<GetCVarFn>((*consoleVtable)[20]);
+    void* cvar = getCVar(console, "g_playerprofile", true);
+    if (!cvar) {
+        compatLog("PROFILE CVAR: g_playerprofile not found");
+        return false;
+    }
+
+    void*** cvarVtable = reinterpret_cast<void***>(cvar);
+    if (!cvarVtable || !*cvarVtable) {
+        compatLog("PROFILE CVAR: invalid ICVar vtable");
+        return false;
+    }
+
+    using GetStringFn = char* (*)(void*);
+    using SetStringFn = void (*)(void*, const char*);
+    auto getString =
+        reinterpret_cast<GetStringFn>((*cvarVtable)[3]);
+    auto setString =
+        reinterpret_cast<SetStringFn>((*cvarVtable)[4]);
+
+    const char* before = getString(cvar);
+    compatLogFmt("PROFILE CVAR: before=%s set=%s",
+                 before ? before : "(null)", profile);
+
+    setString(cvar, profile);
+
+    const char* after = getString(cvar);
+    const bool ok = after && std::strcmp(after, profile) == 0;
+    compatLogFmt("PROFILE CVAR: after=%s result=%s",
+                 after ? after : "(null)", ok ? "OK" : "FAIL");
+    return ok;
+}
+
 // ─── Global symbol resolver ───────────────────────────────────────────────────
 // Checks our shim table FIRST so Switch-compatible implementations always win
 // over any Bionic copies embedded in libapplovin.so / libquack.so.
