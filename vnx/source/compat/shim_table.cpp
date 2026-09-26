@@ -4074,9 +4074,6 @@ static int stub_open(const char* path, int flags, ...) {
             ? lowerPath
             : lowerPath.substr(baseSlash + 1);
 
-    const bool openWrite =
-        (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
-
     // The guest requested this exact profile path. Do not infer or redirect
     // profile selection from filesystem accesses.
     const std::string ioPathStorage = normalizedPath;
@@ -4151,7 +4148,6 @@ static int stub_open(const char* path, int flags, ...) {
         if (pakFd >= 0) {
             if (videoIo)
                 g_near_video_open_failed = 0;
-            noteExplicitProfileOpen();
             return pakFd;
         }
     }
