@@ -4128,6 +4128,13 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         compatLogFmt("PROFILE FOPEN: %s mode=%s",
                      ioPath, mode ? mode : "?");
 
+    // LoadConfiguration(<name>) reaches this read even when <name> has never
+    // been created. Remember the requested profile for the deferred CVar update,
+    // but do not create any files here: the menu must still treat the missing
+    // config as a new profile.
+    if (profileIo && !writeMode)
+        queueFarCryProfileSelection(normalizedPath);
+
     if (isSyntheticAlphaGradientDds(ioPath)) {
         if (FILE* synthetic = makeSyntheticAlphaGradientDds())
             return synthetic;
@@ -4230,10 +4237,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     }
 
     setvbuf(f, nullptr, _IOFBF, 64 * 1024);
-
-    if (f && !writeMode && profileIo) {
-        queueFarCryProfileSelection(openedPath);
-    }
 
     if (f && writeMode && profileIo) {
         compatLogFmt("PROFILE FOPEN OK: %s mode=%s",
