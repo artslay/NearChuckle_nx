@@ -19,6 +19,7 @@
 // Android Java frontend.
 extern void* jniFindRegisteredNative(const char* name, int occurrence);
 extern void compatProcessPendingFarCryProfile();
+extern "C" void compatMarkFarCryMainLoopReady();
 
 static CompatLayer g_compat = {};
 static Mutex g_log_lock;
@@ -591,6 +592,9 @@ void compatPollSwitchInput() {
 
 void compatLog(const char* msg) {
     const bool main_loop = is_main_loop_marker(msg);
+    if (main_loop)
+        compatMarkFarCryMainLoopReady();
+
     const bool suppress_pak_success = suppressSuccessfulPakDiag(msg);
     const bool suppress_noise = suppressCompatNoise(msg);
     const bool suppress_gl_texture_diag =
