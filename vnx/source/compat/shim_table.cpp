@@ -4022,6 +4022,90 @@ static bool isCriticalCafDiagPath(const char* path) {
            normalized.find("objects/characters/animations/human_male/awalkback_loop.caf") != std::string::npos;
 }
 
+static bool compatIsSaveGameFilePath(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string normalized(path);
+    for (char& ch : normalized) {
+        if (ch == '\\')
+            ch = '/';
+        else
+            ch = (char)std::tolower((unsigned char)ch);
+    }
+
+    return normalized.find("/savegames/") != std::string::npos &&
+           normalized.size() >= 4 &&
+           normalized.compare(normalized.size() - 4, 4, ".sav") == 0;
+}
+
+extern "C" unsigned compatGuestGetCompressedFileSize(
+    void* self, char* filename) {
+    (void)self;
+
+    if (!compatIsSaveGameFilePath(filename))
+        return 0;
+
+    const std::string normalized = normalizeSwitchFsPath(filename);
+    FILE* file = std::fopen(normalized.c_str(), "rb");
+    if (!file)
+        return 0;
+
+    uint32_t bitlen = 0;
+    const size_t got = std::fread(&bitlen, sizeof(bitlen), 1, file);
+    std::fclose(file);
+
+    if (got != 1)
+        return 0;
+
+    compatLogFmt("FARCRY SAVE READ SIZE: %s bitlen=%u",
+                 filename, (unsigned)bitlen);
+    return (unsigned)std::min<uint32_t>(bitlen, UINT_MAX);
+}
+
+extern "C" unsigned compatGuestReadCompressedFile(
+    void* self, char* filename, void* data, unsigned maxbitlen) {
+    (void)self;
+
+    if (!compatIsSaveGameFilePath(filename) || !data)
+        return 0;
+
+    const std::string normalized = normalizeSwitchFsPath(filename);
+    FILE* file = std::fopen(normalized.c_str(), "rb");
+    if (!file)
+        return 0;
+
+    uint32_t bitlen = 0;
+    if (std::fread(&bitlen, sizeof(bitlen), 1, file) != 1) {
+        std::fclose(file);
+        return 0;
+    }
+
+    if (bitlen > maxbitlen) {
+        compatLogFmt(
+            "FARCRY SAVE READ: buffer too small path=%s bitlen=%u maxbitlen=%u",
+            filename, (unsigned)bitlen, (unsigned)maxbitlen);
+        std::fclose(file);
+        return 0;
+    }
+
+    const size_t bytes = (static_cast<size_t>(bitlen) + 7u) / 8u;
+    const size_t read = std::fread(data, 1, bytes, file);
+    std::fclose(file);
+
+    if (read != bytes) {
+        compatLogFmt(
+            "FARCRY SAVE READ: short read path=%s bitlen=%u bytes=%zu read=%zu",
+            filename, (unsigned)bitlen, bytes, read);
+        return 0;
+    }
+
+    compatLogFmt("FARCRY SAVE READ: %s bitlen=%u bytes=%zu",
+                 filename, (unsigned)bitlen, bytes);
+    return (unsigned)bitlen;
+}
+
+
 extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2) {
     static unsigned g_cafDiag = 0;
     static unsigned g_cafMissDiag = 0;
