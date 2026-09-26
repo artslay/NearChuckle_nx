@@ -1118,6 +1118,24 @@ static void* g_bg_video_last_cvar = nullptr;
 static bool g_bg_video_sink_installed = false;
 static uint64_t g_bg_video_disabled_tick = 0;
 
+extern "C" int compatVideoPanelPlayGuard(void* self) {
+    // Background video is controlled by the persisted Switch-side CVar state.
+    // Do the check at the actual CUIVideoPanel::Play() entry so a later UI
+    // reload or Lua script cannot start Bink behind our back.
+    if (g_bg_video_value == 0)
+        return 0;
+
+    const uint32_t offset = g_near_video_panel_player_offset;
+    void* startFn = g_near_video_panel_start;
+    if (!self || offset == 0xffffffffu || !startFn)
+        return 0;
+
+    void* player = reinterpret_cast<uint8_t*>(self) + offset;
+    using StartFn = void (*)(void*);
+    reinterpret_cast<StartFn>(startFn)(player);
+    return 1;
+}
+
 struct FarCryBackgroundVideoVarSink {
     virtual bool OnBeforeVarChange(void* var, const char* newValue) {
         if (!var || !newValue || !g_bg_video_initialized)
@@ -1574,24 +1592,7 @@ extern "C" volatile int g_near_video_open_failed;
 extern "C" volatile uint32_t g_near_video_panel_finished_offset;
 extern "C" volatile uint32_t g_near_video_panel_player_offset = 0xffffffffu;
 extern "C" void* g_near_video_panel_start = nullptr;
-
-extern "C" int compatVideoPanelPlayGuard(void* self) {
-    // Background video is controlled by the persisted Switch-side CVar state.
-    // Do the check at the actual CUIVideoPanel::Play() entry so a later UI
-    // reload or Lua script cannot start Bink behind our back.
-    if (g_bg_video_value == 0)
-        return 0;
-
-    const uint32_t offset = g_near_video_panel_player_offset;
-    void* startFn = g_near_video_panel_start;
-    if (!self || offset == 0xffffffffu || !startFn)
-        return 0;
-
-    void* player = reinterpret_cast<uint8_t*>(self) + offset;
-    using StartFn = void (*)(void*);
-    reinterpret_cast<StartFn>(startFn)(player);
-    return 1;
-}
+extern "C" int compatVideoPanelPlayGuard(void* self);
 
 static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
                                       uint64_t min_vaddr, size_t alloc_size) {
