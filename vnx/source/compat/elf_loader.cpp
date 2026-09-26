@@ -1254,16 +1254,13 @@ extern "C" void compatFlushFarCryConfigurationIfDirty() {
         g_farcry_config_save_in_progress)
         return;
 
-    const u64 now = armGetSystemTick();
-    const u64 freq = armGetSystemTickFreq();
-    const u64 delay = freq ? (freq / 5) : 0; // 200 ms debounce.
-    if (delay && now - g_farcry_config_dirty_tick < delay)
-        return;
-
+    // Save on the next normal Switch poll. There is intentionally no long
+    // debounce: a user can change an option and immediately quit, and the
+    // profile must still contain that latest value before engine teardown.
     g_farcry_config_dirty = false;
     if (!compatSaveFarCryConfiguration()) {
         g_farcry_config_dirty = true;
-        g_farcry_config_dirty_tick = now;
+        g_farcry_config_dirty_tick = armGetSystemTick();
         compatLog("PROFILE SAVE: deferred graphics save failed");
         return;
     }
