@@ -1592,7 +1592,6 @@ LoadedSo* elfDlopen(const char* name) {
 extern "C" int compatVideoPanelIsPlaying(void* self);
 extern "C" volatile int g_near_video_open_failed;
 extern "C" volatile uint32_t g_near_video_panel_finished_offset;
-extern "C" int compatVideoPanelPlayGuard(void* self);
 
 static bool patchVideoPanelIsPlaying(LoadedSo* so, uint8_t* stage_base,
                                       uint64_t min_vaddr, size_t alloc_size) {
