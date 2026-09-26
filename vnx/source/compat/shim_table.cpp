@@ -3832,6 +3832,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
+    const bool profileIo = ioPath && isProfileFsPath(ioPathStorage);
+    if (profileIo)
+        compatLogFmt("PROFILE FOPEN: %s mode=%s",
+                     ioPath, mode ? mode : "?");
 
     if (isSyntheticAlphaGradientDds(ioPath)) {
         if (FILE* synthetic = makeSyntheticAlphaGradientDds())
@@ -6615,10 +6619,7 @@ static struct dirent* stub_readdir(DIR* dir) {
         unsigned& count = g_readdirCounts[dir];
         ++count;
 
-        std::string profileDir = asciiLower(it->second);
-        while (!profileDir.empty() && profileDir.back() == '/')
-            profileDir.pop_back();
-        if (profileDir == "profiles/player")
+        if (isProfileFsPath(it->second))
             compatLogFmt("PROFILE ENUM: %s -> %s type=%u",
                          it->second.c_str(), compat.d_name,
                          (unsigned)compat.d_type);
