@@ -27,6 +27,7 @@ extern "C" bool compatProfileListRecentlyScanned();
 extern "C" bool compatActivateFarCryProfile(const char* profile);
 extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile);
 extern "C" bool compatPersistFarCryProfile(const char* profile);
+extern "C" void compatPollFarCryBackgroundVideoSave();
 
 static CompatLayer g_compat = {};
 static Mutex g_log_lock;
@@ -663,6 +664,7 @@ void compatPollSwitchInput() {
     // Complete the system-config serialization only after that callback has
     // returned, using the real IConsole::DumpCVars() path.
     compatProcessPendingFarCryProfile();
+    compatPollFarCryBackgroundVideoSave();
 }
 
 void compatLog(const char* msg) {
