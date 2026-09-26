@@ -1163,6 +1163,10 @@ static bool compatInstallFarCryBackgroundVideoSink() {
 
 } // namespace
 
+extern "C" void compatEnsureFarCryBackgroundVideoSink() {
+    (void)compatInstallFarCryBackgroundVideoSink();
+}
+
 extern "C" bool compatSaveFarCryConfiguration() {
     // Call the actual non-virtual CSystem::SaveConfiguration() symbol. This
     // preserves the engine's own serialization rules:
