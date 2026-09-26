@@ -52,6 +52,7 @@ extern void compatLogFmt(const char* fmt, ...);
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 extern "C" bool compatActivateFarCryProfile(const char* profile);
+extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile);
 extern "C" bool compatSaveFarCryConfiguration();
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
@@ -1365,13 +1366,30 @@ void compatProcessPendingFarCryProfile() {
     if (!compatActivateFarCryProfile(profile.c_str()))
         return;
 
-    // Mirror the original CSystem::SaveConfiguration() behavior immediately
-    // after a profile switch. The original engine saves both the selected
-    // profile files and the root system.cfg/game.cfg.
-    if (!compatSaveFarCryConfiguration()) {
-        compatLogFmt("PROFILE SAVE: failed after selecting %s",
-                     profile.c_str());
-        return;
+    // Do not save an already-existing profile just because one of its config
+    // files was opened. At startup that would overwrite the profile's stored
+    // values (notably ui_BackGroundVideo=0) with the current defaults before
+    // those values have been loaded. Existing profiles must be loaded first.
+    const std::string profileBase =
+        std::string("Profiles/Player/") + profile + "_";
+    const bool hasSystem = access((profileBase + "system.cfg").c_str(), F_OK) == 0;
+    const bool hasGame = access((profileBase + "game.cfg").c_str(), F_OK) == 0;
+
+    if (hasSystem || hasGame) {
+        if (!compatLoadFarCryProfileConfiguration(profile.c_str())) {
+            compatLogFmt("PROFILE LOAD: failed for %s", profile.c_str());
+        } else {
+            compatLogFmt("PROFILE LOAD: applied %s", profile.c_str());
+        }
+    } else {
+        // A genuinely new profile still needs the engine-generated config
+        // files. Save only in that case, after activation has selected the
+        // correct profile target.
+        if (!compatSaveFarCryConfiguration()) {
+            compatLogFmt("PROFILE SAVE: failed creating %s", profile.c_str());
+            return;
+        }
+        compatLogFmt("PROFILE SAVE: created %s", profile.c_str());
     }
 
     // Keep the selected profile as the active save target for the rest of
