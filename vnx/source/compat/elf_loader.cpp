@@ -14,6 +14,7 @@
 // Log helpers — declared before the exception handler so it can use them.
 extern void compatLog(const char* msg);
 extern void compatLogFmt(const char* fmt, ...);
+extern "C" void compatSetActiveFarCryProfile(const char* profile);
 extern void compatLogFlush();
 extern void compatUiLog(const char* msg);
 extern void compatUiSetPct(int pct);
@@ -858,6 +859,7 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
 
     const char* after = getString(cvar);
     if (after && std::strcmp(after, profile) == 0) {
+        compatSetActiveFarCryProfile(profile);
         compatLogFmt("PROFILE CVAR: after=%s result=OK",
                      after);
         return true;
@@ -882,6 +884,8 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
     const bool ok = after && std::strcmp(after, profile) == 0;
     compatLogFmt("PROFILE CVAR: after=%s result=%s",
                  after ? after : "(null)", ok ? "OK" : "FAIL");
+    if (ok)
+        compatSetActiveFarCryProfile(profile);
     return ok;
 }
 
