@@ -954,52 +954,6 @@ extern "C" bool compatGetFarCryProfile(char* out, size_t outSize) {
     std::snprintf(out, outSize, "%s", value);
     return out[0] != '\0';
 }
-extern "C" bool compatSaveFarCryConfiguration() {
-    // Call the real CrySystem::ISystem::SaveConfiguration(). This is the
-    // engine's authoritative serializer: it writes selected-profile
-    // *_system.cfg via DumpCVars() and *_game.cfg via the action-map/input
-    // serializer, then writes the root bootstrap configuration.
-    LoadedSo* gameSo = nullptr;
-    for (LoadedSo* so : g_loaded_sos) {
-        if (!so)
-            continue;
-        const char* p = so->path.c_str();
-        const char* base = std::strrchr(p, '/');
-        base = base ? base + 1 : p;
-        if (std::strcmp(base, "libCryGame.so") == 0) {
-            gameSo = so;
-            break;
-        }
-    }
-    if (!gameSo)
-        return false;
-
-    using GetISystemFn = void* (*)();
-    auto getISystem =
-        reinterpret_cast<GetISystemFn>(gameSo->findSym("_Z10GetISystemv"));
-    if (!getISystem)
-        return false;
-
-    void* system = getISystem();
-    if (!system)
-        return false;
-
-    void*** systemVtable = reinterpret_cast<void***>(system);
-    if (!systemVtable || !*systemVtable)
-        return false;
-
-    // ISystem::SaveConfiguration() is virtual slot 78 in the Far Cry
-    // ISystem interface used by this port.
-    using SaveConfigurationFn = void (*)(void*);
-    auto saveConfiguration =
-        reinterpret_cast<SaveConfigurationFn>((*systemVtable)[78]);
-    if (!saveConfiguration)
-        return false;
-
-    saveConfiguration(system);
-    return true;
-}
-
 // ─── Global symbol resolver ───────────────────────────────────────────────────
 // Checks our shim table FIRST so Switch-compatible implementations always win
 // over any Bionic copies embedded in libapplovin.so / libquack.so.
