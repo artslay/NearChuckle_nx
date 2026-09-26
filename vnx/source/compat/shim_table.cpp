@@ -871,6 +871,51 @@ static int stub__mkdirat(int dirfd, const char* path, mode_t mode) {
     return stub_mkdirat(dirfd, path, mode);
 }
 
+// The profile UI can probe a new profile's *_system.cfg and then issue the
+// generic save call while g_playerprofile is still "default". Preserve that
+// requested name for the immediately following configuration write.
+static std::string g_pendingProfileCreate;
+
+static bool parseProfileConfigName(const std::string& path,
+                                   const char* suffix,
+                                   std::string& profile) {
+    if (!suffix)
+        return false;
+
+    const std::string lower = asciiLower(path);
+    const std::string suffixLower = asciiLower(suffix);
+    if (lower.size() <= suffixLower.size() ||
+        lower.compare(lower.size() - suffixLower.size(),
+                      suffixLower.size(), suffixLower) != 0)
+        return false;
+
+    const size_t slash = lower.find_last_of('/');
+    const size_t nameStart = (slash == std::string::npos) ? 0 : slash + 1;
+    const size_t suffixStart = lower.size() - suffixLower.size();
+    if (suffixStart <= nameStart)
+        return false;
+
+    profile = path.substr(nameStart, suffixStart - nameStart);
+    return !profile.empty();
+}
+
+static std::string profileConfigPath(const std::string& profile,
+                                     const char* fileName) {
+    return std::string("Profiles/Player/") + profile + "/" + fileName;
+}
+
+static void ensureProfileCreateDirectories(const std::string& profile) {
+    if (profile.empty() || asciiLower(profile) == "default")
+        return;
+
+    const std::string profileDir = "Profiles/Player/" + profile;
+    const std::string saveDir = profileDir + "/savegames";
+    ::mkdir("Profiles", 0755);
+    ::mkdir("Profiles/Player", 0755);
+    ::mkdir(profileDir.c_str(), 0755);
+    ::mkdir(saveDir.c_str(), 0755);
+}
+
 static int stub_fstat64(int fd, void* out) {
     if (!out) {
         errno = EINVAL;
@@ -3833,9 +3878,31 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
     const bool profileIo = ioPath && isProfileFsPath(ioPathStorage);
+    const bool profileWrite =
+        profileIo && mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
     if (profileIo)
         compatLogFmt("PROFILE FOPEN: %s mode=%s",
                      ioPath, mode ? mode : "?");
+
+    std::string redirectedProfilePath;
+    if (profileWrite && !g_pendingProfileCreate.empty()) {
+        std::string target;
+        if (parseProfileConfigName(ioPathStorage, "_system.cfg", target) &&
+            asciiLower(target) == "default") {
+            redirectedProfilePath =
+                profileConfigPath(g_pendingProfileCreate, "system.cfg");
+        } else if (parseProfileConfigName(ioPathStorage, "_game.cfg", target) &&
+                   asciiLower(target) == "default") {
+            redirectedProfilePath =
+                profileConfigPath(g_pendingProfileCreate, "game.cfg");
+        }
+
+        if (!redirectedProfilePath.empty()) {
+            ensureProfileCreateDirectories(g_pendingProfileCreate);
+            compatLogFmt("PROFILE REDIRECT: %s -> %s",
+                         ioPath, redirectedProfilePath.c_str());
+        }
+    }
 
     if (isSyntheticAlphaGradientDds(ioPath)) {
         if (FILE* synthetic = makeSyntheticAlphaGradientDds())
@@ -3850,7 +3917,11 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (mf) { if (videoIo) g_near_video_open_failed = 0; setvbuf(mf, nullptr, _IOFBF, 64 * 1024); return mf; }
     }
 
-    FILE* f = fopen(ioPath, mode);
+    const char* openPath = redirectedProfilePath.empty()
+        ? ioPath
+        : redirectedProfilePath.c_str();
+
+    FILE* f = fopen(openPath, mode);
 
     if (!f && ioPath) {
         std::string resolved;
@@ -3877,6 +3948,16 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     }
 
     if (!f) {
+        if (!profileWrite && profileIo) {
+            std::string probedProfile;
+            if (parseProfileConfigName(ioPathStorage, "_system.cfg", probedProfile) &&
+                asciiLower(probedProfile) != "default") {
+                g_pendingProfileCreate = probedProfile;
+                compatLogFmt("PROFILE PENDING CREATE: %s",
+                             g_pendingProfileCreate.c_str());
+            }
+        }
+
         // Shader-cache files are not language assets, but valid precompiled
         // .cgps/.cgvp/.cgasm entries may be present in the game's Shaders.pak.
         // The renderer can consume them directly through the virtual PAK FILE
@@ -3914,6 +3995,13 @@ static FILE* stub_fopen(const char* path, const char* mode) {
 
     if (!shaderIo && !vpakOwns(f))
         logShaderScriptDiagnostics(f, ioPath);
+
+    if (f && !redirectedProfilePath.empty()) {
+        std::string target;
+        if (parseProfileConfigName(ioPathStorage, "_game.cfg", target) &&
+            asciiLower(target) == "default")
+            g_pendingProfileCreate.clear();
+    }
 
     if (videoIo)
         g_near_video_open_failed = 0;
