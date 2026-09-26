@@ -4060,7 +4060,7 @@ extern "C" unsigned compatGuestGetCompressedFileSize(
 
     compatLogFmt("FARCRY SAVE READ SIZE: %s bitlen=%u",
                  filename, (unsigned)bitlen);
-    return (unsigned)std::min<uint32_t>(bitlen, UINT_MAX);
+    return (unsigned)bitlen;
 }
 
 extern "C" unsigned compatGuestReadCompressedFile(
