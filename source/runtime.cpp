@@ -397,6 +397,13 @@ static bool g_switch_touch_initialized = false;
 static bool g_switch_touch_down = false;
 static PadState g_switch_pad = {};
 static u64 g_switch_input_previous = 0;
+
+// Loading a selected .sav is initiated by the same UI click/key event that
+// opened the load operation. The guest can finish loading after the physical
+// button state has already crossed a frame boundary; without suppressing that
+// carried event, the post-load UI can receive another "Switch" and return to
+// the menu. Suppress Switch input until every controller/touch button is up.
+static bool g_farcry_save_load_input_suppressed = false;
 static float g_switch_touch_x = 0.0f;
 static float g_switch_touch_y = 0.0f;
 static float g_switch_cursor_virtual_x = 400.0f;
@@ -661,7 +668,48 @@ static void pollSwitchInputInternal() {
 
 } // namespace
 
+void compatNotifyFarCrySaveGameLoadStarted() {
+    g_farcry_save_load_input_suppressed = true;
+    g_switch_input_previous = padGetButtons(&g_switch_pad);
+    g_switch_touch_down = false;
+    compatLog("SAVE LOAD INPUT: suppressing Switch input until controls are released");
+}
+
 void compatPollSwitchInput() {
+    if (g_farcry_save_load_input_suppressed) {
+        // Keep the internal edge detector synchronized while the game is
+        // loading, but do not deliver any controller/touch transitions to SDL.
+        // This prevents the original load-button event from becoming a second
+        // menu "Switch" immediately after CXGame::LoadFromStream() returns.
+        switchInputResolveCallbacks();
+        if (!g_switch_pad_initialized) {
+            padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+            padInitializeDefault(&g_switch_pad);
+            g_switch_pad_initialized = true;
+        }
+
+        padUpdate(&g_switch_pad);
+        const u64 held = padGetButtons(&g_switch_pad);
+        g_switch_input_previous = held;
+
+        if (g_switch_touch_initialized) {
+            touchPosition touch = {};
+            const u32 count = hidTouchRead(&touch, 1);
+            if (count == 0)
+                g_switch_touch_down = false;
+        }
+
+        if (held == 0 && !g_switch_touch_down) {
+            g_farcry_save_load_input_suppressed = false;
+            compatLog("SAVE LOAD INPUT: controls released; input restored");
+        }
+
+        compatProcessPendingFarCryProfile();
+        compatEnsureFarCryBackgroundVideoSink();
+        compatFlushFarCryConfigurationIfDirty();
+        return;
+    }
+
     pollSwitchInputInternal();
 
     // Profile creation is initiated from the guest filesystem callback.
