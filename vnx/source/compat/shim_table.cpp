@@ -48,6 +48,7 @@ signed char near_bink_cs_stream_close(CS_STREAM* stream);
 void near_bink_cs_update(void);
 }
 extern void compatPakLog(const char* fmt, ...);
+extern void compatLogFmt(const char* fmt, ...);
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 extern "C" bool compatActivateFarCryProfile(const char* profile);
