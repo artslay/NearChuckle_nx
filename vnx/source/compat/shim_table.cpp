@@ -51,6 +51,7 @@ extern void compatPakLog(const char* fmt, ...);
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 extern "C" bool compatActivateFarCryProfile(const char* profile);
+extern "C" bool compatGetFarCryProfile(char* out, size_t outSize);
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
 extern "C" {
@@ -993,6 +994,56 @@ static std::string remapActiveProfilePath(const std::string& input) {
     }
 
     return out;
+}
+
+static void syncActiveProfileFromGuestCvar() {
+    char profile[256] = {};
+    if (!compatGetFarCryProfile(profile, sizeof(profile)))
+        return;
+
+    std::string selected(profile);
+    while (!selected.empty() &&
+           std::isspace((unsigned char)selected.back()))
+        selected.pop_back();
+    size_t first = 0;
+    while (first < selected.size() &&
+           std::isspace((unsigned char)selected[first]))
+        ++first;
+    if (first)
+        selected.erase(0, first);
+
+    if (selected.empty() || asciiLower(selected) == "default") {
+        g_activeProfile.clear();
+        g_activeProfileCvarSet = true;
+        return;
+    }
+
+    if (selected.find('/') != std::string::npos ||
+        selected.find('\\') != std::string::npos)
+        return;
+
+    if (g_activeProfile != selected) {
+        g_activeProfile = selected;
+        g_activeProfileCvarSet = true;
+    }
+}
+
+static std::string remapRootProfileSystemRead(const std::string& input) {
+    if (g_activeProfile.empty() || asciiLower(g_activeProfile) == "default")
+        return input;
+
+    const std::string lower = asciiLower(input);
+    if (lower == "system.cfg" || lower == "./system.cfg") {
+        return "Profiles/Player/" + g_activeProfile + "_system.cfg";
+    }
+    if (lower == "/system.cfg") {
+        return "/Profiles/Player/" + g_activeProfile + "_system.cfg";
+    }
+    if (lower == "/switch/nearchuckle_nx/game/system.cfg") {
+        return "/switch/NearChuckle_nx/game/" +
+               g_activeProfile + "_system.cfg";
+    }
+    return input;
 }
 
 static void ensureProfileCreateDirectories(const std::string& profile) {
@@ -3973,7 +4024,39 @@ static FILE* makeSyntheticAlphaGradientDds() {
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string normalizedPath = normalizeSwitchFsPath(path);
-    const std::string activePath = remapActiveProfilePath(normalizedPath);
+    const std::string lowerPath = asciiLower(normalizedPath);
+    const size_t baseSlash = lowerPath.find_last_of('/');
+    const std::string baseName =
+        baseSlash == std::string::npos
+            ? lowerPath
+            : lowerPath.substr(baseSlash + 1);
+
+    const bool configPath =
+        lowerPath.find("profiles/player/") != std::string::npos ||
+        baseName == "system.cfg" ||
+        baseName == "game.cfg" ||
+        lowerPath.find("_system.cfg") != std::string::npos ||
+        lowerPath.find("_game.cfg") != std::string::npos;
+
+    if (configPath)
+        syncActiveProfileFromGuestCvar();
+
+    const bool profileWrite =
+        mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
+
+    std::string activePath = remapActiveProfilePath(normalizedPath);
+
+    // The engine first loads root system.cfg to discover g_playerprofile.
+    // After that, root system.cfg reads must use the selected profile's
+    // system cfg, while writes to root system.cfg remain untouched so the
+    // selected profile name can still bootstrap the next launch.
+    if (!profileWrite) {
+        const std::string systemReadPath =
+            remapRootProfileSystemRead(normalizedPath);
+        if (systemReadPath != normalizedPath)
+            activePath = systemReadPath;
+    }
+
     const std::string ioPathStorage =
         (activePath != normalizedPath) ? activePath : normalizedPath;
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
