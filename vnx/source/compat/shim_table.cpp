@@ -113,6 +113,10 @@ static constexpr bool kVerboseAllocatorLogs = false;
 static std::string asciiLower(std::string value);
 static int stub_clock_gettime(int clock_id, struct timespec* ts);
 
+// Active Far Cry profile remapper is defined later, but stat/fopen/open wrappers
+// near the top of this file need its declaration first.
+static std::string remapActiveProfilePath(const std::string& input);
+
 // Case-insensitive filesystem resolver used by file wrappers below.
 static bool resolvePathCaseInsensitive(const char* input, std::string& resolved);
 
