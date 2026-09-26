@@ -16,6 +16,7 @@ extern void compatLog(const char* msg);
 extern void compatLogFmt(const char* fmt, ...);
 extern "C" void compatSetActiveFarCryProfile(const char* profile);
 extern "C" bool compatSaveFarCryConfiguration();
+extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile);
 extern void compatLogFlush();
 extern void compatUiLog(const char* msg);
 extern void compatUiSetPct(int pct);
@@ -1038,8 +1039,40 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
     if (!getIVal)
         return;
 
-    const int value = getIVal(cvar) != 0 ? 1 : 0;
+    int value = getIVal(cvar) != 0 ? 1 : 0;
     if (!initialized) {
+        // ui_BackGroundVideo is created by CUISystem::CreateCVars(), which is
+        // later than the initial profile load. That creation uses "1" as the
+        // default and can therefore overwrite a stored profile value of 0.
+        // Once the CVar actually exists, re-run the selected profile's real
+        // LoadConfiguration() so the stored value is applied after creation.
+        void* profileCvar = getCVar(console, "g_playerprofile", true);
+        const char* profile = nullptr;
+        if (profileCvar) {
+            void*** profileVtable = reinterpret_cast<void***>(profileCvar);
+            if (profileVtable && *profileVtable) {
+                auto getProfileString =
+                    reinterpret_cast<GetStringFn>((*profileVtable)[3]);
+                if (getProfileString)
+                    profile = getProfileString(profileCvar);
+            }
+        }
+
+        if (profile && *profile) {
+            compatLogFmt("PROFILE CVar: UI created; reloading profile=%s",
+                         profile);
+            if (!compatLoadFarCryProfileConfiguration(profile)) {
+                compatLogFmt("PROFILE CVar: profile reload failed for %s",
+                             profile);
+            }
+
+            // Read it again because LoadConfiguration() may have changed the
+            // value from the UI CVar's default 1 to the stored 0.
+            value = getIVal(cvar) != 0 ? 1 : 0;
+            compatLogFmt("PROFILE CVar: ui_BackGroundVideo after profile load=%d",
+                         value);
+        }
+
         initialized = true;
         lastValue = value;
         return;
