@@ -821,6 +821,30 @@ static int stub_stat(const char* p, struct stat* ignored) {
     return 0;
 }
 
+static int stub_mkdir(const char* path, mode_t mode) {
+    if (!path) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    const std::string ioPathStorage = normalizeSwitchFsPath(path);
+    const char* ioPath = ioPathStorage.c_str();
+
+    int rc = ::mkdir(ioPath, mode);
+    const int savedErrno = errno;
+
+    std::string lower = asciiLower(ioPathStorage);
+    if (lower == "profiles" ||
+        lower == "profiles/player" ||
+        lower.find("profiles/player/") == 0) {
+        compatLogFmt("PROFILE MKDIR: %s mode=%o rc=%d errno=%d",
+                     ioPath, (unsigned)mode, rc, savedErrno);
+    }
+
+    errno = savedErrno;
+    return rc;
+}
+
 static int stub_fstat64(int fd, void* out) {
     if (!out) {
         errno = EINVAL;
@@ -10924,7 +10948,7 @@ static const ShimEntry g_shims[] = {
     {"stat64",       (void*)stub_stat},
     {"fstat",       (void*)sh_fstat},
     {"fstat64",      (void*)stub_fstat64},
-    {"mkdir",       (void*)mkdir},
+    {"mkdir",       (void*)stub_mkdir},
     {"opendir",     (void*)stub_opendir},
     {"readdir",     (void*)stub_readdir},
     {"readdir64",   (void*)stub_readdir64},
