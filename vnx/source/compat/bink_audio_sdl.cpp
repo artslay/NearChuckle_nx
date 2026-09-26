@@ -1,3 +1,5 @@
+#include <switch.h>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -7,141 +9,107 @@
 extern void compatLog(const char* msg);
 extern void compatLogFmt(const char* fmt, ...);
 
-namespace {
+// Bink video audio uses CrySoundSystem's CS_Stream_* callback interface.
+// The Android implementation ultimately queues signed 16-bit stereo PCM into
+// OpenAL. On Switch the OpenAL entry points are already backed by libnx audout,
+// so keep the original CS_Stream contract and feed that backend directly.
+//
+// Do not route this through SDL3's Android audio backend: SDL_InitSubSystem(AUDIO)
+// selects the Android/OpenSL path and correctly reports "operation not supported"
+// on Switch.
 
 struct CS_STREAM;
-using CS_StreamCallback =
-    signed char (*)(CS_STREAM*, void*, int, void*);
+using CS_StreamCallback = signed char (*)(CS_STREAM*, void*, int, void*);
 
-struct SDL_AudioStream;
-struct SDL_AudioSpec {
-    uint32_t format;
-    int channels;
-    int freq;
-};
+using ALboolean = int8_t;
+using ALenum = int32_t;
+using ALuint = uint32_t;
+using ALint = int32_t;
+using ALsizei = int32_t;
+using ALfloat = float;
+using ALvoid = void;
 
-using SDL_InitSubSystemFn = bool (*)(uint32_t);
-using SDL_QuitSubSystemFn = void (*)(uint32_t);
-using SDL_GetErrorFn = const char* (*)();
-using SDL_OpenAudioDeviceStreamFn =
-    SDL_AudioStream* (*)(uint32_t, const SDL_AudioSpec*, void*, void*);
-using SDL_ResumeAudioStreamDeviceFn = bool (*)(SDL_AudioStream*);
-using SDL_PauseAudioStreamDeviceFn = bool (*)(SDL_AudioStream*);
-using SDL_ClearAudioStreamFn = bool (*)(SDL_AudioStream*);
-using SDL_PutAudioStreamDataFn = bool (*)(SDL_AudioStream*, const void*, int);
-using SDL_DestroyAudioStreamFn = void (*)(SDL_AudioStream*);
+extern "C" {
+void alGenBuffers(ALsizei, ALuint*);
+void alDeleteBuffers(ALsizei, const ALuint*);
+void alBufferData(ALuint, ALenum, const ALvoid*, ALsizei, ALsizei);
+void alSourcePlay(ALuint);
+void alSourceStop(ALuint);
+void alSourcei(ALuint, ALenum, ALint);
+void alSource3f(ALuint, ALenum, ALfloat, ALfloat, ALfloat);
+void alSourceQueueBuffers(ALuint, ALsizei, const ALuint*);
+void alSourceUnqueueBuffers(ALuint, ALsizei, ALuint*);
+void alGetSourcei(ALuint, ALenum, ALint*);
+}
 
-struct SDLApi {
-    SDL_InitSubSystemFn init_subsystem = nullptr;
-    SDL_QuitSubSystemFn quit_subsystem = nullptr;
-    SDL_GetErrorFn get_error = nullptr;
-    SDL_OpenAudioDeviceStreamFn open_device_stream = nullptr;
-    SDL_ResumeAudioStreamDeviceFn resume_stream_device = nullptr;
-    SDL_PauseAudioStreamDeviceFn pause_stream_device = nullptr;
-    SDL_ClearAudioStreamFn clear_stream = nullptr;
-    SDL_PutAudioStreamDataFn put_stream_data = nullptr;
-    SDL_DestroyAudioStreamFn destroy_stream = nullptr;
-    bool resolved = false;
-};
+namespace {
+
+constexpr ALenum AL_TRUE = 1;
+constexpr ALenum AL_SOURCE_RELATIVE = 0x0202;
+constexpr ALenum AL_POSITION = 0x1004;
+constexpr AL_VELOCITY = 0x1006;
+constexpr AL_BUFFER = 0x1009;
+constexpr AL_SOURCE_STATE = 0x1010;
+constexpr AL_INITIAL = 0x1011;
+constexpr AL_PLAYING = 0x1012;
+constexpr AL_PAUSED = 0x1013;
+constexpr AL_BUFFERS_QUEUED = 0x1015;
+constexpr AL_BUFFERS_PROCESSED = 0x1016;
+constexpr AL_FORMAT_STEREO16 = 0x1103;
+
+constexpr int CS_FREE = -1;
+constexpr int MIN_QUEUED_BUFFERS = 20;
 
 struct BinkStream {
     CS_StreamCallback callback = nullptr;
     void* userdata = nullptr;
     std::vector<uint8_t> scratch;
-    SDL_AudioStream* sdl_stream = nullptr;
     int len = 0;
     int sample_rate = 44100;
-    bool playing = false;
-    int channel = -1;
+    ALuint source = 0;
+    int channel = CS_FREE;
 };
 
-constexpr uint32_t SDL_INIT_AUDIO = 0x00000010u;
-constexpr uint32_t SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK = 0xFFFFFFFFu;
-constexpr uint32_t SDL_AUDIO_S16 = 0x8010u;
-
-SDLApi g_sdl;
 std::vector<BinkStream*> g_streams;
-int g_next_channel = 0;
-void* g_real_cs_update = nullptr;
-bool g_sdl_audio_init = false;
+unsigned g_update_log_count = 0;
 
-template<typename T>
-T resolveSDL(const char* name) {
-    LoadedSo* sdl = elfFindLoaded("libSDL3.so");
-    if (!sdl)
-        return nullptr;
-    return reinterpret_cast<T>(sdl->findSym(name));
-}
+// BinkDecAudioCallback initializes the complete callback buffer to 0xFF and
+// Bink_GetAudioData() overwrites only the decoded bytes. The original Android
+// OpenAL backend strips the trailing 0xFF region before queueing it.
+static int BytesFromBinkDec(const uint8_t* buffer, int len) {
+    if (!buffer || len <= 0)
+        return 0;
 
-bool resolveSDLApi() {
-    if (g_sdl.resolved)
-        return g_sdl.open_device_stream != nullptr &&
-               g_sdl.resume_stream_device != nullptr &&
-               g_sdl.put_stream_data != nullptr;
+    constexpr int MAX_END_CHECK = 100;
+    if (len <= MAX_END_CHECK)
+        return len;
 
-    g_sdl.resolved = true;
-    g_sdl.init_subsystem = resolveSDL<SDL_InitSubSystemFn>("SDL_InitSubSystem");
-    g_sdl.quit_subsystem = resolveSDL<SDL_QuitSubSystemFn>("SDL_QuitSubSystem");
-    g_sdl.get_error = resolveSDL<SDL_GetErrorFn>("SDL_GetError");
-    g_sdl.open_device_stream =
-        resolveSDL<SDL_OpenAudioDeviceStreamFn>("SDL_OpenAudioDeviceStream");
-    g_sdl.resume_stream_device =
-        resolveSDL<SDL_ResumeAudioStreamDeviceFn>("SDL_ResumeAudioStreamDevice");
-    g_sdl.pause_stream_device =
-        resolveSDL<SDL_PauseAudioStreamDeviceFn>("SDL_PauseAudioStreamDevice");
-    g_sdl.clear_stream =
-        resolveSDL<SDL_ClearAudioStreamFn>("SDL_ClearAudioStream");
-    g_sdl.put_stream_data =
-        resolveSDL<SDL_PutAudioStreamDataFn>("SDL_PutAudioStreamData");
-    g_sdl.destroy_stream =
-        resolveSDL<SDL_DestroyAudioStreamFn>("SDL_DestroyAudioStream");
+    int bytes_processed = 0;
 
-    compatLogFmt(
-        "BINK SDL: resolve init=%p open=%p resume=%p pause=%p clear=%p put=%p destroy=%p",
-        reinterpret_cast<void*>(g_sdl.init_subsystem),
-        reinterpret_cast<void*>(g_sdl.open_device_stream),
-        reinterpret_cast<void*>(g_sdl.resume_stream_device),
-        reinterpret_cast<void*>(g_sdl.pause_stream_device),
-        reinterpret_cast<void*>(g_sdl.clear_stream),
-        reinterpret_cast<void*>(g_sdl.put_stream_data),
-        reinterpret_cast<void*>(g_sdl.destroy_stream));
+    for (int i = 0; i < len - MAX_END_CHECK; ++i) {
+        if (buffer[i] != 0xFF) {
+            ++bytes_processed;
+            continue;
+        }
 
-    return g_sdl.open_device_stream != nullptr &&
-           g_sdl.resume_stream_device != nullptr &&
-           g_sdl.put_stream_data != nullptr &&
-           g_sdl.destroy_stream != nullptr;
-}
+        bool hit_end = true;
+        for (int j = 1; j < MAX_END_CHECK; ++j) {
+            if (buffer[i + j] != 0xFF) {
+                hit_end = false;
+                break;
+            }
+        }
 
-void logSDLError(const char* stage) {
-    const char* err = g_sdl.get_error ? g_sdl.get_error() : nullptr;
-    compatLogFmt("BINK SDL: %s failed%s%s",
-                 stage,
-                 err && *err ? " error=" : "",
-                 err && *err ? err : "");
-}
+        if (hit_end)
+            break;
 
-bool ensureSDLAudio() {
-    if (!resolveSDLApi())
-        return false;
-
-    if (g_sdl_audio_init)
-        return true;
-
-    if (g_sdl.init_subsystem && !g_sdl.init_subsystem(SDL_INIT_AUDIO)) {
-        logSDLError("SDL_InitSubSystem(AUDIO)");
-        return false;
+        ++bytes_processed;
     }
 
-    g_sdl_audio_init = true;
-    compatLog("BINK SDL: audio subsystem ready");
-    return true;
-}
+    if (bytes_processed == len - MAX_END_CHECK)
+        bytes_processed += MAX_END_CHECK;
 
-void releaseSDLAudio() {
-    if (!g_sdl_audio_init || !g_sdl.quit_subsystem)
-        return;
-    g_sdl.quit_subsystem(SDL_INIT_AUDIO);
-    g_sdl_audio_init = false;
+    return bytes_processed;
 }
 
 BinkStream* asBink(CS_STREAM* stream) {
@@ -152,51 +120,77 @@ void removeStream(BinkStream* stream) {
     for (auto it = g_streams.begin(); it != g_streams.end(); ++it) {
         if (*it == stream) {
             g_streams.erase(it);
-            break;
+            return;
         }
     }
 }
 
 void updateStream(BinkStream* stream) {
-    if (!stream || !stream->playing || !stream->sdl_stream ||
-        !stream->callback || stream->len <= 0)
+    if (!stream || !stream->callback || stream->channel == CS_FREE ||
+        !stream->source || stream->len <= 0)
         return;
 
-    if (stream->scratch.size() != static_cast<size_t>(stream->len))
-        stream->scratch.resize(static_cast<size_t>(stream->len));
-
-    // UIVideoBinkDec's callback clears the buffer with 0xFF and returns zero
-    // when no new video frame was decoded. Feed only freshly decoded Bink PCM.
-    std::memset(stream->scratch.data(), 0xFF, stream->scratch.size());
-    const signed char got_audio =
-        stream->callback(reinterpret_cast<CS_STREAM*>(stream),
-                         stream->scratch.data(), stream->len, stream->userdata);
-    if (!got_audio)
+    ALint state = AL_INITIAL;
+    alGetSourcei(stream->source, AL_SOURCE_STATE, &state);
+    if (state == AL_PAUSED)
         return;
 
-    if (!g_sdl.put_stream_data(
-            stream->sdl_stream, stream->scratch.data(), stream->len)) {
-        logSDLError("SDL_PutAudioStreamData");
-        return;
+    ALint processed = 0;
+    alGetSourcei(stream->source, AL_BUFFERS_PROCESSED, &processed);
+
+    for (ALint i = 0; i < processed; ++i) {
+        ALuint buffer = 0;
+        alSourceUnqueueBuffers(stream->source, 1, &buffer);
+        if (buffer)
+            alDeleteBuffers(1, &buffer);
     }
 
-    static unsigned update_log_count = 0;
-    if (update_log_count < 24) {
-        int peak = 0;
-        const size_t samples = stream->scratch.size() / sizeof(int16_t);
-        const int16_t* pcm =
-            reinterpret_cast<const int16_t*>(stream->scratch.data());
-        for (size_t i = 0; i < samples; ++i) {
-            const int v = pcm[i] < 0 ? -static_cast<int>(pcm[i])
-                                     : static_cast<int>(pcm[i]);
-            if (v > peak)
-                peak = v;
-        }
+    ALint queued = 0;
+    alGetSourcei(stream->source, AL_BUFFERS_QUEUED, &queued);
 
-        compatLogFmt("BINK SDL: push[%u] ch=%d bytes=%d rate=%d peak=%d",
-                     update_log_count, stream->channel, stream->len,
-                     stream->sample_rate, peak);
-        ++update_log_count;
+    if (queued >= MIN_QUEUED_BUFFERS)
+        return;
+
+    const int missing = MIN_QUEUED_BUFFERS - queued;
+    for (int i = 0; i < missing; ++i) {
+        std::memset(stream->scratch.data(), 0xFF, stream->scratch.size());
+
+        const signed char got_audio =
+            stream->callback(reinterpret_cast<CS_STREAM*>(stream),
+                             stream->scratch.data(), stream->len,
+                             stream->userdata);
+        if (!got_audio)
+            break;
+
+        int bytes_processed = stream->len;
+        if (stream->len == 138240)
+            bytes_processed = BytesFromBinkDec(stream->scratch.data(), stream->len);
+
+        if (bytes_processed <= 0)
+            break;
+
+        ALuint stream_buffer = 0;
+        alGenBuffers(1, &stream_buffer);
+        if (!stream_buffer)
+            break;
+
+        alBufferData(stream_buffer, AL_FORMAT_STEREO16,
+                     stream->scratch.data(), bytes_processed,
+                     stream->sample_rate);
+        alSourceQueueBuffers(stream->source, 1, &stream_buffer);
+
+        ++queued;
+    }
+
+    if (state != AL_PLAYING && state != AL_PAUSED &&
+        stream->channel != CS_FREE && queued > 0)
+        alSourcePlay(stream->source);
+
+    if (g_update_log_count < 24) {
+        compatLogFmt("BINK AUDIO: update channel=%d rate=%d queued=%d processed=%d",
+                     stream->channel, stream->sample_rate,
+                     queued, static_cast<int>(processed));
+        ++g_update_log_count;
     }
 }
 
@@ -209,12 +203,7 @@ void* near_bink_cs_stream_create(CS_StreamCallback callback,
                                   unsigned int,
                                   int samplerate,
                                   void* userdata) {
-    if (!callback || length <= 0) {
-        compatLog("BINK SDL: CS_Stream_Create invalid callback/length");
-        return nullptr;
-    }
-
-    if (!ensureSDLAudio())
+    if (!callback || length <= 0)
         return nullptr;
 
     auto* stream = new BinkStream;
@@ -224,105 +213,114 @@ void* near_bink_cs_stream_create(CS_StreamCallback callback,
     stream->sample_rate = samplerate > 0 ? samplerate : 44100;
     stream->scratch.resize(static_cast<size_t>(length));
 
-    SDL_AudioSpec spec = {
-        SDL_AUDIO_S16,
-        2,
-        stream->sample_rate
-    };
+    alGenBuffers(0, nullptr); // keep the OpenAL shim link self-contained
 
-    stream->sdl_stream = g_sdl.open_device_stream(
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
-    if (!stream->sdl_stream) {
-        logSDLError("SDL_OpenAudioDeviceStream");
+    alGenBuffers(0, nullptr);
+
+    ALuint source = 0;
+    extern void alGenSources(ALsizei, ALuint*);
+    alGenSources(1, &source);
+    if (!source) {
         delete stream;
-        if (g_streams.empty())
-            releaseSDLAudio();
         return nullptr;
     }
 
-    stream->channel = 64 + g_next_channel++;
+    stream->source = source;
+    stream->channel = 30 + static_cast<int>(g_streams.size());
     g_streams.push_back(stream);
 
-    compatLogFmt(
-        "BINK SDL: create channel=%d len=%d rate=%d userdata=%p stream=%p",
-        stream->channel, stream->len, stream->sample_rate,
-        stream->userdata, static_cast<void*>(stream->sdl_stream));
+    compatLogFmt("BINK AUDIO: create channel=%d len=%d rate=%d source=%u",
+                 stream->channel, stream->len, stream->sample_rate,
+                 static_cast<unsigned>(stream->source));
 
-    return stream;
+    return reinterpret_cast<void*>(stream);
 }
 
-int near_bink_cs_stream_play(int channel, CS_STREAM* opaque_stream) {
-    auto* stream = asBink(opaque_stream);
-    if (!stream || channel != -1 || !stream->sdl_stream)
+int near_bink_cs_stream_play(int, CS_STREAM* opaque_stream) {
+    BinkStream* stream = asBink(opaque_stream);
+    if (!stream || !stream->source)
         return -1;
 
-    stream->playing = true;
+    alSourcei(stream->source, AL_SOURCE_RELATIVE, AL_TRUE);
+    alSource3f(stream->source, AL_POSITION, 0.0f, 0.0f, 0.0f);
+    alSource3f(stream->source, AL_VELOCITY, 0.0f, 0.0f, 0.0f);
 
-    if (!g_sdl.resume_stream_device(stream->sdl_stream)) {
-        logSDLError("SDL_ResumeAudioStreamDevice");
-        stream->playing = false;
-        return -1;
-    }
+    stream->channel = 30 + static_cast<int>(
+        std::find(g_streams.begin(), g_streams.end(), stream) - g_streams.begin());
 
-    compatLogFmt("BINK SDL: play channel=%d rate=%d len=%d",
-                 stream->channel, stream->sample_rate, stream->len);
+    // The Android backend calls alSourcePlay() before the first CS_Update()
+    // has queued a Bink buffer. The Switch OpenAL shim therefore keeps this
+    // as a pending play request until the first buffer arrives.
+    alSourcePlay(stream->source);
+
+    compatLogFmt("BINK AUDIO: play channel=%d rate=%d len=%d source=%u",
+                 stream->channel, stream->sample_rate, stream->len,
+                 static_cast<unsigned>(stream->source));
     return stream->channel;
 }
 
 signed char near_bink_cs_stream_stop(CS_STREAM* opaque_stream) {
-    auto* stream = asBink(opaque_stream);
-    if (!stream)
+    BinkStream* stream = asBink(opaque_stream);
+    if (!stream || !stream->source)
         return 0;
 
-    stream->playing = false;
-    if (g_sdl.pause_stream_device)
-        g_sdl.pause_stream_device(stream->sdl_stream);
-    if (g_sdl.clear_stream)
-        g_sdl.clear_stream(stream->sdl_stream);
+    alSourceStop(stream->source);
 
-    compatLogFmt("BINK SDL: stop channel=%d", stream->channel);
-    stream->channel = -1;
+    ALint queued = 0;
+    alGetSourcei(stream->source, AL_BUFFERS_QUEUED, &queued);
+    for (ALint i = 0; i < queued; ++i) {
+        ALuint buffer = 0;
+        alSourceUnqueueBuffers(stream->source, 1, &buffer);
+        if (buffer)
+            alDeleteBuffers(1, &buffer);
+    }
+
+    stream->channel = CS_FREE;
+
+    compatLogFmt("BINK AUDIO: stop source=%u",
+                 static_cast<unsigned>(stream->source));
     return 1;
 }
 
 signed char near_bink_cs_stream_close(CS_STREAM* opaque_stream) {
-    auto* stream = asBink(opaque_stream);
+    BinkStream* stream = asBink(opaque_stream);
     if (!stream)
         return 0;
 
     near_bink_cs_stream_stop(opaque_stream);
-    if (stream->sdl_stream && g_sdl.destroy_stream)
-        g_sdl.destroy_stream(stream->sdl_stream);
+
+    extern void alDeleteSources(ALsizei, const ALuint*);
+    const ALuint source = stream->source;
+    if (source)
+        alDeleteSources(1, &source);
 
     removeStream(stream);
     delete stream;
 
-    if (g_streams.empty())
-        releaseSDLAudio();
-
-    compatLog("BINK SDL: close");
+    compatLog("BINK AUDIO: close");
     return 1;
 }
 
 void near_bink_cs_update(void) {
+    // The CS_Update symbol from CrySoundSystem is also used for OGG/music.
+    // Keep the real guest updater, then pump the Bink streams.
     using GuestUpdateFn = void (*)();
 
-    if (!g_real_cs_update) {
+    static void* real_cs_update = nullptr;
+    if (!real_cs_update) {
         LoadedSo* sound = elfFindLoaded("libCrySoundSystem.so");
         if (sound)
-            g_real_cs_update = sound->findSym("CS_Update");
+            real_cs_update = sound->findSym("CS_Update");
 
-        if (g_real_cs_update)
-            compatLogFmt("BINK SDL: guest CS_Update=%p", g_real_cs_update);
+        if (real_cs_update)
+            compatLogFmt("BINK AUDIO: guest CS_Update=%p", real_cs_update);
         else
-            compatLog("BINK SDL: guest CS_Update not found");
+            compatLog("BINK AUDIO: guest CS_Update not found");
     }
 
-    // Preserve the original CrySoundSystem streaming path (OGG/music/etc.).
-    if (g_real_cs_update)
-        reinterpret_cast<GuestUpdateFn>(g_real_cs_update)();
+    if (real_cs_update)
+        reinterpret_cast<GuestUpdateFn>(real_cs_update)();
 
-    // Bink audio stays synchronized with the video Present() call.
     for (BinkStream* stream : g_streams)
         updateStream(stream);
 }
