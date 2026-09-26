@@ -393,7 +393,6 @@ static float g_switch_touch_y = 0.0f;
 static void* g_sdl_key_down = nullptr;
 static void* g_sdl_key_up = nullptr;
 static void* g_sdl_mouse = nullptr;
-static void* g_sdl_touch = nullptr;
 
 static void switchEmitKey(void* fn_ptr, int keycode, const char* name, bool down) {
     if (!fn_ptr)
@@ -431,36 +430,24 @@ static void switchEmitRelativeMouse(void* fn_ptr, float dx, float dy) {
        0, 2, dx, dy, JNI_TRUE); // MotionEvent.ACTION_MOVE
 }
 
-static void switchEmitTouch(void* fn_ptr, int action, float x, float y) {
-    if (!fn_ptr)
-        return;
-
-    using TouchFn = void (*)(void*, void*, int, int, int, float, float, float);
-    const TouchFn fn = reinterpret_cast<TouchFn>(fn_ptr);
-    fn(compatGet()->env_outer,
-       reinterpret_cast<void*>(0x1001),
-       0, 0, action, x, y, 1.0f);
-}
-
 static void switchInputResolveCallbacks() {
-    if (g_sdl_key_down && g_sdl_key_up && g_sdl_mouse && g_sdl_touch)
+    if (g_sdl_key_down && g_sdl_key_up && g_sdl_mouse)
         return;
 
     g_sdl_key_down = jniFindRegisteredNative("onNativeKeyDown", 0);
     g_sdl_key_up = jniFindRegisteredNative("onNativeKeyUp", 0);
     g_sdl_mouse = jniFindRegisteredNative("onNativeMouse", 0);
-    g_sdl_touch = jniFindRegisteredNative("onNativeTouch", 0);
 
     if (!g_switch_input_started) {
         g_switch_input_started = true;
-        compatLogFmt("SWITCH INPUT: SDL callbacks keyDown=%p keyUp=%p mouse=%p touch=%p",
-                     g_sdl_key_down, g_sdl_key_up, g_sdl_mouse, g_sdl_touch);
+        compatLogFmt("SWITCH INPUT: SDL callbacks keyDown=%p keyUp=%p mouse=%p",
+                     g_sdl_key_down, g_sdl_key_up, g_sdl_mouse);
     }
 }
 
 static void pollSwitchInputInternal() {
     switchInputResolveCallbacks();
-    if (!g_sdl_key_down && !g_sdl_key_up && !g_sdl_mouse && !g_sdl_touch)
+    if (!g_sdl_key_down && !g_sdl_key_up && !g_sdl_mouse)
         return;
 
     if (!g_switch_pad_initialized) {
@@ -522,37 +509,39 @@ static void pollSwitchInputInternal() {
         }
     }
 
-    // Switch touch -> SDL Android native touch path.
+    // Switch touch -> absolute SDL mouse click.
     //
-    // The Android SDL glue receives normalized finger coordinates and converts
-    // them to absolute mouse events automatically when TOUCH_MOUSE_EVENTS is
-    // enabled (true by default on Android). This is the original SDL path used
-    // by the game and avoids the broken hand-made relative pointer conversion.
-    if (g_sdl_touch && g_switch_touch_initialized) {
+    // The original Far Cry UI consumes the mouse position in its 800x600
+    // virtual coordinate space, while SDL delivers non-relative mouse events
+    // in the actual window pixel space. Feed onNativeMouse absolute window
+    // coordinates and let CSDLMouse/CUISystem perform the virtual scaling.
+    // A tap moves the cursor to the touch point, sends LMB down, and releases
+    // it when the finger is lifted.
+    if (g_sdl_mouse && g_switch_touch_initialized) {
         HidTouchScreenState touch = {};
         const size_t touch_samples = hidGetTouchScreenStates(&touch, 1);
         const bool touching = touch_samples > 0 && touch.count > 0;
 
         if (touching) {
-            const float x = static_cast<float>(touch.touches[0].x) /
-                            static_cast<float>(config.screen_width);
-            const float y = static_cast<float>(touch.touches[0].y) /
-                            static_cast<float>(config.screen_height);
+            const float x = std::max(0.0f, std::min(
+                static_cast<float>(config.screen_width - 1),
+                static_cast<float>(touch.touches[0].x) *
+                    static_cast<float>(config.screen_width) / 1280.0f));
+            const float y = std::max(0.0f, std::min(
+                static_cast<float>(config.screen_height - 1),
+                static_cast<float>(touch.touches[0].y) *
+                    static_cast<float>(config.screen_height) / 720.0f));
 
             if (!g_switch_touch_down) {
                 g_switch_touch_down = true;
                 g_switch_touch_x = x;
                 g_switch_touch_y = y;
-                switchEmitTouch(g_sdl_touch, 0, x, y); // ACTION_DOWN
-            } else {
-                if (x != g_switch_touch_x || y != g_switch_touch_y)
-                    switchEmitTouch(g_sdl_touch, 2, x, y); // ACTION_MOVE
-                g_switch_touch_x = x;
-                g_switch_touch_y = y;
+                switchEmitMouse(g_sdl_mouse, 1, 0, x, y, false); // LMB down at touch point
             }
         } else if (g_switch_touch_down) {
             g_switch_touch_down = false;
-            switchEmitTouch(g_sdl_touch, 1, g_switch_touch_x, g_switch_touch_y); // ACTION_UP
+            switchEmitMouse(g_sdl_mouse, 0, 1,
+                            g_switch_touch_x, g_switch_touch_y, false); // LMB up
         }
     }
 
