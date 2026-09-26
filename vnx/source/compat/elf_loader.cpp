@@ -2291,7 +2291,10 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
         if (!patchFarCrySetVariableMissingCVar(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY SETVARIABLE: missing-CVar patch not applied");
 
-        patchFarCrySkipLoadConfiguration(so, stage_base, min_vaddr, alloc_size);
+        // Keep CXGame::LoadConfiguration() intact. The profile path now uses
+        // the corrected Android dirent ABI, so bypassing LoadConfiguration()
+        // would leave the profile system pinned to the default state.
+        compatLog("FARCRY LOADCFG A/B: disabled; using original LoadConfiguration");
         return;
     }
 
