@@ -457,7 +457,7 @@ static void pollSwitchInputInternal() {
         compatLog("SWITCH INPUT: libnx PadState initialized");
     }
 
-    if (g_sdl_touch && !g_switch_touch_initialized) {
+    if (g_sdl_mouse && !g_switch_touch_initialized) {
         hidInitializeTouchScreen();
         g_switch_touch_initialized = true;
         compatLog("SWITCH TOUCH: libnx TouchScreen initialized");
