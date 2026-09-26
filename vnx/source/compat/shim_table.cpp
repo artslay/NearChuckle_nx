@@ -1255,6 +1255,18 @@ void compatProcessPendingFarCryProfile() {
     if (!compatActivateFarCryProfile(profile.c_str()))
         return;
 
+    // Mirror the original CSystem::SaveConfiguration() behavior immediately
+    // after a profile switch. The original engine saves both the selected
+    // profile files and the root system.cfg/game.cfg, the latter carrying
+    // g_playerprofile so the same profile is restored on the next launch.
+    // Do this while the pending profile is still set so any selected-profile
+    // writes are redirected consistently.
+    if (!compatSaveFarCryConfiguration()) {
+        compatLogFmt("PROFILE SAVE: failed after selecting %s",
+                     profile.c_str());
+        return;
+    }
+
     mutexLock(&g_pending_farcry_profile_lock);
     if (g_pending_farcry_profile == profile)
         g_pending_farcry_profile.clear();
