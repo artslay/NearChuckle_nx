@@ -1082,7 +1082,7 @@ struct FarCryBackgroundVideoVarSink {
         // Set(default) during CreateVariable(). This is the exact point where
         // the original engine would have consumed the saved script/config
         // value before applying default "1".
-        if (current && current[0] == ' ' &&
+        if (current && current[0] == '\0' &&
             std::strcmp(newValue, "1") == 0) {
             void* system = nullptr;
             void* console = nullptr;
