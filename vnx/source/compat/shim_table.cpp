@@ -917,7 +917,7 @@ static void ensureProfileSystemConfigForGameWrite(
     std::fprintf(systemFile,
                  "-- [System-Configuration]\\r\\n"
                  "-- [Switch profile bootstrap]\\r\\n"
-                 "g_playerprofile = \\"%s\\"\\r\\n",
+                 "g_playerprofile = \"%s\"\r\n",
                  profileName.c_str());
     std::fclose(systemFile);
     compatLogFmt("PROFILE SYSTEM CREATE: %s", systemPath.c_str());
