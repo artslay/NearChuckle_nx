@@ -1041,22 +1041,32 @@ static void queueExplicitProfileActivation(const std::string& input,
         !parseProfileConfigName(input, "_game.cfg", profile))
         return;
 
-    if (profile.empty() || asciiLower(profile) == "default")
+    if (profile.empty())
         return;
 
     if (profile.find('/') != std::string::npos ||
         profile.find('\\') != std::string::npos)
         return;
 
-    // Game:LoadConfiguration(profile) passes explicit profile filenames to
-    // CXGame::LoadConfiguration(). Do not call ICVar::Set() from fopen/open:
-    // that callback is still inside the Lua -> filesystem call chain.
-    // Mirror the path immediately, then apply the real g_playerprofile CVar
-    // after the load returns from the guest callback.
-    g_activeProfile = profile;
-    g_activeProfileCvarSet = false;
-    g_pendingProfileActivation = profile;
-    compatLogFmt("PROFILE SWITCH PENDING: %s", profile.c_str());
+    // Game:LoadConfiguration(profile) passes the explicit profile filenames
+    // to CXGame::LoadConfiguration(). Do not change g_playerprofile from
+    // inside fopen/open: the callback is still executing Lua/C++ guest code.
+    // The system config itself is authoritative and normally contains the
+    // target g_playerprofile value. We only schedule a final CVar activation
+    // for the next safe poll, including the explicit "default" profile.
+    g_pendingProfileActivation =
+        asciiLower(profile) == "default" ? "default" : profile;
+    compatLogFmt("PROFILE SWITCH PENDING: %s",
+                 g_pendingProfileActivation.c_str());
+}
+
+static bool isExplicitProfileConfigPath(const std::string& input) {
+    if (asciiLower(input).find("profiles/player/") == std::string::npos)
+        return false;
+
+    std::string profile;
+    return parseProfileConfigName(input, "_system.cfg", profile) ||
+           parseProfileConfigName(input, "_game.cfg", profile);
 }
 
 static std::string remapRootProfileSystemRead(const std::string& input) {
@@ -1091,9 +1101,21 @@ void compatProcessPendingFarCryProfile() {
         return;
     }
 
+    // For a newly created profile, make it the real current g_playerprofile
+    // before calling the engine serializer. DumpCVars() must therefore write
+    // g_playerprofile="<profile>" together with every other VF_DUMPTODISK CVar.
+    if (!compatActivateFarCryProfile(profile.c_str())) {
+        compatLogFmt("PROFILE SWITCH PENDING: CVar activation failed %s",
+                     profile.c_str());
+        return;
+    }
+
+    g_activeProfile = (asciiLower(profile) == "default") ? std::string() : profile;
+    g_activeProfileCvarSet = true;
+
     if (saveProfile) {
-        // This is now outside fopen() / Lua callback context. The engine's
-        // own serializer writes the complete *_system.cfg and *_game.cfg.
+        // Safe point: this runs from the regular Switch poll, after the guest
+        // fopen()/Lua callback that initiated profile creation has returned.
         if (!compatSaveFarCryProfileConfiguration(profile.c_str())) {
             compatLogFmt("PROFILE SAVE PENDING: FAILED %s", profile.c_str());
             return;
@@ -1102,17 +1124,6 @@ void compatProcessPendingFarCryProfile() {
         g_pendingProfileSystemRefresh.clear();
     }
 
-    // Creation and explicit LoadConfiguration() both converge here. Apply the
-    // real engine CVar only after the guest-side filesystem/config operation
-    // has returned.
-    if (!compatActivateFarCryProfile(profile.c_str())) {
-        compatLogFmt("PROFILE SWITCH PENDING: CVar activation failed %s",
-                     profile.c_str());
-        return;
-    }
-
-    g_activeProfile = profile;
-    g_activeProfileCvarSet = true;
     if (g_pendingProfileActivation == profile)
         g_pendingProfileActivation.clear();
 
@@ -1122,9 +1133,9 @@ void compatProcessPendingFarCryProfile() {
         g_pendingProfileGameWritten = false;
     }
 
-    compatLogFmt("PROFILE ACTIVE: %s", profile.c_str());
+    compatLogFmt("PROFILE ACTIVE: %s",
+                 g_activeProfile.empty() ? "default" : g_activeProfile.c_str());
 }
-
 static void ensureProfileCreateDirectories(const std::string& profile) {
     if (profile.empty() || asciiLower(profile) == "default")
         return;
@@ -4129,7 +4140,12 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const bool configWrite =
         mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
 
-    std::string activePath = remapActiveProfilePath(normalizedPath);
+    const bool explicitProfileConfig =
+        isExplicitProfileConfigPath(normalizedPath) && !configWrite;
+
+    std::string activePath = explicitProfileConfig
+        ? normalizedPath
+        : remapActiveProfilePath(normalizedPath);
 
     // The engine first loads root system.cfg to discover g_playerprofile.
     // After that, root system.cfg reads must use the selected profile's
@@ -4454,7 +4470,12 @@ static int stub_open(const char* path, int flags, ...) {
     const bool openWrite =
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
 
-    std::string ioPathStorage = remapActiveProfilePath(normalizedPath);
+    const bool explicitProfileConfig =
+        isExplicitProfileConfigPath(normalizedPath) && !openWrite;
+
+    std::string ioPathStorage = explicitProfileConfig
+        ? normalizedPath
+        : remapActiveProfilePath(normalizedPath);
 
     // Match stub_fopen(): after g_playerprofile is known, root system.cfg
     // reads must resolve to the selected profile's system configuration.
@@ -7563,7 +7584,22 @@ static int stub_findclose64(intptr_t handle) {
 // resetting profiles. Keep these operations real on Switch so the filesystem
 // behaves like the Android port; there is intentionally no root-config guard.
 static int stub_remove(const char* path) {
-    return ::remove(path);
+    const std::string normalized = normalizeSwitchFsPath(path);
+    std::string profile;
+    const bool isSystem =
+        parseProfileConfigName(normalized, "_system.cfg", profile);
+    const bool isGame =
+        !isSystem && parseProfileConfigName(normalized, "_game.cfg", profile);
+
+    if ((isSystem || isGame) && !g_activeProfile.empty() &&
+        asciiLower(profile) == asciiLower(g_activeProfile)) {
+        g_pendingProfileActivation = "default";
+        g_activeProfileCvarSet = false;
+        compatLogFmt("PROFILE DELETE ACTIVE: %s -> default pending",
+                     g_activeProfile.c_str());
+    }
+
+    return ::remove(normalized.c_str());
 }
 
 static int stub_rename(const char* old_path, const char* new_path) {
@@ -7587,7 +7623,22 @@ static int stub_unlinkat(int dirfd, const char* path, int flags) {
         return -1;
     }
 
-    return ::unlink(path);
+    const std::string normalized = normalizeSwitchFsPath(path);
+    std::string profile;
+    const bool isSystem =
+        parseProfileConfigName(normalized, "_system.cfg", profile);
+    const bool isGame =
+        !isSystem && parseProfileConfigName(normalized, "_game.cfg", profile);
+
+    if ((isSystem || isGame) && !g_activeProfile.empty() &&
+        asciiLower(profile) == asciiLower(g_activeProfile)) {
+        g_pendingProfileActivation = "default";
+        g_activeProfileCvarSet = false;
+        compatLogFmt("PROFILE DELETE ACTIVE: %s -> default pending",
+                     g_activeProfile.c_str());
+    }
+
+    return ::unlink(normalized.c_str());
 }
 static int stub_utimensat(int, const char*, const void*, int) { return 0; }
 static int stub_fchmodat(int, const char*, mode_t, int) { return 0; }
