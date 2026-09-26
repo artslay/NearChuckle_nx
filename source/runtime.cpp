@@ -22,7 +22,7 @@
 // Android Java frontend.
 extern void* jniFindRegisteredNative(const char* name, int occurrence);
 extern void compatProcessPendingFarCryProfile();
-extern "C" void compatRestoreFarCryBackgroundVideoCVar();
+extern "C" void compatEnsureFarCryBackgroundVideoSink();
 extern "C" void compatMarkFarCryMainLoopReady();
 extern "C" bool compatProfileListRecentlyScanned();
 extern "C" bool compatActivateFarCryProfile(const char* profile);
@@ -664,7 +664,7 @@ void compatPollSwitchInput() {
     // Complete the system-config serialization only after that callback has
     // returned, using the real IConsole::DumpCVars() path.
     compatProcessPendingFarCryProfile();
-    compatRestoreFarCryBackgroundVideoCVar();
+    compatEnsureFarCryBackgroundVideoSink();
 }
 
 void compatLog(const char* msg) {
