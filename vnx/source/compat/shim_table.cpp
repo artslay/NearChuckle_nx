@@ -4052,6 +4052,50 @@ static bool compatIsSaveGameFilePath(const char* path) {
            normalized.compare(normalized.size() - 4, 4, ".sav") == 0;
 }
 
+// SaveName() in the original Far Cry source sanitizes every non-alphanumeric
+// character before appending ".sav". Consequently the menu can pass "foo.sav"
+// to Game:Load(), while CXGame::Load() asks the filesystem for
+// "foo_sav.sav". The real file remains "foo.sav". Resolve that exact
+// original filename here without changing the guest save/load code.
+static std::string compatNormalizeSaveGameLookupPath(const char* path) {
+    std::string normalized = normalizeSwitchFsPath(path);
+    if (normalized.empty())
+        return normalized;
+
+    const std::string lower = asciiLower(normalized);
+    const std::string suffix = "_sav.sav";
+    if (lower.size() <= suffix.size() ||
+        lower.compare(lower.size() - suffix.size(),
+                      suffix.size(), suffix) != 0)
+        return normalized;
+
+    const size_t suffixStart = normalized.size() - suffix.size();
+    return normalized.substr(0, suffixStart) + ".sav";
+}
+
+static FILE* compatOpenSaveGameFile(const char* path, std::string& openedPath) {
+    openedPath = compatNormalizeSaveGameLookupPath(path);
+    if (openedPath.empty())
+        return nullptr;
+
+    FILE* file = std::fopen(openedPath.c_str(), "rb");
+    if (file)
+        return file;
+
+    // Preserve normal case-insensitive Switch filesystem behavior as a fallback.
+    std::string resolved;
+    if (resolvePathCaseInsensitive(openedPath.c_str(), resolved) &&
+        resolved != openedPath) {
+        file = std::fopen(resolved.c_str(), "rb");
+        if (file) {
+            openedPath = resolved;
+            return file;
+        }
+    }
+
+    return nullptr;
+}
+
 extern "C" unsigned compatGuestGetCompressedFileSize(
     void* self, char* filename) {
     (void)self;
@@ -4059,10 +4103,14 @@ extern "C" unsigned compatGuestGetCompressedFileSize(
     if (!compatIsSaveGameFilePath(filename))
         return 0;
 
-    const std::string normalized = normalizeSwitchFsPath(filename);
-    FILE* file = std::fopen(normalized.c_str(), "rb");
-    if (!file)
+    std::string openedPath;
+    FILE* file = compatOpenSaveGameFile(filename, openedPath);
+    if (!file) {
+        compatLogFmt("FARCRY SAVE READ SIZE: open failed requested=%s resolved=%s",
+                     filename ? filename : "(null)",
+                     openedPath.c_str());
         return 0;
+    }
 
     uint32_t bitlen = 0;
     const size_t got = std::fread(&bitlen, sizeof(bitlen), 1, file);
@@ -4071,8 +4119,8 @@ extern "C" unsigned compatGuestGetCompressedFileSize(
     if (got != 1)
         return 0;
 
-    compatLogFmt("FARCRY SAVE READ SIZE: %s bitlen=%u",
-                 filename, (unsigned)bitlen);
+    compatLogFmt("FARCRY SAVE READ SIZE: requested=%s resolved=%s bitlen=%u",
+                 filename, openedPath.c_str(), (unsigned)bitlen);
     return (unsigned)bitlen;
 }
 
@@ -4083,10 +4131,14 @@ extern "C" unsigned compatGuestReadCompressedFile(
     if (!compatIsSaveGameFilePath(filename) || !data)
         return 0;
 
-    const std::string normalized = normalizeSwitchFsPath(filename);
-    FILE* file = std::fopen(normalized.c_str(), "rb");
-    if (!file)
+    std::string openedPath;
+    FILE* file = compatOpenSaveGameFile(filename, openedPath);
+    if (!file) {
+        compatLogFmt("FARCRY SAVE READ: open failed requested=%s resolved=%s",
+                     filename ? filename : "(null)",
+                     openedPath.c_str());
         return 0;
+    }
 
     uint32_t bitlen = 0;
     if (std::fread(&bitlen, sizeof(bitlen), 1, file) != 1) {
@@ -4096,8 +4148,8 @@ extern "C" unsigned compatGuestReadCompressedFile(
 
     if (bitlen > maxbitlen) {
         compatLogFmt(
-            "FARCRY SAVE READ: buffer too small path=%s bitlen=%u maxbitlen=%u",
-            filename, (unsigned)bitlen, (unsigned)maxbitlen);
+            "FARCRY SAVE READ: buffer too small requested=%s resolved=%s bitlen=%u maxbitlen=%u",
+            filename, openedPath.c_str(), (unsigned)bitlen, (unsigned)maxbitlen);
         std::fclose(file);
         return 0;
     }
@@ -4108,13 +4160,13 @@ extern "C" unsigned compatGuestReadCompressedFile(
 
     if (read != bytes) {
         compatLogFmt(
-            "FARCRY SAVE READ: short read path=%s bitlen=%u bytes=%zu read=%zu",
-            filename, (unsigned)bitlen, bytes, read);
+            "FARCRY SAVE READ: short read requested=%s resolved=%s bitlen=%u bytes=%zu read=%zu",
+            filename, openedPath.c_str(), (unsigned)bitlen, bytes, read);
         return 0;
     }
 
-    compatLogFmt("FARCRY SAVE READ: %s bitlen=%u bytes=%zu",
-                 filename, (unsigned)bitlen, bytes);
+    compatLogFmt("FARCRY SAVE READ: requested=%s resolved=%s bitlen=%u bytes=%zu",
+                 filename, openedPath.c_str(), (unsigned)bitlen, bytes);
     return (unsigned)bitlen;
 }
 
