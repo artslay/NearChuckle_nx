@@ -2540,7 +2540,28 @@ static void applyRela(LoadedSo* so, const Elf64_Rela* relas, size_t count,
                          (unsigned long long)sym.st_value);
         }
         if (sym.st_shndx != SHN_UNDEF && sym.st_value != 0) {
-            sym_addr = (uint64_t)exec_base + sym.st_value;
+            // A defined weak symbol in a shared object is still preemptible.
+            // NearChuckle's Android CryGame contains weak CS_Stream_* / CS_Update
+            // fallback bodies in UIVideoBinkDec.cpp. The real CrySoundSystem
+            // provides the strong implementation on Android; on Switch our
+            // compatibility shim must be allowed to override that weak local
+            // definition as well. Treat only weak-defined symbols as
+            // dynamically preemptible here; keep strong local definitions
+            // bound exactly as before.
+            if (ELF64_ST_BIND(sym.st_info) == STB_WEAK && sym_name[0]) {
+                void* resolved = resolveSymbol(sym_name);
+                if (resolved) {
+                    sym_addr = (uint64_t)resolved;
+                    if (isBinkAudioTraceSym(sym_name)) {
+                        compatLogFmt("ELF: weak-defined %s preempted -> %p",
+                                     sym_name, resolved);
+                    }
+                } else {
+                    sym_addr = (uint64_t)exec_base + sym.st_value;
+                }
+            } else {
+                sym_addr = (uint64_t)exec_base + sym.st_value;
+            }
         } else if (sym_name[0]) {
             // ELF weak undefined symbols are intentionally allowed to remain
             // unresolved: the dynamic linker resolves them to the null address.
