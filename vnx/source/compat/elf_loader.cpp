@@ -954,7 +954,7 @@ extern "C" bool compatGetFarCryProfile(char* out, size_t outSize) {
     std::snprintf(out, outSize, "%s", value);
     return out[0] != '\0';
 }
-\nextern "C" bool compatSaveFarCryConfiguration() {
+extern "C" bool compatSaveFarCryConfiguration() {
     // Call the real CrySystem::ISystem::SaveConfiguration(). This is the
     // engine's authoritative serializer: it writes selected-profile
     // *_system.cfg via DumpCVars() and *_game.cfg via the action-map/input
