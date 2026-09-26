@@ -1,112 +1,108 @@
-# Far Cry — Nintendo Switch
+# Far Cry — Nintendo Switch Port
 
-Порт **Far Cry** для Nintendo Switch.
+Nintendo Switch port of **Far Cry** based on the Android/Linux version of **NearChuckle**.
 
-Порт работает через **VNX Translation Core** и рассчитан на запуск оригинальных игровых данных Far Cry на Nintendo Switch.
+The port runs through **VNX Translation Core**, with **Mesa** providing the graphics stack and **SDL3** handling the input/window integration.
 
-## Установка
+## Installation
 
-Создай на SD-карте папку:
+Create the following directory on your Switch SD card:
 
-```
+```text
 /switch/NearChuckle_nx/
 ```
 
-Положи в неё:
+Put the NRO in that directory and create a `game` folder:
 
-```
-NearChuckle_nx.nro
-```
-
-Рядом с NRO создай папку `game`:
-
-```
-/switch/NearChuckle_nx/game/
-```
-
-В папку `game` нужно скопировать **четыре папки с игровыми данными**:
-
-```
-/switch/NearChuckle_nx/game/FCData/
-/switch/NearChuckle_nx/game/Languages/
-/switch/NearChuckle_nx/game/Levels/
-/switch/NearChuckle_nx/game/Profiles/
-```
-
-Итоговая структура должна выглядеть примерно так:
-
-```
+```text
 /switch/NearChuckle_nx/
 ├── NearChuckle_nx.nro
 └── game/
-    ├── FCData/
-    ├── Languages/
-    ├── Levels/
-    └── Profiles/
 ```
 
-После этого запусти `NearChuckle_nx.nro` из Homebrew Menu.
+Copy these **four folders** from your Far Cry game files into `game/`:
 
-## Первый запуск
+```text
+/switch/NearChuckle_nx/game/
+├── fcdata/
+├── languages/
+├── levels/
+└── profiles/
+```
 
-На **первом запуске** игра может загружаться заметно дольше обычного. Для более быстрого запуска и загрузки рекомендуется использовать **разгон Nintendo Switch**.
+The final layout should look like:
 
-После первоначальной загрузки последующие запуски могут проходить быстрее.
+```text
+/switch/NearChuckle_nx/
+├── NearChuckle_nx.nro
+└── game/
+    ├── fcdata/
+    ├── languages/
+    ├── levels/
+    └── profiles/
+```
 
-## Управление
+Launch `NearChuckle_nx.nro` from the Homebrew Menu.
 
-Управление настроено под управление Far Cry на PC:
+## Performance
 
-| Кнопка Switch | Действие |
+A **performance overclock is recommended**.
+
+The game can take a while to start and load on a stock Switch. Using an overclock can significantly reduce startup and loading times and makes the initial loading process smoother.
+
+## Controls
+
+| Switch control | In-game action |
 |---|---|
-| **A** | Enter / подтверждение |
-| **B** | Прыжок |
-| **R** | Бег |
-| **X** | Перезарядка |
-| **Y** | Использовать |
-| **D-Pad Left** | Предыдущее оружие |
-| **D-Pad Right** | Следующее оружие |
-| **D-Pad Down** | Лечь |
-| **D-Pad Up** | Ночное видение |
-| **ZL** | Прицел |
-| **ZR** | Стрельба |
-| **Нажатие правого стика (R Stick)** | Фонарик |
-| **Левый стик** | Движение |
-| **Правый стик** | Обзор |
-| **+** | Esc / меню |
-| **-** | Tab |
+| **A** | Enter / Confirm |
+| **B** | Jump |
+| **R** | Run |
+| **X** | Reload |
+| **Y** | Use / Interact |
+| **D-Pad Left** | Previous weapon |
+| **D-Pad Right** | Next weapon |
+| **D-Pad Down** | Prone |
+| **D-Pad Up** | Night Vision |
+| **ZL** | Aim |
+| **ZR** | Fire |
+| **Right Stick Click** | Flashlight |
+| **Left Stick** | Move |
+| **Right Stick** | Look |
 
-Смена оружия через **D-Pad Left/Right** использует колесо мыши.
+## Known Issues
 
-## Известные проблемы
+### Textures in the starting bunker
 
-В настоящее время имеются проблемы с отображением **текстур в начальном бункере**. Из-за этого часть объектов и поверхностей в этой области может отображаться неправильно.
+There are currently **texture rendering issues in the starting bunker**. Some textures may appear missing, corrupted, or incorrectly rendered.
 
-В остальных местах состояние графики может отличаться в зависимости от сцены.
+This is a known issue with the current port.
 
-## Поддержка модов
+## Mod Support
 
-Поддержка модификаций **не проверялась**. Возможность запуска конкретных модов не гарантируется.
+**Mod support has not been tested yet.**
 
-## Сборка
+Mods may or may not work depending on how they access Far Cry's original files and engine systems.
 
-Для сборки проекта требуется настроенное окружение **devkitPro/devkitA64**, а также используемые проектом **Mesa** и **SDL**.
+## Building
 
-Сборка выполняется из окружения devkitPro:
+To build the Switch port, the source tree requires the **Mesa** and **SDL3** components used by the project.
 
-```
-make clean
+The project is built with the **devkitPro / devkitA64** toolchain.
+
+Typical build:
+
+```text
 make
 ```
 
-Перед сборкой должны быть доступны необходимые папки и зависимости Mesa/SDL, используемые текущей конфигурацией проекта.
+The resulting `NearChuckle_nx.nro` can then be copied to the Switch SD card.
 
 ## Credits
 
-- **NaGaa95** — за Mesa для Nintendo Switch.
-- **NearChuckle** — за Linux-порт.
-- **[Viridite](https://github.com/Viridite/VNX-Translation-Core)** — за **VNX Translation Core**.
+- **NaGaa95** — Mesa / Switch graphics work
+- **NearChuckle** — Linux port
+- **Viridite** — [VNX Translation Core](https://github.com/Viridite/VNX-Translation-Core)
 
-## Дисклеймер
+## Disclaimer
 
-Это фанатский порт/совместимый runtime. Для работы требуются собственные игровые данные Far Cry.
+This project is a compatibility/porting project. You must provide your own legally obtained Far Cry game data.
