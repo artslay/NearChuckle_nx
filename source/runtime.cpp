@@ -696,8 +696,7 @@ void compatPollSwitchInput() {
         if (g_switch_touch_initialized) {
             touchPosition touch = {};
             const u32 count = hidTouchRead(&touch, 1);
-            if (count == 0)
-                g_switch_touch_down = false;
+            g_switch_touch_down = (count != 0);
         }
 
         if (held == 0 && !g_switch_touch_down) {
