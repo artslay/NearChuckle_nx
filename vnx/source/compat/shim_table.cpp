@@ -1404,6 +1404,15 @@ void compatProcessPendingFarCryProfile() {
     // to this profile after the one-shot selection request is consumed.
     compatSetActiveFarCryProfile(profile.c_str());
 
+    // The Android guest does not reliably preserve the root system.cfg on
+    // startup, so the Switch compatibility layer uses .last_profile as the
+    // authoritative last-selection marker. Write it only after the profile
+    // has been successfully loaded or created, never while the request is
+    // still pending.
+    if (!compatPersistFarCryProfile(profile.c_str())) {
+        compatLogFmt("PROFILE PERSIST: failed for %s", profile.c_str());
+    }
+
     mutexLock(&g_pending_farcry_profile_lock);
     if (g_pending_farcry_profile == profile)
         g_pending_farcry_profile.clear();
