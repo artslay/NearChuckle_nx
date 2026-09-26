@@ -88,6 +88,12 @@ endif
 
 export NROFLAGS += --nacp=$(CURDIR)/$(TARGET).nacp
 
+ifneq ($(ROMFS),)
+# switch_rules runs elf2nro from the recursive build directory. Use TOPDIR
+# so the generated NRO always embeds the project-root RomFS.
+export NROFLAGS += --romfsdir=$(TOPDIR)/$(ROMFS)
+endif
+
 .PHONY: all clean $(BUILD)
 all: $(BUILD)
 
