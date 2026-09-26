@@ -31,6 +31,8 @@ using ALvoid = void;
 
 extern "C" {
 void alGenBuffers(ALsizei, ALuint*);
+void alGenSources(ALsizei, ALuint*);
+void alDeleteSources(ALsizei, const ALuint*);
 void alDeleteBuffers(ALsizei, const ALuint*);
 void alBufferData(ALuint, ALenum, const ALvoid*, ALsizei, ALsizei);
 void alSourcePlay(ALuint);
@@ -213,12 +215,7 @@ void* near_bink_cs_stream_create(CS_StreamCallback callback,
     stream->sample_rate = samplerate > 0 ? samplerate : 44100;
     stream->scratch.resize(static_cast<size_t>(length));
 
-    alGenBuffers(0, nullptr); // keep the OpenAL shim link self-contained
-
-    alGenBuffers(0, nullptr);
-
     ALuint source = 0;
-    extern void alGenSources(ALsizei, ALuint*);
     alGenSources(1, &source);
     if (!source) {
         delete stream;
@@ -289,7 +286,6 @@ signed char near_bink_cs_stream_close(CS_STREAM* opaque_stream) {
 
     near_bink_cs_stream_stop(opaque_stream);
 
-    extern void alDeleteSources(ALsizei, const ALuint*);
     const ALuint source = stream->source;
     if (source)
         alDeleteSources(1, &source);
