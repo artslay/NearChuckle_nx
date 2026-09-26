@@ -851,6 +851,28 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
     setString(cvar, profile);
 
     const char* after = getString(cvar);
+    if (after && std::strcmp(after, profile) == 0) {
+        compatLogFmt("PROFILE CVAR: after=%s result=OK",
+                     after);
+        return true;
+    }
+
+    // Some Far Cry builds keep the console variable mirrored through the
+    // script/console layer. Retry through the real console command path so
+    // the active profile state is changed in the same way as an in-game CVar
+    // command, rather than relying only on the ICVar object's setter.
+    using ExecuteStringFn = void (*)(void*, const char*, bool, bool);
+    auto executeString =
+        reinterpret_cast<ExecuteStringFn>((*consoleVtable)[32]);
+
+    char command[512];
+    std::snprintf(command, sizeof(command),
+                  "g_playerprofile %s", profile);
+    compatLogFmt("PROFILE CVAR: direct Set failed (after=%s), executing: %s",
+                 after ? after : "(null)", command);
+    executeString(console, command, false, true);
+
+    after = getString(cvar);
     const bool ok = after && std::strcmp(after, profile) == 0;
     compatLogFmt("PROFILE CVAR: after=%s result=%s",
                  after ? after : "(null)", ok ? "OK" : "FAIL");
