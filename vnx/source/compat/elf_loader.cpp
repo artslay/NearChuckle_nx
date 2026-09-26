@@ -1116,7 +1116,7 @@ static bool compatGetFarCryFocusScreenName(void* system,
                   "__near_bg_focus_screen_%u", ++sequence);
     const int n = std::snprintf(
         script, sizeof(script),
-        "%s = \"\"\"; local s = UI:GetFocusScreen(); "
+        "%s = \"\"; local s = UI:GetFocusScreen(); "
         "if s then %s = s:GetName(); end",
         globalName, globalName);
     if (n <= 0 || static_cast<size_t>(n) >= sizeof(script))
