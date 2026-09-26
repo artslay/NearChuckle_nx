@@ -7078,6 +7078,20 @@ static intptr_t stub_findfirst64(const char* pattern, NearFindData64* out) {
     std::string directory = findDirPart(pattern, filePattern);
     const std::string normalizedDirectory = directory;
     directory = remapActiveProfilePath(directory);
+    if (g_activeProfile.size() > 0) {
+        std::string lowerDir = asciiLower(directory);
+        const std::string saveNeedle = "/savegames";
+        const std::string saveNeedle2 = "savegames";
+        if (lowerDir.size() >= saveNeedle.size() &&
+            lowerDir.compare(lowerDir.size() - saveNeedle.size(), saveNeedle.size(), saveNeedle) == 0) {
+            directory += "d";
+        } else if (lowerDir == "profiles/player/" + asciiLower(g_activeProfile) + "/savegames") {
+            directory += "d";
+        } else if (lowerDir == "profiles/player/" + asciiLower(g_activeProfile) + "/savedgames") {
+            // already using the physical Switch profile spelling
+            (void)saveNeedle2;
+        }
+    }
 
     if (directory != normalizedDirectory)
         compatLogFmt("PROFILE ACTIVE REDIRECT: %s -> %s",
