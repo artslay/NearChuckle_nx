@@ -1,5 +1,5 @@
 data_root /switch/NearChuckle_nx/game
-lib_dir /switch/NearChuckle_nx/game/lib
+lib_dir romfs:/lib
 screen_width 1280
 screen_height 720
 fov 90
