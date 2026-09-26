@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <string>
 #include <algorithm>
+#include <vector>
 #include <sys/iosupport.h>
 #include <switch/services/hid.h>
 #include <switch/runtime/pad.h>
