@@ -1318,8 +1318,10 @@ void compatProcessPendingFarCryProfile() {
         std::string persisted;
         if (loadFarCryProfileMarker(persisted)) {
             mutexLock(&g_pending_farcry_profile_lock);
-            if (g_pending_farcry_profile.empty())
-                g_pending_farcry_profile = persisted;
+            // Startup config loading can queue "default" before the first
+            // Switch poll. The persisted marker is authoritative for this
+            // first process pass, so it must replace that startup value.
+            g_pending_farcry_profile = persisted;
             mutexUnlock(&g_pending_farcry_profile_lock);
         }
     }
