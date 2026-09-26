@@ -49,6 +49,7 @@ void near_bink_cs_update(void);
 }
 extern void compatPakLog(const char* fmt, ...);
 extern void compatLogFmt(const char* fmt, ...);
+extern void compatNotifyFarCrySaveGameLoadStarted();
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 extern "C" bool compatActivateFarCryProfile(const char* profile);
@@ -4134,6 +4135,11 @@ extern "C" unsigned compatGuestGetCompressedFileSize(
 
     if (got != 1)
         return 0;
+
+    // Reading the size is the first point at which we know this is a real
+    // selected savegame load. Arm the input guard before the potentially long
+    // LoadFromStream() path starts processing the level.
+    compatNotifyFarCrySaveGameLoadStarted();
 
     compatLogFmt("FARCRY SAVE READ SIZE: requested=%s resolved=%s bitlen=%u",
                  filename, openedPath.c_str(), (unsigned)bitlen);
