@@ -527,7 +527,6 @@ void alSourceRewind(ALuint id){
     Source*s=getSource(id);
     if(!s){mutexUnlock(&g_audio.lock);setError(AL_INVALID_NAME);return;}
     s->state=AL_INITIAL;s->current=0;s->processed=0;s->sample_pos=0;
-    s->play_requested=false;
     mutexUnlock(&g_audio.lock);
 }
 void alSourcei(ALuint id,ALenum p,ALint v){
@@ -543,7 +542,6 @@ void alSourcei(ALuint id,ALenum p,ALint v){
     else if(p==AL_BUFFER){
         if(v&&!getBuffer(v)){mutexUnlock(&g_audio.lock);setError(AL_INVALID_VALUE);return;}
         resetSource(*s);
-        s->play_requested=false;
         if(v)s->queue.push_back(v);
         s->state=AL_INITIAL;
     } else if(p!=AL_SOURCE_RELATIVE) {
