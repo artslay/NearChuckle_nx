@@ -4113,6 +4113,32 @@ extern "C" unsigned compatGuestGetFileSize(void* a0, const char* a1, unsigned a2
 }
 
 
+extern "C" void compatGuestSetCallbackTimeQuota(void* self, int nMicroseconds) {
+    (void)nMicroseconds;
+
+    // Android's Linux RefStreamEngine intentionally disables callback-quota
+    // enforcement when no high-resolution performance counter is available.
+    // Its SDL3 port nevertheless leaves m_nCallbackTimeQuota in the old
+    // performance-counter units while FinalizeIOJobs subtracts SDL_GetTicks()
+    // milliseconds, causing the value to go negative every frame and emit
+    // "io: overdraft of callback time quota" forever.
+    //
+    // Keep the quota effectively unlimited. This preserves the intended Linux
+    // behavior (quota suspended) without altering stream callback execution.
+    if (!self)
+        return;
+
+    constexpr int64_t kUnlimitedQuota = 0x3fffffffffffffffLL;
+    *reinterpret_cast<volatile int64_t*>(
+        reinterpret_cast<uint8_t*>(self) + 0x18) = kUnlimitedQuota;
+
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        compatLogFmt("FARCRY STREAM QUOTA: disabled for CRefStreamEngine (Linux/SDL tick mismatch)");
+    }
+}
+
 static FILE* tryOpenFromPaks(const char* requested, const char* mode) {
     if (!requested || !mode || mode[0] != 'r')
         return nullptr;
