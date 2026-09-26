@@ -1,42 +1,112 @@
-# NearChuckle_nx
+# Far Cry — Nintendo Switch
 
-Nintendo Switch runtime for the Android ARM64 Far Cry build from NearChuckle.
+Порт **Far Cry** для Nintendo Switch.
 
-The Switch branch is a direct runtime. It does not contain the Android application, Android launcher, Windows binaries, or the old desktop build system. Android ARM64 .so files are loaded directly by the VNX ELF loader.
+Порт работает через **VNX Translation Core** и рассчитан на запуск оригинальных игровых данных Far Cry на Nintendo Switch.
 
-Structure:
+## Установка
 
-NearChuckle_nx/
-  Makefile
-  config.txt
-  source/
-  vnx/
-  mesa-sdk/
-  lib/                 # host-side build input only
-  romfs/               # generated; packaged into the NRO
-    lib/
+Создай на SD-карте папку:
 
-Put the Android ARM64 libraries in the host-side `lib/` directory (or set `EMBED_LIB_SOURCE` when building). The build packages them into the NRO under `romfs:/lib`.
+```
+/switch/NearChuckle_nx/
+```
 
-The main entry library is libFarCry.so. Other CryEngine and Android ARM64 dependencies should be placed in the same host-side directory.
+Положи в неё:
 
-Game data is expected under /switch/NearChuckle_nx/game/.
+```
+NearChuckle_nx.nro
+```
 
-config.txt controls the data path, resolution, FOV, VSync, and Mesa driver. The `lib_dir` entry is kept for compatibility and is forced to `romfs:/lib` by the runtime.
+Рядом с NRO создай папку `game`:
 
-The NRO starts Far Cry directly. There is no launcher UI.
+```
+/switch/NearChuckle_nx/game/
+```
 
-The build expects a local Mesa SDK at mesa-sdk/opt/devkitpro/portlibs/switch/. The Switch executable links Mesa OpenGL, EGL, GLES, and Vulkan/NVK libraries from this SDK.
+В папку `game` нужно скопировать **четыре папки с игровыми данными**:
 
-Build from the devkitPro MSYS2 shell with:
+```
+/switch/NearChuckle_nx/game/FCData/
+/switch/NearChuckle_nx/game/Languages/
+/switch/NearChuckle_nx/game/Levels/
+/switch/NearChuckle_nx/game/Profiles/
+```
 
-  make
+Итоговая структура должна выглядеть примерно так:
 
-The runtime log is written to:
+```
+/switch/NearChuckle_nx/
+├── NearChuckle_nx.nro
+└── game/
+    ├── FCData/
+    ├── Languages/
+    ├── Levels/
+    └── Profiles/
+```
 
-  /switch/NearChuckle_nx/nearchuckle_debug.log
+После этого запусти `NearChuckle_nx.nro` из Homebrew Menu.
 
+## Первый запуск
 
-### Embedded Android libraries
+На **первом запуске** игра может загружаться заметно дольше обычного. Для более быстрого запуска и загрузки рекомендуется использовать **разгон Nintendo Switch**.
 
-Android ARM64 `.so` dependencies are packaged into the NRO RomFS under `romfs:/lib`. The Switch no longer needs a runtime `/switch/NearChuckle_nx/game/lib` directory. By default the build reads guest libraries from the host-side `./lib` directory; an alternative source can be supplied with `EMBED_LIB_SOURCE=/path/to/lib make`.
+После первоначальной загрузки последующие запуски могут проходить быстрее.
+
+## Управление
+
+Управление настроено под управление Far Cry на PC:
+
+| Кнопка Switch | Действие |
+|---|---|
+| **A** | Enter / подтверждение |
+| **B** | Прыжок |
+| **R** | Бег |
+| **X** | Перезарядка |
+| **Y** | Использовать |
+| **D-Pad Left** | Предыдущее оружие |
+| **D-Pad Right** | Следующее оружие |
+| **D-Pad Down** | Лечь |
+| **D-Pad Up** | Ночное видение |
+| **ZL** | Прицел |
+| **ZR** | Стрельба |
+| **Нажатие правого стика (R Stick)** | Фонарик |
+| **Левый стик** | Движение |
+| **Правый стик** | Обзор |
+| **+** | Esc / меню |
+| **-** | Tab |
+
+Смена оружия через **D-Pad Left/Right** использует колесо мыши.
+
+## Известные проблемы
+
+В настоящее время имеются проблемы с отображением **текстур в начальном бункере**. Из-за этого часть объектов и поверхностей в этой области может отображаться неправильно.
+
+В остальных местах состояние графики может отличаться в зависимости от сцены.
+
+## Поддержка модов
+
+Поддержка модификаций **не проверялась**. Возможность запуска конкретных модов не гарантируется.
+
+## Сборка
+
+Для сборки проекта требуется настроенное окружение **devkitPro/devkitA64**, а также используемые проектом **Mesa** и **SDL**.
+
+Сборка выполняется из окружения devkitPro:
+
+```
+make clean
+make
+```
+
+Перед сборкой должны быть доступны необходимые папки и зависимости Mesa/SDL, используемые текущей конфигурацией проекта.
+
+## Credits
+
+- **NaGaa95** — за Mesa для Nintendo Switch.
+- **NearChuckle** — за Linux-порт.
+- **[Viridite](https://github.com/Viridite/VNX-Translation-Core)** — за **VNX Translation Core**.
+
+## Дисклеймер
+
+Это фанатский порт/совместимый runtime. Для работы требуются собственные игровые данные Far Cry.
