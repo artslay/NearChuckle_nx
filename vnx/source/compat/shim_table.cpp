@@ -4041,7 +4041,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     if (configPath)
         syncActiveProfileFromGuestCvar();
 
-    const bool profileWrite =
+    const bool configWrite =
         mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
 
     std::string activePath = remapActiveProfilePath(normalizedPath);
@@ -4050,7 +4050,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     // After that, root system.cfg reads must use the selected profile's
     // system cfg, while writes to root system.cfg remain untouched so the
     // selected profile name can still bootstrap the next launch.
-    if (!profileWrite) {
+    if (!configWrite) {
         const std::string systemReadPath =
             remapRootProfileSystemRead(normalizedPath);
         if (systemReadPath != normalizedPath)
@@ -4353,7 +4353,39 @@ static int sh_fclose(FILE* f) {
 // open() wrapper — Android-compatible path resolution for guest stdio/file-stream users
 static int stub_open(const char* path, int flags, ...) {
     const std::string normalizedPath = normalizeSwitchFsPath(path);
-    const std::string ioPathStorage = remapActiveProfilePath(normalizedPath);
+    const std::string lowerPath = asciiLower(normalizedPath);
+    const size_t baseSlash = lowerPath.find_last_of('/');
+    const std::string baseName =
+        baseSlash == std::string::npos
+            ? lowerPath
+            : lowerPath.substr(baseSlash + 1);
+
+    const bool configPath =
+        lowerPath.find("profiles/player/") != std::string::npos ||
+        baseName == "system.cfg" ||
+        baseName == "game.cfg" ||
+        lowerPath.find("_system.cfg") != std::string::npos ||
+        lowerPath.find("_game.cfg") != std::string::npos;
+
+    if (configPath)
+        syncActiveProfileFromGuestCvar();
+
+    const bool openWrite =
+        (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
+
+    std::string ioPathStorage = remapActiveProfilePath(normalizedPath);
+
+    // Match stub_fopen(): after g_playerprofile is known, root system.cfg
+    // reads must resolve to the selected profile's system configuration.
+    // Root system.cfg writes remain untouched as the bootstrap configuration
+    // that stores g_playerprofile for the next launch.
+    if (!openWrite) {
+        const std::string systemReadPath =
+            remapRootProfileSystemRead(normalizedPath);
+        if (systemReadPath != normalizedPath)
+            ioPathStorage = systemReadPath;
+    }
+
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
     if (ioPathStorage != normalizedPath)
