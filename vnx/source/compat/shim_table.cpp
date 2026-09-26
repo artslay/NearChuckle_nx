@@ -3782,7 +3782,7 @@ static void ensureProfileSaveDirectories(const char* path, const char* mode) {
 
     std::string normalized = normalizeSwitchFsPath(path);
     for (char& c : normalized) {
-        if ((unsigned char)c == '\')
+        if ((unsigned char)c == 92)
             c = '/';
     }
 
