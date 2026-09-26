@@ -51,8 +51,6 @@ extern void compatPakLog(const char* fmt, ...);
 
 extern void elfDescribePc(uint64_t pc, char* buf, size_t sz);
 extern "C" bool compatActivateFarCryProfile(const char* profile);
-extern "C" bool compatGetFarCryProfile(char* out, size_t outSize);
-extern "C" bool compatSaveFarCryProfileConfiguration(const char* profile);
 // zlib API declarations. Some devkitA64 installations do not ship a zlib header,
 // while libz is still available for linking. Keep the ABI declarations local.
 extern "C" {
@@ -898,7 +896,6 @@ static bool g_farCryMainLoopReady = false;
 // remain "default", so the Switch filesystem shim mirrors the selected profile
 // for subsequent config/savegame accesses without touching guest object memory.
 static std::string g_activeProfile;
-static bool g_activeProfileCvarSet = false;
 
 static bool parseProfileConfigName(const std::string& path,
                                    const char* suffix,
@@ -1079,7 +1076,6 @@ void compatProcessPendingFarCryProfile() {
 
     g_activeProfile =
         (asciiLower(profile) == "default") ? std::string() : profile;
-    g_activeProfileCvarSet = true;
     g_pendingProfileActivation.clear();
 
     if (g_pendingProfileCreate == profile) {
@@ -7569,7 +7565,6 @@ static int stub_remove(const char* path) {
         !g_activeProfile.empty() &&
         asciiLower(removedProfile) == asciiLower(g_activeProfile)) {
         g_pendingProfileActivation = "default";
-        g_activeProfileCvarSet = false;
         compatLogFmt("PROFILE DIRECTORY DELETED: %s -> default pending",
                      removedProfile.c_str());
     }
