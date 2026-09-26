@@ -878,255 +878,19 @@ static int stub__mkdirat(int dirfd, const char* path, mode_t mode) {
     return stub_mkdirat(dirfd, path, mode);
 }
 
-// The profile UI can probe a new profile's *_system.cfg and then issue the
-// generic save call while g_playerprofile is still "default". Preserve that
-// requested name for the immediately following default config write.
-static std::string g_pendingProfileCreate;
-static bool g_pendingProfileSystemWritten = false;
-static bool g_pendingProfileGameWritten = false;
-static std::string g_pendingProfileActivation;
-
-// A normal profile probe must not switch the active profile. A real
-// Game:LoadConfiguration(profile) opens the selected system cfg and then the
-// selected game cfg, so only after both files are observed do we queue the
-// profile activation.
-static std::string g_explicitProfileLoadCandidate;
-static bool g_farCryMainLoopReady = false;
-
-// Effective profile selected by the profile-creation UI. The guest CVar can
-// remain "default", so the Switch filesystem shim mirrors the selected profile
-// for subsequent config/savegame accesses without touching guest object memory.
-static std::string g_activeProfile;
-
-static bool parseProfileConfigName(const std::string& path,
-                                   const char* suffix,
-                                   std::string& profile) {
-    if (!suffix)
-        return false;
-
-    const std::string lower = asciiLower(path);
-    const std::string suffixLower = asciiLower(suffix);
-    if (lower.size() <= suffixLower.size() ||
-        lower.compare(lower.size() - suffixLower.size(),
-                      suffixLower.size(), suffixLower) != 0)
-        return false;
-
-    const size_t slash = lower.find_last_of('/');
-    const size_t nameStart = (slash == std::string::npos) ? 0 : slash + 1;
-    const size_t suffixStart = lower.size() - suffixLower.size();
-    if (suffixStart <= nameStart)
-        return false;
-
-    profile = path.substr(nameStart, suffixStart - nameStart);
-
-    // The profile text field can leave trailing spaces before the generated
-    // "_game.cfg"/"_system.cfg" suffix. Those spaces are not part of the
-    // profile name and must never become part of the directory/file name.
-    while (!profile.empty() &&
-           std::isspace((unsigned char)profile.back()))
-        profile.pop_back();
-    size_t first = 0;
-    while (first < profile.size() &&
-           std::isspace((unsigned char)profile[first]))
-        ++first;
-    if (first)
-        profile.erase(0, first);
-
-    return !profile.empty();
-}
-
+// Profile selection belongs to the guest CryEngine.
+// The Switch layer only adapts the Android directory ABI; it must not keep a
+// second active-profile state or infer profile changes from fopen/rmdir calls.
 static std::string remapActiveProfilePath(const std::string& input) {
-    if (g_activeProfile.empty() || asciiLower(g_activeProfile) == "default")
-        return input;
-
-    std::string out = input;
-    const std::string lower = asciiLower(input);
-    const std::string profileDir = "Profiles/Player/" + g_activeProfile;
-    const std::string absProfileDir = "/Profiles/Player/" + g_activeProfile;
-
-    auto replaceInsensitive = [&](const std::string& needle,
-                                  const std::string& replacement) {
-        const std::string needleLower = asciiLower(needle);
-        size_t pos = 0;
-        while ((pos = asciiLower(out).find(needleLower, pos)) != std::string::npos) {
-            out.replace(pos, needle.size(), replacement);
-            pos += replacement.size();
-        }
-    };
-
-    if (lower.find("profiles/player/default/savegames/") != std::string::npos) {
-        replaceInsensitive("Profiles/Player/default/savegames/",
-                           profileDir + "/savedgames/");
-        replaceInsensitive("/Profiles/Player/default/savegames/",
-                           absProfileDir + "/savedgames/");
-    } else if (lower.find("profiles/player/default/") != std::string::npos) {
-        replaceInsensitive("Profiles/Player/default/",
-                           profileDir + "/");
-        replaceInsensitive("/Profiles/Player/default/",
-                           absProfileDir + "/");
-    } else if (lower.find("profiles/player/default_game.cfg") != std::string::npos) {
-        replaceInsensitive("Profiles/Player/default_game.cfg",
-                           "Profiles/Player/" + g_activeProfile + "_game.cfg");
-        replaceInsensitive("/Profiles/Player/default_game.cfg",
-                           "/Profiles/Player/" + g_activeProfile + "_game.cfg");
-    } else if (lower.find("profiles/player/default_system.cfg") != std::string::npos) {
-        replaceInsensitive("Profiles/Player/default_system.cfg",
-                           "Profiles/Player/" + g_activeProfile + "_system.cfg");
-        replaceInsensitive("/Profiles/Player/default_system.cfg",
-                           "/Profiles/Player/" + g_activeProfile + "_system.cfg");
-    } else {
-        // CSystem::SaveConfiguration() performs a second, root-level save after
-        // saving the explicitly selected profile. For Far Cry the game settings
-        // (including input bindings) belong to the selected profile's game.cfg,
-        // so once a non-default profile is active, redirect the root game.cfg
-        // back to that profile. Keep system.cfg unmodified: it must retain the
-        // selected g_playerprofile value for the next launch.
-        const size_t slash = lower.find_last_of('/');
-        const std::string base =
-            slash == std::string::npos ? lower : lower.substr(slash + 1);
-        if (base == "game.cfg") {
-            const std::string replacement =
-                "Profiles/Player/" + g_activeProfile + "_game.cfg";
-            if (slash == std::string::npos || lower == "./game.cfg") {
-                out = replacement;
-            } else if (lower == "/game.cfg") {
-                out = "/" + replacement;
-            } else if (lower == "/switch/nearchuckle_nx/game/game.cfg") {
-                out = "/switch/NearChuckle_nx/game/" +
-                      g_activeProfile + "_game.cfg";
-            } else {
-                // Do not hijack unrelated game.cfg files in subdirectories.
-            }
-        }
-    }
-
-    return out;
-}
-
-static bool isExplicitProfileConfigPath(const std::string& input) {
-    if (asciiLower(input).find("profiles/player/") == std::string::npos)
-        return false;
-
-    std::string profile;
-    return parseProfileConfigName(input, "_system.cfg", profile) ||
-           parseProfileConfigName(input, "_game.cfg", profile);
-}
-
-static void queueExplicitProfileActivation(const std::string& input,
-                                                bool writeAccess) {
-    if (writeAccess)
-        return;
-
-    std::string profile;
-    const bool systemCfg =
-        parseProfileConfigName(input, "_system.cfg", profile);
-    const bool gameCfg =
-        !systemCfg && parseProfileConfigName(input, "_game.cfg", profile);
-
-    if ((!systemCfg && !gameCfg) || profile.empty() ||
-        profile.find('/') != std::string::npos ||
-        profile.find('\\') != std::string::npos)
-        return;
-
-    // CXGame::LoadConfiguration() opens system.cfg first and game.cfg second.
-    // A single file open is not a reliable indication that the user selected
-    // this profile because the menu can probe files while enumerating profiles.
-    if (systemCfg) {
-        g_explicitProfileLoadCandidate = profile;
-        return;
-    }
-
-    if (g_explicitProfileLoadCandidate.empty() ||
-        asciiLower(g_explicitProfileLoadCandidate) != asciiLower(profile))
-        return;
-
-    g_pendingProfileActivation =
-        asciiLower(profile) == "default" ? "default" : profile;
-    g_explicitProfileLoadCandidate.clear();
-    compatLogFmt("PROFILE LOAD PENDING: %s", profile.c_str());
-}
-
-// Root system.cfg is intentionally NOT remapped.
-// CryEngine first reads this file to discover g_playerprofile, then
-// CXGame::LoadConfiguration() explicitly opens the selected profile's
-// <profile>_system.cfg. Redirecting the root read here would apply all
-// profile CVars during early system initialization.
-static std::string remapRootProfileSystemRead(const std::string& input) {
     return input;
 }
 
-
 extern "C" void compatMarkFarCryMainLoopReady() {
-    g_farCryMainLoopReady = true;
+    // Retained for the existing runtime hook. No Switch-side profile state.
 }
 
 void compatProcessPendingFarCryProfile() {
-    if (!g_farCryMainLoopReady || g_pendingProfileActivation.empty())
-        return;
-
-    const std::string profile = g_pendingProfileActivation;
-
-    // Apply the real guest g_playerprofile only after the profile UI's
-    // LoadConfiguration/CreateProfile callback has returned. Never call the
-    // guest CVar interface recursively from fopen/open.
-    if (!compatActivateFarCryProfile(profile.c_str())) {
-        compatLogFmt("PROFILE SWITCH PENDING: CVar activation failed %s",
-                     profile.c_str());
-        return;
-    }
-
-    g_activeProfile =
-        (asciiLower(profile) == "default") ? std::string() : profile;
-    g_pendingProfileActivation.clear();
-
-    const bool creatingProfile =
-        !g_pendingProfileCreate.empty() &&
-        asciiLower(g_pendingProfileCreate) == asciiLower(profile);
-
-    if (creatingProfile) {
-        // The profile UI may only have created empty placeholder files. Now
-        // that the real g_playerprofile is active and we are outside the Lua
-        // callback, let CrySystem's own serializer populate the profile with
-        // every VF_DUMPTODISK CVar plus the normal game/input configuration.
-        if (!compatSaveFarCryConfiguration()) {
-            compatLogFmt("PROFILE SAVE: engine serializer failed %s",
-                         profile.c_str());
-            return;
-        }
-        g_pendingProfileCreate.clear();
-        g_pendingProfileSystemWritten = false;
-        g_pendingProfileGameWritten = false;
-    }
-
-    compatLogFmt("PROFILE ACTIVE: %s",
-                 g_activeProfile.empty() ? "default" :
-                 g_activeProfile.c_str());
-}
-
-static void ensureProfileCreateDirectories(const std::string& profile) {
-    if (profile.empty() || asciiLower(profile) == "default")
-        return;
-
-    const std::string profileDir = "Profiles/Player/" + profile;
-    const std::string systemCfg = "Profiles/Player/" + profile + "_system.cfg";
-    const std::string gameCfg = "Profiles/Player/" + profile + "_game.cfg";
-
-    ::mkdir("Profiles", 0755);
-    ::mkdir("Profiles/Player", 0755);
-    ::mkdir(profileDir.c_str(), 0755);
-
-    // Keep the filenames present for profile discovery. The complete system
-    // configuration is serialized on the next normal frame through
-    // IConsole::DumpCVars(), outside this filesystem callback.
-    FILE* f = ::fopen(systemCfg.c_str(), "ab");
-    if (f)
-        ::fclose(f);
-
-    // game.cfg is populated by the normal engine serializer when the profile
-    // is first saved. Keep the file present so profile discovery sees it.
-    f = ::fopen(gameCfg.c_str(), "ab");
-    if (f)
-        ::fclose(f);
+    // Intentionally empty. CXGame/CScriptObjectGame owns profile state.
 }
 
 static int stub_fstat64(int fd, void* out) {
@@ -4082,41 +3846,7 @@ static FILE* makeSyntheticAlphaGradientDds() {
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string normalizedPath = normalizeSwitchFsPath(path);
-    const std::string lowerPath = asciiLower(normalizedPath);
-    const size_t baseSlash = lowerPath.find_last_of('/');
-    const std::string baseName =
-        baseSlash == std::string::npos
-            ? lowerPath
-            : lowerPath.substr(baseSlash + 1);
-
-    const bool configWrite =
-        mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
-
-    const bool explicitProfileConfig =
-        isExplicitProfileConfigPath(normalizedPath) && !configWrite;
-
-    std::string activePath = explicitProfileConfig
-        ? normalizedPath
-        : remapActiveProfilePath(normalizedPath);
-
-    // The engine first loads root system.cfg to discover g_playerprofile.
-    // After that, root system.cfg reads must use the selected profile's
-    // system cfg, while writes to root system.cfg remain untouched so the
-    // selected profile name can still bootstrap the next launch.
-    if (!configWrite) {
-        const std::string systemReadPath =
-            remapRootProfileSystemRead(normalizedPath);
-        if (systemReadPath != normalizedPath)
-            activePath = systemReadPath;
-    }
-
-    const std::string ioPathStorage =
-        (activePath != normalizedPath) ? activePath : normalizedPath;
-    const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
-
-    if (activePath != normalizedPath)
-        compatLogFmt("PROFILE ACTIVE REDIRECT: %s -> %s",
-                     normalizedPath.c_str(), activePath.c_str());
+    const char* ioPath = path ? normalizedPath.c_str() : nullptr;
 
     rememberActiveLevelPak(ioPath);
 
@@ -4124,55 +3854,31 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
-    const bool profileIo = ioPath && isProfileFsPath(ioPathStorage);
-    const bool profileWrite =
-        profileIo && mode && (mode[0] == 'w' || mode[0] == 'a' || mode[0] == '+');
+    const bool profileIo = ioPath && isProfileFsPath(ioPath);
     if (profileIo)
         compatLogFmt("PROFILE FOPEN: %s mode=%s",
                      ioPath, mode ? mode : "?");
-
-    std::string redirectedProfilePath;
-    if (profileWrite && normalizedPath == ioPathStorage &&
-        !g_pendingProfileCreate.empty()) {
-        std::string target;
-        if (parseProfileConfigName(ioPathStorage, "_system.cfg", target) &&
-            asciiLower(target) == "default") {
-            redirectedProfilePath =
-                std::string("Profiles/Player/") + g_pendingProfileCreate + "_system.cfg";
-        } else if (parseProfileConfigName(ioPathStorage, "_game.cfg", target) &&
-                   asciiLower(target) == "default") {
-            redirectedProfilePath =
-                std::string("Profiles/Player/") + g_pendingProfileCreate + "_game.cfg";
-        }
-
-        if (!redirectedProfilePath.empty()) {
-            ensureProfileCreateDirectories(g_pendingProfileCreate);
-            compatLogFmt("PROFILE REDIRECT: %s -> %s",
-                         ioPath, redirectedProfilePath.c_str());
-        }
-    }
 
     if (isSyntheticAlphaGradientDds(ioPath)) {
         if (FILE* synthetic = makeSyntheticAlphaGradientDds())
             return synthetic;
     }
 
-    if (path && ioPathStorage != path && !shaderIo)
     if (std::string mapped = obbRemap(ioPath); !mapped.empty()) {
         FILE* mf = fopen(mapped.c_str(), mode);
         compatLogFmt("obb: fopen %s -> %s (%s)", ioPath ? ioPath : "?",
                      mapped.c_str(), mf ? "ok" : "still not there");
-        if (mf) { if (videoIo) g_near_video_open_failed = 0; setvbuf(mf, nullptr, _IOFBF, 64 * 1024); return mf; }
+        if (mf) {
+            if (videoIo) g_near_video_open_failed = 0;
+            setvbuf(mf, nullptr, _IOFBF, 64 * 1024);
+            return mf;
+        }
     }
 
-    const char* openPath = redirectedProfilePath.empty()
-        ? ioPath
-        : redirectedProfilePath.c_str();
-
-    FILE* f = fopen(openPath, mode);
-
-    if (f && explicitProfileConfig)
-        queueExplicitProfileActivation(normalizedPath, false);
+    // Open exactly the path requested by the guest. The engine's own
+    // CSystem/CXGame profile code selects <profile>_system.cfg and
+    // <profile>_game.cfg; the compatibility layer must not replace them.
+    FILE* f = fopen(ioPath, mode);
 
     if (!f && ioPath) {
         std::string resolved;
@@ -4180,7 +3886,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
                 if (videoIo) g_near_video_open_failed = 0;
-                if (!shaderIo)                f = rf;
+                if (!shaderIo) f = rf;
             }
         }
     }
@@ -4193,38 +3899,12 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (resolvePathCaseInsensitive(virtualPath.c_str(), resolved)) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
-                if (!shaderIo)                f = rf;
+                if (!shaderIo) f = rf;
             }
         }
     }
 
     if (!f) {
-        if (!profileWrite && profileIo) {
-            std::string probedProfile;
-            if (parseProfileConfigName(ioPathStorage, "_system.cfg", probedProfile) &&
-                asciiLower(probedProfile) != "default") {
-                g_pendingProfileCreate = probedProfile;
-                g_pendingProfileActivation = probedProfile;
-                g_pendingProfileSystemWritten = false;
-                g_pendingProfileGameWritten = false;
-                g_explicitProfileLoadCandidate.clear();
-
-                // Create the profile directory immediately when the UI has
-                // identified the new profile name. The original flow may
-                // enumerate Profiles/Player again before the following
-                // default-config write, so delaying mkdir until that write
-                // makes the newly created profile invisible to the menu.
-                ensureProfileCreateDirectories(g_pendingProfileCreate);
-                compatLogFmt("PROFILE PENDING CREATE: %s",
-                             g_pendingProfileCreate.c_str());
-
-                    }
-        }
-
-        // Shader-cache files are not language assets, but valid precompiled
-        // .cgps/.cgvp/.cgasm entries may be present in the game's Shaders.pak.
-        // The renderer can consume them directly through the virtual PAK FILE
-        // path; only an actual miss should fall back to the embedded ARB shader.
         FILE* pakFile = tryOpenFromPaks(ioPath, mode);
         if (pakFile) {
             if (videoIo) g_near_video_open_failed = 0;
@@ -4246,45 +3926,30 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             return nullptr;
         }
 
-        if (videoIo)
+        if (videoIo) {
             g_near_video_open_failed = 1;
-
-        if (videoIo)
             compatLogFmt("VIDEO OPEN FAIL: %s (mode=%s)",
                          ioPath ? ioPath : "?", mode ? mode : "?");
+        }
         return f;
     }
 
-
-    if (explicitProfileConfig && f && !configWrite)
-        queueExplicitProfileActivation(ioPathStorage, false);
-
     if (!shaderIo && !vpakOwns(f))
         logShaderScriptDiagnostics(f, ioPath);
-
-    if (f && !redirectedProfilePath.empty()) {
-        if (strstr(redirectedProfilePath.c_str(), "_system.cfg"))
-            g_pendingProfileSystemWritten = true;
-        if (strstr(redirectedProfilePath.c_str(), "_game.cfg"))
-            g_pendingProfileGameWritten = true;
-
-        if (g_pendingProfileSystemWritten && g_pendingProfileGameWritten) {
-            g_pendingProfileCreate.clear();
-            g_pendingProfileSystemWritten = false;
-            g_pendingProfileGameWritten = false;
-        }
-    }
 
     if (videoIo)
         g_near_video_open_failed = 0;
 
     if (apkcache::adopt(f, ioPath)) {
         setvbuf(f, nullptr, _IOFBF, 16 * 1024);
-        if (!shaderIo)        return f;
+        if (!shaderIo)
+            return f;
     }
+
     setvbuf(f, nullptr, _IOFBF, 64 * 1024);
     return f;
 }
+
 // ─── Cached APK stream ───────────────────────────────────────────────────────
 // cocos2d-x reads the game's assets straight out of the .apk it was handed, and
 // minizip's access pattern — thousands of tiny reads plus a fresh walk of the
@@ -4412,45 +4077,21 @@ static int stub_open(const char* path, int flags, ...) {
     const bool openWrite =
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
 
-    const bool explicitProfileConfig =
-        isExplicitProfileConfigPath(normalizedPath) && !openWrite;
-
-    std::string ioPathStorage = explicitProfileConfig
-        ? normalizedPath
-        : remapActiveProfilePath(normalizedPath);
-
-    // Match stub_fopen(): after g_playerprofile is known, root system.cfg
-    // reads must resolve to the selected profile's system configuration.
-    // Root system.cfg writes remain untouched as the bootstrap configuration
-    // that stores g_playerprofile for the next launch.
-    if (!openWrite) {
-        const std::string systemReadPath =
-            remapRootProfileSystemRead(normalizedPath);
-        if (systemReadPath != normalizedPath)
-            ioPathStorage = systemReadPath;
-    }
-
+    // The guest requested this exact profile path. Do not infer or redirect
+    // profile selection from filesystem accesses.
+    const std::string ioPathStorage = normalizedPath;
     const char* ioPath = path ? ioPathStorage.c_str() : nullptr;
 
-    if (ioPathStorage != normalizedPath)
-        compatLogFmt("PROFILE ACTIVE REDIRECT: %s -> %s",
-                     normalizedPath.c_str(), ioPathStorage.c_str());
-
     rememberActiveLevelPak(ioPath);
+
 
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
 
-    auto noteExplicitProfileOpen = [&]() {
-        if (explicitProfileConfig && !openWrite)
-            queueExplicitProfileActivation(ioPathStorage, false);
-    };
-
     if (path && ioPathStorage != path) {
         const int vfd = devUrandomOpen(ioPath);
         if (vfd >= 0) {
-            noteExplicitProfileOpen();
             return vfd;
         }
     }
@@ -4487,9 +4128,6 @@ static int stub_open(const char* path, int flags, ...) {
 
     int fd = doOpen(ioPath);
 
-    if (fd >= 0 && !openWrite && isExplicitProfileConfigPath(normalizedPath))
-        queueExplicitProfileActivation(normalizedPath, false);
-
     if (shaderSourceOpen)
         compatLogFmt("open SHADER DIRECT: path=%s result=%s fd=%d",
                      ioPath, fd >= 0 ? "OK" : "FAIL", fd);
@@ -4503,7 +4141,6 @@ static int stub_open(const char* path, int flags, ...) {
                 compatLogFmt("open CASEFIX: %s -> %s fd=%d",
                              ioPath, resolved.c_str(), rfd);
                 if (videoIo) g_near_video_open_failed = 0;
-                noteExplicitProfileOpen();
                 return rfd;
             }
         }
@@ -4533,9 +4170,6 @@ static int stub_open(const char* path, int flags, ...) {
     } else if (videoIo) {
         g_near_video_open_failed = 0;
     }
-
-    if (fd >= 0)
-        noteExplicitProfileOpen();
 
     return fd;
 }
@@ -7537,53 +7171,8 @@ static int stub_findclose64(intptr_t handle) {
     return 0;
 }
 
-// Keep ordinary file removal untouched. A profile must only switch
-// to default when its actual profile directory is removed; deleting one of the
-// profile's *_system.cfg / *_game.cfg files is not a profile switch.
-static bool isExactProfileDirectory(const std::string& path,
-                                    std::string* profileOut = nullptr) {
-    std::string normalized = path;
-    while (normalized.size() > 1 &&
-           (normalized.back() == '/' || normalized.back() == '\\'))
-        normalized.pop_back();
-
-    std::string lower = asciiLower(normalized);
-    const std::string prefix = "profiles/player/";
-    if (lower.rfind(prefix, 0) != 0)
-        return false;
-
-    const std::string profile = normalized.substr(prefix.size());
-    if (profile.empty() || profile.find('/') != std::string::npos ||
-        profile.find('\\') != std::string::npos)
-        return false;
-
-    if (profileOut)
-        *profileOut = profile;
-    return true;
-}
-
 static int stub_remove(const char* path) {
-    const std::string normalized = normalizeSwitchFsPath(path);
-
-    struct stat st = {};
-    const bool wasDirectory = (::stat(normalized.c_str(), &st) == 0) &&
-                              S_ISDIR(st.st_mode);
-
-    std::string removedProfile;
-    const bool profileDirectory =
-        wasDirectory && isExactProfileDirectory(normalized, &removedProfile);
-
-    const int rc = ::remove(normalized.c_str());
-
-    if (rc == 0 && profileDirectory &&
-        !g_activeProfile.empty() &&
-        asciiLower(removedProfile) == asciiLower(g_activeProfile)) {
-        g_pendingProfileActivation = "default";
-        compatLogFmt("PROFILE DIRECTORY DELETED: %s -> default pending",
-                     removedProfile.c_str());
-    }
-
-    return rc;
+    return ::remove(normalizeSwitchFsPath(path).c_str());
 }
 
 static int stub_rename(const char* old_path, const char* new_path) {
@@ -10998,20 +10587,7 @@ static int  stub_unlink(const char* path) {
     return ::unlink(path);
 }
 static int stub_rmdir(const char* path) {
-    const std::string normalized = normalizeSwitchFsPath(path);
-    std::string removedProfile;
-    const bool profileDirectory = isExactProfileDirectory(normalized, &removedProfile);
-    const int rc = ::rmdir(normalized.c_str());
-
-    if (rc == 0 && profileDirectory &&
-        !g_activeProfile.empty() &&
-        asciiLower(removedProfile) == asciiLower(g_activeProfile)) {
-        g_pendingProfileActivation = "default";
-        compatLogFmt("PROFILE RMDIR ACTIVE: %s -> default pending",
-                     removedProfile.c_str());
-    }
-
-    return rc;
+    return ::rmdir(normalizeSwitchFsPath(path).c_str());
 }
 static int  stub_truncate(const char*, long)     { errno = EROFS; return -1; }
 static int  stub_ftruncate(int, long)            { errno = EROFS; return -1; }
