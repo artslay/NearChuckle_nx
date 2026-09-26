@@ -4200,12 +4200,6 @@ static FILE* makeSyntheticAlphaGradientDds() {
     return f;
 }
 
-static size_t sh_fread(void* p, size_t sz, size_t n, FILE* f);
-static int sh_fseek(FILE* f, long off, int whence);
-static long sh_ftell(FILE* f);
-static int sh_fclose(FILE* f);
-static FILE* patchFarCryProfilesLua(FILE* original, const char* requestedPath);
-
 // fopen wrapper — logs failed opens so we can see what paths game code requests
 static FILE* stub_fopen(const char* path, const char* mode) {
     const std::string normalizedPath = normalizeSwitchFsPath(path);
@@ -4293,9 +4287,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         FILE* pakFile = tryOpenFromPaks(ioPath, mode);
         if (pakFile) {
             if (videoIo) g_near_video_open_failed = 0;
-            pakFile = patchFarCryProfilesLua(pakFile, normalizedPath.c_str());
-            if (!pakFile)
-                return nullptr;
             if (isShaderCacheLookupPath(ioPath)) {
                 static std::atomic<unsigned> shaderCachePakHits{0};
                 const unsigned hit = shaderCachePakHits.fetch_add(
@@ -4328,10 +4319,6 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                          ioPath ? ioPath : "?", mode ? mode : "?", errno);
         return nullptr;
     }
-
-    f = patchFarCryProfilesLua(f, normalizedPath.c_str());
-    if (!f)
-        return nullptr;
 
     if (!shaderIo && !vpakOwns(f))
         logShaderScriptDiagnostics(f, ioPath);
@@ -4467,105 +4454,6 @@ static void sh_rewind(FILE* f) {
     }
     rewind(f);
 }
-static bool isFarCryProfilesLuaPath(const std::string& path) {
-    std::string lower = asciiLower(path);
-    for (char& c : lower) {
-        if ((unsigned char)c == 92)
-            c = '/';
-    }
-    const std::string suffix = "scripts/menuscreens/profiles.lua";
-    return lower.size() >= suffix.size() &&
-           lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
-// The stock Profiles.lua reads ProfileList:GetSelection() after
-// UI:TerminateGame(). Preserve the selected profile across that cleanup.
-static FILE* patchFarCryProfilesLua(FILE* original, const char* requestedPath) {
-    if (!original || !requestedPath || !isFarCryProfilesLuaPath(requestedPath))
-        return original;
-
-    static const char kMarker[] = "__SWITCH_PROFILE_SELECTION_FIX__";
-
-    const long saved = sh_ftell(original);
-    if (saved < 0 || sh_fseek(original, 0, SEEK_END) != 0) {
-        return original;
-    }
-
-    const long fileSize = sh_ftell(original);
-    if (fileSize <= 0 || fileSize > 1024 * 1024 ||
-        sh_fseek(original, 0, SEEK_SET) != 0) {
-        (void)sh_fseek(original, saved, SEEK_SET);
-        return original;
-    }
-
-    std::string text;
-    text.resize((size_t)fileSize);
-    if (sh_fread(&text[0], 1, text.size(), original) != text.size()) {
-        (void)sh_fseek(original, saved, SEEK_SET);
-        return original;
-    }
-
-    if (text.find(kMarker) != std::string::npos) {
-        (void)sh_fseek(original, saved, SEEK_SET);
-        return original;
-    }
-
-    const size_t functionPos = text.find("LoadProfile = function()");
-    if (functionPos == std::string::npos) {
-        (void)sh_fseek(original, saved, SEEK_SET);
-        return original;
-    }
-
-    const size_t terminateStart =
-        text.find("UI.bTerminatingGame = 1;", functionPos);
-    if (terminateStart == std::string::npos) {
-        (void)sh_fseek(original, saved, SEEK_SET);
-        return original;
-    }
-
-    const size_t terminateEnd =
-        text.find("UI.bTerminatingGame = nil;", terminateStart);
-    if (terminateEnd == std::string::npos) {
-        (void)sh_fseek(original, saved, SEEK_SET);
-        return original;
-    }
-
-    const std::string beforeTerminate =
-        "        -- " + std::string(kMarker) + "\n"
-        "        local __switchSelectedProfile = nil;\n"
-        "        if UI.PageProfiles.GUI.ProfileList:GetSelectionCount()==1 then\n"
-        "            local __switchIndex = UI.PageProfiles.GUI.ProfileList:GetSelection(0);\n"
-        "            __switchSelectedProfile = UI.PageProfiles.GUI.ProfileList:GetItem(__switchIndex);\n"
-        "        end\n";
-
-    const std::string afterTerminate =
-        "        if __switchSelectedProfile then\n"
-        "            UI.PageProfiles.GUI.ProfileList:ClearSelection();\n"
-        "            UI.PageProfiles.GUI.ProfileList:Select(__switchSelectedProfile);\n"
-        "        end\n";
-
-    text.insert(terminateStart, beforeTerminate);
-
-    const size_t adjustedAfterPos =
-        terminateEnd + beforeTerminate.size();
-    const size_t lineEnd = text.find('\n', adjustedAfterPos);
-    const size_t afterPos = lineEnd == std::string::npos
-        ? text.size() : lineEnd + 1;
-    text.insert(afterPos, afterTerminate);
-
-    auto data = std::make_shared<std::vector<unsigned char>>(
-        text.begin(), text.end());
-    if (!data) {
-        (void)sh_fseek(original, saved, SEEK_SET);
-        return original;
-    }
-
-    (void)sh_fclose(original);
-    compatLogFmt("PROFILE LUA FIX: preserved selected profile in %s",
-                 requestedPath);
-    return vpakOpen(std::move(data), requestedPath, false);
-}
-
 static int sh_fclose(FILE* f) {
     if (vpakOwns(f))
         return vpakClose(f);
