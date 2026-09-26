@@ -19,6 +19,7 @@ extern void compatLogFlush();
 extern void compatUiLog(const char* msg);
 extern void compatUiSetPct(int pct);
 extern "C" unsigned compatGuestGetFileSize(void* self, const char* path, unsigned flags);
+extern "C" void compatGuestSetCallbackTimeQuota(void* self, int nMicroseconds);
 extern "C" bool compatGuestActivateReadStream(void* self);
 extern "C" uint32_t compatGuestCallReadFileEx(void* self);
 extern "C" void* g_near_original_refstream_activate;
@@ -2123,6 +2124,51 @@ static bool patchFarCryGetFileSize(LoadedSo* so, uint8_t* stage_base,
     return true;
 }
 
+static bool patchFarCryCallbackTimeQuota(LoadedSo* so, uint8_t* stage_base,
+                                           uint64_t min_vaddr, size_t alloc_size) {
+    if (!so || !stage_base || !alloc_size)
+        return false;
+
+    const char* base = std::strrchr(so->path.c_str(), '/');
+    base = base ? base + 1 : so->path.c_str();
+    if (std::strcmp(base, "libCrySystem.so") != 0)
+        return false;
+
+    constexpr const char* kSym =
+        "_ZN16CRefStreamEngine20SetCallbackTimeQuotaEi";
+
+    void* fn = so->findSym(kSym);
+    if (!fn) {
+        compatLogFmt("FARCRY STREAM QUOTA: symbol not found: %s", kSym);
+        return false;
+    }
+
+    const uintptr_t imageBase = reinterpret_cast<uintptr_t>(so->base);
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(fn);
+    if (addr < imageBase || addr - imageBase + 16 > alloc_size) {
+        compatLogFmt("FARCRY STREAM QUOTA: symbol outside image fn=%p base=%p size=0x%llx",
+                     fn, reinterpret_cast<void*>(imageBase),
+                     (unsigned long long)alloc_size);
+        return false;
+    }
+
+    uint32_t* insn = reinterpret_cast<uint32_t*>(
+        stage_base + min_vaddr + (addr - imageBase));
+    const uint64_t helper = reinterpret_cast<uint64_t>(
+        &compatGuestSetCallbackTimeQuota);
+
+    insn[0] = 0x58000050u; // LDR X16, #+8
+    insn[1] = 0xd61f0200u; // BR X16
+    std::memcpy(&insn[2], &helper, sizeof(helper));
+    armICacheInvalidate(insn, 16);
+
+    compatLogFmt("FARCRY STREAM QUOTA: patched %s +0x%llx -> %p",
+                 kSym,
+                 (unsigned long long)(addr - imageBase),
+                 reinterpret_cast<void*>(helper));
+    return true;
+}
+
 static bool patchFarCryVirtualPakStreaming(LoadedSo* so, uint8_t* stage_base,
                                            uint64_t min_vaddr, size_t alloc_size) {
     if (!so || !stage_base || !alloc_size)
@@ -2442,6 +2488,8 @@ static void patchKnownGameQuirks(LoadedSo* so, uint8_t* stage_base,
             compatLog("FARCRY GETFILESIZE: patch not applied");
         if (!patchFarCryVirtualPakStreaming(so, stage_base, min_vaddr, alloc_size))
             compatLog("FARCRY PAK STREAM: patch not applied");
+        if (!patchFarCryCallbackTimeQuota(so, stage_base, min_vaddr, alloc_size))
+            compatLog("FARCRY STREAM QUOTA: patch not applied");
         return;
     }
 
