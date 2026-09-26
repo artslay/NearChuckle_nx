@@ -890,6 +890,90 @@ extern "C" bool compatActivateFarCryProfile(const char* profile) {
     return ok;
 }
 
+extern "C" bool compatLoadFarCryProfileConfiguration(const char* profile) {
+    if (!profile || !*profile)
+        return false;
+
+    LoadedSo* gameSo = nullptr;
+    for (LoadedSo* so : g_loaded_sos) {
+        if (!so)
+            continue;
+        const char* p = so->path.c_str();
+        const char* base = std::strrchr(p, '/');
+        base = base ? base + 1 : p;
+        if (std::strcmp(base, "libCryGame.so") == 0) {
+            gameSo = so;
+            break;
+        }
+    }
+    if (!gameSo)
+        return false;
+
+    using GetISystemFn = void* (*)();
+    auto getISystem =
+        reinterpret_cast<GetISystemFn>(gameSo->findSym("_Z10GetISystemv"));
+    if (!getISystem)
+        return false;
+
+    void* system = getISystem();
+    if (!system)
+        return false;
+
+    void*** systemVtable = reinterpret_cast<void***>(system);
+    if (!systemVtable || !*systemVtable)
+        return false;
+
+    // ISystem::GetIScriptSystem() is slot 25 in CryCommon's interface.
+    using GetIScriptSystemFn = void* (*)(void*);
+    auto getIScriptSystem =
+        reinterpret_cast<GetIScriptSystemFn>((*systemVtable)[25]);
+    if (!getIScriptSystem)
+        return false;
+
+    void* scriptSystem = getIScriptSystem(system);
+    if (!scriptSystem) {
+        compatLog("PROFILE CONFIG: GetIScriptSystem returned NULL");
+        return false;
+    }
+
+    void*** scriptVtable = reinterpret_cast<void***>(scriptSystem);
+    if (!scriptVtable || !*scriptVtable)
+        return false;
+
+    // IScriptSystem::ExecuteBuffer() is slot 3.
+    using ExecuteBufferFn = bool (*)(void*, const char*, size_t);
+    auto executeBuffer =
+        reinterpret_cast<ExecuteBufferFn>((*scriptVtable)[3]);
+    if (!executeBuffer)
+        return false;
+
+    char escaped[256];
+    size_t out = 0;
+    for (const unsigned char* p =
+             reinterpret_cast<const unsigned char*>(profile);
+         *p && out + 2 < sizeof(escaped); ++p) {
+        if (*p == '\\' || *p == '"')
+            escaped[out++] = '\\';
+        escaped[out++] = static_cast<char>(*p);
+    }
+    escaped[out] = '\0';
+
+    char script[384];
+    const int n = std::snprintf(
+        script, sizeof(script),
+        "Game:LoadConfiguration(\\\"%s\\\")", escaped);
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(script)) {
+        compatLog("PROFILE CONFIG: script command buffer overflow");
+        return false;
+    }
+
+    compatLogFmt("PROFILE CONFIG: loading selected profile=%s", profile);
+    const bool ok = executeBuffer(script, static_cast<size_t>(n));
+    compatLogFmt("PROFILE CONFIG: Game:LoadConfiguration result=%s",
+                 ok ? "OK" : "FAIL");
+    return ok;
+}
+
 extern "C" bool compatSaveFarCryConfiguration() {
     // Call the actual non-virtual CSystem::SaveConfiguration() symbol. This
     // preserves the engine's own serialization rules:
