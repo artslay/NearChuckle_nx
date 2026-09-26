@@ -841,6 +841,75 @@ static bool isProfileFsPath(const std::string& path) {
            lower.find("/profiles/") != std::string::npos;
 }
 
+static bool profileModeWrites(const char* mode) {
+    return mode &&
+           (mode[0] == 'w' || mode[0] == 'a' ||
+            std::strchr(mode, '+') != nullptr);
+}
+
+static bool getProfileGameBaseName(const std::string& path,
+                                   std::string& profileBase) {
+    std::string normalized = path;
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    const std::string lower = asciiLower(normalized);
+    const std::string suffix = "_game.cfg";
+    if (lower.size() <= suffix.size() ||
+        lower.compare(lower.size() - suffix.size(),
+                      suffix.size(), suffix) != 0)
+        return false;
+
+    const size_t slash = normalized.find_last_of('/');
+    const size_t nameStart = slash == std::string::npos ? 0 : slash + 1;
+    const size_t suffixStart = normalized.size() - suffix.size();
+    if (suffixStart <= nameStart)
+        return false;
+
+    profileBase = normalized.substr(nameStart, suffixStart - nameStart);
+    return !profileBase.empty();
+}
+
+static void ensureProfileSystemConfigForGameWrite(
+    const std::string& openedGamePath) {
+    std::string profileName;
+    if (!getProfileGameBaseName(openedGamePath, profileName))
+        return;
+
+    if (!isProfileFsPath(openedGamePath))
+        return;
+
+    std::string systemPath = openedGamePath.substr(
+        0, openedGamePath.size() - std::strlen("_game.cfg"));
+    systemPath += "_system.cfg";
+
+    struct stat st = {};
+    if (::stat(systemPath.c_str(), &st) == 0)
+        return;
+
+    FILE* systemFile = ::fopen(systemPath.c_str(), "wb");
+    if (!systemFile) {
+        compatLogFmt("PROFILE SYSTEM CREATE FAIL: %s errno=%d",
+                     systemPath.c_str(), errno);
+        return;
+    }
+
+    // CXGame::SaveConfiguration() normally writes the complete dumped CVar
+    // set here. Keep the bootstrap variable present even when the native
+    // system-config write did not reach the Switch filesystem layer; this is
+    // enough for profile discovery and for the selected profile to bootstrap
+    // on the next launch. A later native save overwrites this file normally.
+    std::fprintf(systemFile,
+                 "-- [System-Configuration]\\r\\n"
+                 "-- [Switch profile bootstrap]\\r\\n"
+                 "g_playerprofile = \\"%s\\"\\r\\n",
+                 profileName.c_str());
+    std::fclose(systemFile);
+    compatLogFmt("PROFILE SYSTEM CREATE: %s", systemPath.c_str());
+}
+
 static int stub_mkdir(const char* path, mode_t mode) {
     if (!path) {
         errno = EINVAL;
@@ -3855,6 +3924,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
     const bool profileIo = ioPath && isProfileFsPath(ioPath);
+    const bool writeMode = profileModeWrites(mode);
     if (profileIo)
         compatLogFmt("PROFILE FOPEN: %s mode=%s",
                      ioPath, mode ? mode : "?");
@@ -3879,6 +3949,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     // CSystem/CXGame profile code selects <profile>_system.cfg and
     // <profile>_game.cfg; the compatibility layer must not replace them.
     FILE* f = fopen(ioPath, mode);
+    std::string openedPath = ioPath ? ioPath : "";
 
     if (!f && ioPath) {
         std::string resolved;
@@ -3886,7 +3957,10 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
                 if (videoIo) g_near_video_open_failed = 0;
-                if (!shaderIo) f = rf;
+                if (!shaderIo) {
+                    f = rf;
+                    openedPath = resolved;
+                }
             }
         }
     }
@@ -3899,12 +3973,15 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (resolvePathCaseInsensitive(virtualPath.c_str(), resolved)) {
             FILE* rf = fopen(resolved.c_str(), mode);
             if (rf) {
-                if (!shaderIo) f = rf;
+                if (!shaderIo) {
+                    f = rf;
+                    openedPath = resolved;
+                }
             }
         }
     }
 
-    if (!f) {
+    if (!f && !writeMode) {
         FILE* pakFile = tryOpenFromPaks(ioPath, mode);
         if (pakFile) {
             if (videoIo) g_near_video_open_failed = 0;
@@ -3934,6 +4011,13 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         return f;
     }
 
+    if (!f && writeMode) {
+        if (profileIo)
+            compatLogFmt("PROFILE FOPEN FAIL: %s mode=%s errno=%d",
+                         ioPath ? ioPath : "?", mode ? mode : "?", errno);
+        return nullptr;
+    }
+
     if (!shaderIo && !vpakOwns(f))
         logShaderScriptDiagnostics(f, ioPath);
 
@@ -3947,6 +4031,17 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     }
 
     setvbuf(f, nullptr, _IOFBF, 64 * 1024);
+
+    if (f && writeMode && profileIo) {
+        compatLogFmt("PROFILE FOPEN OK: %s mode=%s",
+                     openedPath.c_str(), mode ? mode : "?");
+        std::string lowerOpened = asciiLower(openedPath);
+        if (lowerOpened.size() >= std::strlen("_game.cfg") &&
+            lowerOpened.compare(lowerOpened.size() - std::strlen("_game.cfg"),
+                                std::strlen("_game.cfg"), "_game.cfg") == 0) {
+            ensureProfileSystemConfigForGameWrite(openedPath);
+        }
+    }
     return f;
 }
 
