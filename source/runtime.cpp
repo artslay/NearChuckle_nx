@@ -442,7 +442,7 @@ static void switchEmitTouch(void* fn_ptr, int action, float x, float y) {
 }
 
 static void switchInputResolveCallbacks() {
-    if (g_sdl_key_down && g_sdl_key_up && g_sdl_mouse)
+    if (g_sdl_key_down && g_sdl_key_up && g_sdl_mouse && g_sdl_touch)
         return;
 
     g_sdl_key_down = jniFindRegisteredNative("onNativeKeyDown", 0);
