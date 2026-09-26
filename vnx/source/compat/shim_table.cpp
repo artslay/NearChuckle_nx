@@ -1051,9 +1051,16 @@ static bool ensureProfileConfigPairForPath(
     const std::string profileDirectory = base + profileName;
 
     struct stat stDir = {};
-    if (::stat(profileDirectory.c_str(), &stDir) != 0 ||
-        !S_ISDIR(stDir.st_mode))
+    if (::stat(profileDirectory.c_str(), &stDir) != 0) {
+        if (::mkdir(profileDirectory.c_str(), 0755) != 0 && errno != EEXIST) {
+            compatLogFmt("PROFILE DIR CREATE FAIL: %s errno=%d",
+                         profileDirectory.c_str(), errno);
+            return false;
+        }
+        compatLogFmt("PROFILE DIR CREATE: %s", profileDirectory.c_str());
+    } else if (!S_ISDIR(stDir.st_mode)) {
         return false;
+    }
 
     return ensureProfileConfigPairForDirectory(profileDirectory);
 }
