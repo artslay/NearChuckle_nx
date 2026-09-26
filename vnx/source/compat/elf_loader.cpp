@@ -1158,20 +1158,9 @@ struct FarCryBackgroundVideoVarSink {
 
         const bool wantsEnable = std::atoi(newValue) != 0;
         if (g_bg_video_value == 0 && wantsEnable) {
-            const u64 now = armGetSystemTick();
-            const u64 freq = armGetSystemTickFreq();
-            const u64 cooldown = freq != 0 ? freq * 3 : 0;
-            const bool withinCooldown =
-                freq != 0 && g_bg_video_disabled_tick != 0 &&
-                now >= g_bg_video_disabled_tick &&
-                now - g_bg_video_disabled_tick < cooldown;
-
-            if (withinCooldown) {
-                compatLogFmt(
-                    "PROFILE CVar SINK: blocked ui_BackGroundVideo=1 cooldown=%d",
-                    1);
-                return false;
-            }
+            compatLog(
+                "PROFILE CVar SINK: blocked ui_BackGroundVideo=1 while background video is disabled");
+            return false;
         }
 
         return true;
@@ -1329,6 +1318,19 @@ extern "C" void compatPollFarCryBackgroundVideoSave() {
 
     if (value == g_bg_video_value)
         return;
+
+    // Once the user has disabled background video, do not let the engine's
+    // Main Menu/UI reinitialization silently turn it back on.
+    if (g_bg_video_value == 0 && value != 0) {
+        using SetStringFn = void (*)(void*, const char*);
+        auto setString =
+            reinterpret_cast<SetStringFn>((*cvarVtable)[4]);
+        if (setString)
+            setString(cvar, "0");
+        compatLog("PROFILE CVar: forced ui_BackGroundVideo back to 0");
+        g_bg_video_last_cvar = cvar;
+        return;
+    }
 
     const int oldValue = g_bg_video_value;
     g_bg_video_value = value;
