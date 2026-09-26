@@ -875,6 +875,8 @@ static int stub__mkdirat(int dirfd, const char* path, mode_t mode) {
 // generic save call while g_playerprofile is still "default". Preserve that
 // requested name for the immediately following default config write.
 static std::string g_pendingProfileCreate;
+static bool g_pendingProfileSystemWritten = false;
+static bool g_pendingProfileGameWritten = false;
 
 static bool parseProfileConfigName(const std::string& path,
                                    const char* suffix,
@@ -896,6 +898,20 @@ static bool parseProfileConfigName(const std::string& path,
         return false;
 
     profile = path.substr(nameStart, suffixStart - nameStart);
+
+    // The profile text field can leave trailing spaces before the generated
+    // "_game.cfg"/"_system.cfg" suffix. Those spaces are not part of the
+    // profile name and must never become part of the directory/file name.
+    while (!profile.empty() &&
+           std::isspace((unsigned char)profile.back()))
+        profile.pop_back();
+    size_t first = 0;
+    while (first < profile.size() &&
+           std::isspace((unsigned char)profile[first]))
+        ++first;
+    if (first)
+        profile.erase(0, first);
+
     return !profile.empty();
 }
 
@@ -3948,6 +3964,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
             if (parseProfileConfigName(ioPathStorage, "_system.cfg", probedProfile) &&
                 asciiLower(probedProfile) != "default") {
                 g_pendingProfileCreate = probedProfile;
+                g_pendingProfileSystemWritten = false;
+                g_pendingProfileGameWritten = false;
                 compatLogFmt("PROFILE PENDING CREATE: %s",
                              g_pendingProfileCreate.c_str());
             }
@@ -3991,8 +4009,18 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     if (!shaderIo && !vpakOwns(f))
         logShaderScriptDiagnostics(f, ioPath);
 
-    if (f && !redirectedProfilePath.empty())
-        g_pendingProfileCreate.clear();
+    if (f && !redirectedProfilePath.empty()) {
+        if (strstr(redirectedProfilePath.c_str(), "_system.cfg"))
+            g_pendingProfileSystemWritten = true;
+        if (strstr(redirectedProfilePath.c_str(), "_game.cfg"))
+            g_pendingProfileGameWritten = true;
+
+        if (g_pendingProfileSystemWritten && g_pendingProfileGameWritten) {
+            g_pendingProfileCreate.clear();
+            g_pendingProfileSystemWritten = false;
+            g_pendingProfileGameWritten = false;
+        }
+    }
 
     if (videoIo)
         g_near_video_open_failed = 0;
