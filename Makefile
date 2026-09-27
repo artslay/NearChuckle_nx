@@ -106,28 +106,32 @@ $(BUILD): prepare_romfs
 
 .PHONY: prepare_romfs
 prepare_romfs:
-	@echo "Packaging Android ARM64 libraries into NRO RomFS from: $(EMBED_LIB_SOURCE)"
-	@test -d "$(EMBED_LIB_SOURCE)" || { echo "ERROR: guest library source not found: $(EMBED_LIB_SOURCE)"; exit 1; }
-	@rm -rf "$(EMBED_LIB_DIR)"
-	@mkdir -p "$(EMBED_LIB_DIR)"
-	@find "$(EMBED_LIB_SOURCE)" -maxdepth 1 -type f -name '*.so' -exec cp -fL {} "$(EMBED_LIB_DIR)/" \;
-	@test -n "$(find "$(EMBED_LIB_DIR)" -maxdepth 1 -type f -name '*.so' -print -quit)" || { echo "ERROR: no .so files found in $(EMBED_LIB_SOURCE)"; exit 1; }
-	@echo "Embedded guest libraries: $(find "$(EMBED_LIB_DIR)" -maxdepth 1 -type f -name '*.so' | wc -l)"
+	@echo "Preparing Android ARM64 libraries for NRO RomFS"
+	@if [ -d "$(EMBED_LIB_SOURCE)" ] && [ -n "$$(find "$(EMBED_LIB_SOURCE)" -maxdepth 1 -type f -name '*.so' -print -quit)" ]; then \
+		echo "Packaging guest libraries from: $(EMBED_LIB_SOURCE)"; \
+		rm -rf "$(EMBED_LIB_DIR)"; \
+		mkdir -p "$(EMBED_LIB_DIR)"; \
+		find "$(EMBED_LIB_SOURCE)" -maxdepth 1 -type f -name '*.so' -exec cp -fL {} "$(EMBED_LIB_DIR)/" \; ; \
+	else \
+		echo "Guest library source not found at $(EMBED_LIB_SOURCE); keeping existing embedded romfs/lib"; \
+	fi
+	@test -n "$$(find "$(EMBED_LIB_DIR)" -maxdepth 1 -type f -name '*.so' -print -quit)" || { echo "ERROR: no embedded .so files found in $(EMBED_LIB_DIR)"; exit 1; }
+	@echo "Embedded guest libraries: $$(find "$(EMBED_LIB_DIR)" -maxdepth 1 -type f -name '*.so' | wc -l)"
 	@pak_source="$(EMBED_PAK_SOURCE)"; \
-		if [ ! -d "$pak_source" ] && [ -d "$(CURDIR)/game/fcdata" ]; then \
+		if [ ! -d "$$pak_source" ] && [ -d "$(CURDIR)/game/fcdata" ]; then \
 			pak_source="$(CURDIR)/game/fcdata"; \
-		elif [ ! -d "$pak_source" ] && [ -d "$(CURDIR)/FCData" ]; then \
+		elif [ ! -d "$$pak_source" ] && [ -d "$(CURDIR)/FCData" ]; then \
 			pak_source="$(CURDIR)/FCData"; \
-		elif [ ! -d "$pak_source" ] && [ -d "$(CURDIR)/fcdata" ]; then \
+		elif [ ! -d "$$pak_source" ] && [ -d "$(CURDIR)/fcdata" ]; then \
 			pak_source="$(CURDIR)/fcdata"; \
 		fi; \
-		echo "Packaging core Far Cry PAKs into NRO RomFS from: $pak_source"; \
-		test -d "$pak_source" || { echo "ERROR: PAK source directory not found: $pak_source"; exit 1; }; \
+		echo "Packaging core Far Cry PAKs into NRO RomFS from: $$pak_source"; \
+		test -d "$$pak_source" || { echo "ERROR: PAK source directory not found: $$pak_source"; exit 1; }; \
 		rm -rf "$(EMBED_PAK_DIR)"; \
 		mkdir -p "$(EMBED_PAK_DIR)"; \
 		for pak in $(EMBED_PAK_FILES); do \
-			test -f "$pak_source/$pak" || { echo "ERROR: required PAK not found: $pak_source/$pak"; exit 1; }; \
-			cp -fL "$pak_source/$pak" "$(EMBED_PAK_DIR)/$pak" || exit 1; \
+			test -f "$$pak_source/$$pak" || { echo "ERROR: required PAK not found: $$pak_source/$$pak"; exit 1; }; \
+			cp -fL "$$pak_source/$$pak" "$(EMBED_PAK_DIR)/$$pak" || exit 1; \
 		done; \
 		echo "Embedded core PAKs: $(EMBED_PAK_FILES)"
 
