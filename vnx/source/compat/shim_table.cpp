@@ -4843,7 +4843,7 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         if (tailStart != std::string::npos && tailStart < lower.size()) {
             std::string languageRelative =
                 std::string("languages/") +
-                ioPath + tailStart;
+                std::string(ioPath).substr(tailStart);
 
             std::string languageResolved;
             const bool languageResolvedOk =
