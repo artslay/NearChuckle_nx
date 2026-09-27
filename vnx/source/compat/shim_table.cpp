@@ -157,10 +157,12 @@ static bool isShaderCacheLookupPath(const char* path);
 // These two Android intro movies are not shipped with the Switch game data.
 // Treat a missing open as an optional asset so the video sequencer can continue.
 // A real file with either name is still opened normally.
-// Russian language archives used by the original Far Cry installation.
-// They are stored under languages/ in the Switch distribution while the
-// Android/Linux CryPak requests FCData/Localized/<name>.pak.
-static bool isRussianLanguagePakPath(const char* path) {
+// Far Cry stores language PAKs under FCData/Localized.
+// A Russian installation may contain russian.pak/russian1.pak/russian2.pak
+// while the guest starts with the default english language setting. When an
+// English archive is absent, use the matching Russian archive from the same
+// directory rather than redirecting PAK containers into Languages/.
+static bool isEnglishLanguagePakPath(const char* path) {
     if (!path || !*path)
         return false;
 
@@ -175,9 +177,33 @@ static bool isRussianLanguagePakPath(const char* path) {
         ? normalized
         : normalized.substr(slash + 1);
 
-    return base == "russian.pak" ||
-           base == "russian1.pak" ||
-           base == "russian2.pak";
+    return base == "english.pak" ||
+           base == "english1.pak" ||
+           base == "english2.pak";
+}
+
+static std::string russianLanguagePakFallbackPath(const char* path) {
+    if (!path || !isEnglishLanguagePakPath(path))
+        return std::string();
+
+    std::string fallback = normalizeSwitchFsPath(path);
+    const size_t slash = fallback.find_last_of("/\\");
+    const std::string base = slash == std::string::npos
+        ? fallback
+        : fallback.substr(slash + 1);
+
+    std::string russianBase;
+    if (base == "english.pak")
+        russianBase = "russian.pak";
+    else if (base == "english1.pak")
+        russianBase = "russian1.pak";
+    else
+        russianBase = "russian2.pak";
+
+    if (slash == std::string::npos)
+        return russianBase;
+
+    return fallback.substr(0, slash + 1) + russianBase;
 }
 
 static bool isOptionalMissingVideoPath(const char* path) {
@@ -4817,77 +4843,38 @@ static FILE* stub_fopen(const char* path, const char* mode) {
         }
     }
 
-    // The original Far Cry engine names language archives under
-    // FCData/Localized, while the Switch distribution keeps the original
-    // game layout with language archives in the top-level languages/ folder.
-    // OpenLanguagePak() reaches this fopen() with the former path, so bridge
-    // that container name to the real Switch location instead of fabricating
-    // an empty archive.
-    if (!f && pakArchiveIo && ioPath) {
-        std::string lower = asciiLower(ioPath);
-        for (char& c : lower) {
-            if ((unsigned char)c == 92)
-                c = '/';
-        }
+    // Russian Far Cry installations keep the language containers in
+    // FCData/Localized/russian*.pak. If the guest asks for the default English
+    // archive but it is not present, retry the same container name with the
+    // Russian counterpart. This keeps the original CryPak archive semantics:
+    // ZipDir still receives a real physical ZIP/Pak file.
+    if (!f && pakArchiveIo && ioPath && isEnglishLanguagePakPath(ioPath)) {
+        const fallback = russianLanguagePakFallbackPath(ioPath);
+        std::string resolvedFallback;
+        const bool fallbackResolved =
+            !fallback.empty() &&
+            resolvePathCaseInsensitive(fallback.c_str(), resolvedFallback);
 
-        const char* marker = "/fcdata/localized/";
-        size_t markerPos = lower.find(marker);
-        size_t tailStart = std::string::npos;
+        compatLogFmt(
+            "PAK RUSSIAN FALLBACK: requested=%s candidate=%s resolved=%s ok=%d",
+            ioPath,
+            fallback.empty() ? "<none>" : fallback.c_str(),
+            resolvedFallback.empty() ? "<none>" : resolvedFallback.c_str(),
+            fallbackResolved ? 1 : 0);
 
-        if (markerPos != std::string::npos) {
-            tailStart = markerPos + std::strlen(marker);
-        } else if (lower.rfind("fcdata/localized/", 0) == 0) {
-            tailStart = std::strlen("fcdata/localized/");
-        }
+        if (fallbackResolved) {
+            FILE* rf = fopen(resolvedFallback.c_str(), mode);
 
-        if (tailStart != std::string::npos && tailStart < lower.size()) {
-            std::string languageRelative =
-                std::string("languages/") +
-                std::string(ioPath).substr(tailStart);
+            compatLogFmt(
+                "PAK RUSSIAN FALLBACK OPEN: requested=%s actual=%s file=%p errno=%d",
+                ioPath,
+                resolvedFallback.c_str(),
+                (void*)rf,
+                errno);
 
-            std::string languageResolved;
-            const bool languageResolvedOk =
-                resolvePathCaseInsensitive(languageRelative.c_str(),
-                                            languageResolved);
-
-            if (isRussianLanguagePakPath(ioPath)) {
-                compatLogFmt(
-                    "PAK RUSSIAN ALIAS: requested=%s candidate=%s resolved=%s ok=%d",
-                    ioPath,
-                    languageRelative.c_str(),
-                    languageResolved.empty() ? "<none>" : languageResolved.c_str(),
-                    languageResolvedOk ? 1 : 0);
-            } else {
-                compatLogFmt(
-                    "PAK LANGUAGE ALIAS: requested=%s candidate=%s resolved=%s ok=%d",
-                    ioPath,
-                    languageRelative.c_str(),
-                    languageResolved.empty() ? "<none>" : languageResolved.c_str(),
-                    languageResolvedOk ? 1 : 0);
-            }
-
-            if (languageResolvedOk) {
-                FILE* lf = fopen(languageResolved.c_str(), mode);
-                if (isRussianLanguagePakPath(ioPath)) {
-                    compatLogFmt(
-                        "PAK RUSSIAN ALIAS OPEN: requested=%s actual=%s file=%p errno=%d",
-                        ioPath,
-                        languageResolved.c_str(),
-                        (void*)lf,
-                        errno);
-                } else {
-                    compatLogFmt(
-                        "PAK LANGUAGE ALIAS OPEN: requested=%s actual=%s file=%p errno=%d",
-                        ioPath,
-                        languageResolved.c_str(),
-                        (void*)lf,
-                        errno);
-                }
-
-                if (lf) {
-                    f = lf;
-                    openedPath = languageResolved;
-                }
+            if (rf) {
+                f = rf;
+                openedPath = resolvedFallback;
             }
         }
     }
