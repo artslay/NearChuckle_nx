@@ -2944,6 +2944,8 @@ static std::vector<std::string> collectGlobalPakPaths() {
         "fcdata/Localized",
         "FCData/localized",
         "fcdata/localized",
+        "Languages",
+        "languages",
         nullptr
     };
 
@@ -4787,6 +4789,63 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 if (!shaderIo) {
                     f = rf;
                     openedPath = resolved;
+                }
+            }
+        }
+    }
+
+    // The original Far Cry engine names language archives under
+    // FCData/Localized, while the Switch distribution keeps the original
+    // game layout with language archives in the top-level languages/ folder.
+    // OpenLanguagePak() reaches this fopen() with the former path, so bridge
+    // that container name to the real Switch location instead of fabricating
+    // an empty archive.
+    if (!f && pakArchiveIo && ioPath) {
+        std::string lower = asciiLower(ioPath);
+        for (char& c : lower) {
+            if ((unsigned char)c == 92)
+                c = '/';
+        }
+
+        const char* marker = "/fcdata/localized/";
+        size_t markerPos = lower.find(marker);
+        size_t tailStart = std::string::npos;
+
+        if (markerPos != std::string::npos) {
+            tailStart = markerPos + std::strlen(marker);
+        } else if (lower.rfind("fcdata/localized/", 0) == 0) {
+            tailStart = std::strlen("fcdata/localized/");
+        }
+
+        if (tailStart != std::string::npos && tailStart < lower.size()) {
+            std::string languageRelative =
+                std::string("languages/") +
+                ioPath + tailStart;
+
+            std::string languageResolved;
+            const bool languageResolvedOk =
+                resolvePathCaseInsensitive(languageRelative.c_str(),
+                                            languageResolved);
+
+            compatLogFmt(
+                "PAK LANGUAGE ALIAS: requested=%s candidate=%s resolved=%s ok=%d",
+                ioPath,
+                languageRelative.c_str(),
+                languageResolved.empty() ? "<none>" : languageResolved.c_str(),
+                languageResolvedOk ? 1 : 0);
+
+            if (languageResolvedOk) {
+                FILE* lf = fopen(languageResolved.c_str(), mode);
+                compatLogFmt(
+                    "PAK LANGUAGE ALIAS OPEN: requested=%s actual=%s file=%p errno=%d",
+                    ioPath,
+                    languageResolved.c_str(),
+                    (void*)lf,
+                    errno);
+
+                if (lf) {
+                    f = lf;
+                    openedPath = languageResolved;
                 }
             }
         }
