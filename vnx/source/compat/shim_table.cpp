@@ -4878,6 +4878,57 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 f = rf;
                 openedPath = resolvedFallback;
             }
+        } else {
+            // The original engine treats language patch archives as optional,
+            // but this Android build can let ZipDir::Error escape when fopen()
+            // fails before OpenArchive() gets a chance to report a simple miss.
+            // Russian distributions commonly have russian.pak/russian1.pak
+            // but no russian2.pak. For the missing *2 archive, reuse the nearest
+            // real Russian language archive instead of returning a hard fopen()
+            // failure. A real russian2.pak always wins above.
+            std::string alternate;
+            const std::string normalized =
+                asciiLower(std::string(ioPath));
+            const size_t slash = normalized.find_last_of("/\\\\");
+            const std::string base = slash == std::string::npos
+                ? normalized
+                : normalized.substr(slash + 1);
+
+            if (base == "english2.pak") {
+                alternate = normalizeSwitchFsPath(ioPath);
+                const size_t outSlash = alternate.find_last_of("/\\\\");
+                if (outSlash == std::string::npos)
+                    alternate = "russian1.pak";
+                else
+                    alternate = alternate.substr(0, outSlash + 1) + "russian1.pak";
+
+                std::string resolvedAlternate;
+                const bool alternateResolved =
+                    resolvePathCaseInsensitive(alternate.c_str(), resolvedAlternate);
+
+                compatLogFmt(
+                    "PAK RUSSIAN FALLBACK ALT: requested=%s candidate=%s resolved=%s ok=%d",
+                    ioPath,
+                    alternate.c_str(),
+                    resolvedAlternate.empty() ? "<none>" : resolvedAlternate.c_str(),
+                    alternateResolved ? 1 : 0);
+
+                if (alternateResolved) {
+                    FILE* rf = fopen(resolvedAlternate.c_str(), mode);
+
+                    compatLogFmt(
+                        "PAK RUSSIAN FALLBACK ALT OPEN: requested=%s actual=%s file=%p errno=%d",
+                        ioPath,
+                        resolvedAlternate.c_str(),
+                        (void*)rf,
+                        errno);
+
+                    if (rf) {
+                        f = rf;
+                        openedPath = resolvedAlternate;
+                    }
+                }
+            }
         }
     }
 
