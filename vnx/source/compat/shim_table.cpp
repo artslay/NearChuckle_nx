@@ -154,6 +154,7 @@ static bool pakGetMemory(
     bool& cacheHit);
 static bool pakVirtualDirectoryExists(const char* directory);
 static bool isShaderCacheLookupPath(const char* path);
+static std::string normalizeSwitchFsPath(const char* input);
 // These two Android intro movies are not shipped with the Switch game data.
 // Treat a missing open as an optional asset so the video sequencer can continue.
 // A real file with either name is still opened normally.
@@ -4849,7 +4850,8 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     // Russian counterpart. This keeps the original CryPak archive semantics:
     // ZipDir still receives a real physical ZIP/Pak file.
     if (!f && pakArchiveIo && ioPath && isEnglishLanguagePakPath(ioPath)) {
-        const fallback = russianLanguagePakFallbackPath(ioPath);
+        const std::string fallback =
+            russianLanguagePakFallbackPath(ioPath);
         std::string resolvedFallback;
         const bool fallbackResolved =
             !fallback.empty() &&
