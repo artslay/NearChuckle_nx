@@ -12,7 +12,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 TARGET      := NearChuckle_nx
 APP_TITLE   := Far Cry
 APP_AUTHOR  := artslay
-APP_VERSION := 1.0.0
+APP_VERSION := 1.0.1
 BUILD       := build
 SOURCES     := source vnx/source/compat
 DATA        :=
