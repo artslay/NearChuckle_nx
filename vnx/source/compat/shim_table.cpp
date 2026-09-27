@@ -155,6 +155,7 @@ static bool pakGetMemory(
 static bool pakVirtualDirectoryExists(const char* directory);
 static bool isShaderCacheLookupPath(const char* path);
 static std::string normalizeSwitchFsPath(const char* input);
+static std::string embeddedCorePakRomfsPath(const char* path);
 // These two Android intro movies are not shipped with the Switch game data.
 // Treat a missing open as an optional asset so the video sequencer can continue.
 // A real file with either name is still opened normally.
@@ -181,6 +182,47 @@ static bool isEnglishLanguagePakPath(const char* path) {
     return base == "english.pak" ||
            base == "english1.pak" ||
            base == "english2.pak";
+}
+
+static std::string embeddedCorePakRomfsPath(const char* path) {
+    if (!path || !*path)
+        return std::string();
+
+    std::string normalized = asciiLower(path);
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    const std::string marker = "/game/fcdata/";
+    std::string lowerBase;
+    const size_t markerPos = normalized.find(marker);
+    if (markerPos != std::string::npos) {
+        lowerBase = normalized.substr(markerPos + marker.size());
+    } else if (normalized.rfind("game/fcdata/", 0) == 0) {
+        lowerBase = normalized.substr(12);
+    } else if (normalized.rfind("fcdata/", 0) == 0) {
+        lowerBase = normalized.substr(7);
+    } else if (normalized.rfind("/fcdata/", 0) == 0) {
+        lowerBase = normalized.substr(8);
+    } else {
+        return std::string();
+    }
+
+    if (lowerBase != "0_20260203.pak" &&
+        lowerBase != "0.pak" &&
+        lowerBase != "1_20260517.pak" &&
+        lowerBase != "517.pak") {
+        return std::string();
+    }
+
+    if (lowerBase == "0_20260203.pak")
+        return "romfs:/game/FCData/0_20260203.pak";
+    if (lowerBase == "0.pak")
+        return "romfs:/game/FCData/0.pak";
+    if (lowerBase == "1_20260517.pak")
+        return "romfs:/game/FCData/1_20260517.pak";
+    return "romfs:/game/FCData/517.pak";
 }
 
 static std::string russianLanguagePakFallbackPath(const char* path) {
@@ -3047,6 +3089,21 @@ static std::vector<std::string> collectGlobalPakPaths() {
         ::closedir(dir);
     }
 
+    // Core archives bundled in the NRO RomFS are exposed under their
+    // normal logical FCData paths when the external SD copy is absent.
+    const char* const embeddedCorePaks[] = {
+        "FCData/0_20260203.pak",
+        "FCData/0.pak",
+        "FCData/1_20260517.pak",
+        "FCData/517.pak",
+        nullptr
+    };
+    for (size_t i = 0; embeddedCorePaks[i]; ++i) {
+        const std::string key = asciiLower(embeddedCorePaks[i]);
+        if (seen.insert(key).second)
+            paths.emplace_back(embeddedCorePaks[i]);
+    }
+
     std::sort(paths.begin(), paths.end());
     return paths;
 }
@@ -3078,6 +3135,11 @@ static std::vector<std::string> getGlobalPakPathsSnapshot() {
 
 static bool buildPakIndexLocked(const std::string& pakPath, PakIndex& index) {
     FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak) {
+        const std::string embeddedPath = embeddedCorePakRomfsPath(pakPath.c_str());
+        if (!embeddedPath.empty())
+            pak = fopen(embeddedPath.c_str(), "rb");
+    }
     if (!pak)
         return false;
 
@@ -3231,6 +3293,11 @@ static bool pakReadEntryToMemory(const std::string& pakPath,
     }
 
     FILE* pak = fopen(pakPath.c_str(), "rb");
+    if (!pak) {
+        const std::string embeddedPath = embeddedCorePakRomfsPath(pakPath.c_str());
+        if (!embeddedPath.empty())
+            pak = fopen(embeddedPath.c_str(), "rb");
+    }
     if (!pak) {
         compatPakLog("READ_OPEN_FAIL: pak=%s", pakPath.c_str());
         return false;
@@ -4781,6 +4848,20 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     FILE* f = fopen(ioPath, mode);
     const int pakOpenErrno = errno;
     std::string openedPath = ioPath ? ioPath : "";
+
+    if (!f && pakArchiveIo && ioPath) {
+        const std::string embeddedPath = embeddedCorePakRomfsPath(ioPath);
+        if (!embeddedPath.empty()) {
+            FILE* ef = fopen(embeddedPath.c_str(), mode);
+            compatLogFmt(
+                "PAK EMBEDDED FALLBACK: requested=%s actual=%s file=%p errno=%d",
+                ioPath, embeddedPath.c_str(), (void*)ef, errno);
+            if (ef) {
+                f = ef;
+                openedPath = embeddedPath;
+            }
+        }
+    }
 
     if (pakArchiveIo) {
         long size = -1;
