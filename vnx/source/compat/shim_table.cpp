@@ -4688,7 +4688,14 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     const bool videoIo =
         ioPath && (shaderPathHasExt(ioPath, ".bik") ||
                    shaderPathHasExt(ioPath, ".avi"));
+    const bool pakArchiveIo = ioPath && shaderPathHasExt(ioPath, ".pak");
     const bool profileIo = requestedProfileIo;
+
+    if (pakArchiveIo) {
+        compatLogFmt("PAK ARCHIVE OPEN REQUEST: path=%s mode=%s",
+                     ioPath ? ioPath : "?",
+                     mode ? mode : "?");
+    }
     if (profileIo)
         compatLogFmt("PROFILE FOPEN: %s mode=%s",
                      normalizedPath.c_str(), mode ? mode : "?");
@@ -4720,12 +4727,61 @@ static FILE* stub_fopen(const char* path, const char* mode) {
     // CSystem/CXGame profile code selects <profile>_system.cfg and
     // <profile>_game.cfg; the compatibility layer must not replace them.
     FILE* f = fopen(ioPath, mode);
+    const int pakOpenErrno = errno;
     std::string openedPath = ioPath ? ioPath : "";
+
+    if (pakArchiveIo) {
+        long size = -1;
+        unsigned char sig[4] = {0, 0, 0, 0};
+
+        if (f) {
+            const long savedPos = ftell(f);
+            if (savedPos >= 0 && fseek(f, 0, SEEK_END) == 0) {
+                size = ftell(f);
+                if (fseek(f, 0, SEEK_SET) == 0) {
+                    if (fread(sig, 1, sizeof(sig), f) != sizeof(sig)) {
+                        sig[0] = sig[1] = sig[2] = sig[3] = 0;
+                    }
+                }
+                fseek(f, savedPos, SEEK_SET);
+            }
+        }
+
+        errno = pakOpenErrno;
+        compatLogFmt(
+            "PAK ARCHIVE OPEN RESULT: path=%s file=%p errno=%d size=%ld sig=%02x%02x%02x%02x",
+            ioPath ? ioPath : "?",
+            (void*)f,
+            pakOpenErrno,
+            size,
+            sig[0], sig[1], sig[2], sig[3]);
+    }
 
     if (!f && ioPath) {
         std::string resolved;
-        if (resolvePathCaseInsensitive(ioPath, resolved) && resolved != ioPath) {
+        const bool resolvedOk =
+            resolvePathCaseInsensitive(ioPath, resolved);
+
+        if (pakArchiveIo) {
+            compatLogFmt(
+                "PAK ARCHIVE CASEFIX RESULT: requested=%s resolved=%s ok=%d",
+                ioPath,
+                resolved.empty() ? "<none>" : resolved.c_str(),
+                resolvedOk ? 1 : 0);
+        }
+
+        if (resolvedOk && resolved != ioPath) {
             FILE* rf = fopen(resolved.c_str(), mode);
+
+            if (pakArchiveIo) {
+                compatLogFmt(
+                    "PAK ARCHIVE CASEFIX OPEN: requested=%s resolved=%s file=%p errno=%d",
+                    ioPath,
+                    resolved.c_str(),
+                    (void*)rf,
+                    errno);
+            }
+
             if (rf) {
                 if (videoIo) g_near_video_open_failed = 0;
                 if (!shaderIo) {
