@@ -157,6 +157,29 @@ static bool isShaderCacheLookupPath(const char* path);
 // These two Android intro movies are not shipped with the Switch game data.
 // Treat a missing open as an optional asset so the video sequencer can continue.
 // A real file with either name is still opened normally.
+// Russian language archives used by the original Far Cry installation.
+// They are stored under languages/ in the Switch distribution while the
+// Android/Linux CryPak requests FCData/Localized/<name>.pak.
+static bool isRussianLanguagePakPath(const char* path) {
+    if (!path || !*path)
+        return false;
+
+    std::string normalized = asciiLower(path);
+    for (char& c : normalized) {
+        if ((unsigned char)c == 92)
+            c = '/';
+    }
+
+    const size_t slash = normalized.find_last_of('/');
+    const std::string base = slash == std::string::npos
+        ? normalized
+        : normalized.substr(slash + 1);
+
+    return base == "russian.pak" ||
+           base == "russian1.pak" ||
+           base == "russian2.pak";
+}
+
 static bool isOptionalMissingVideoPath(const char* path) {
     if (!path || !*path)
         return false;
@@ -4827,21 +4850,39 @@ static FILE* stub_fopen(const char* path, const char* mode) {
                 resolvePathCaseInsensitive(languageRelative.c_str(),
                                             languageResolved);
 
-            compatLogFmt(
-                "PAK LANGUAGE ALIAS: requested=%s candidate=%s resolved=%s ok=%d",
-                ioPath,
-                languageRelative.c_str(),
-                languageResolved.empty() ? "<none>" : languageResolved.c_str(),
-                languageResolvedOk ? 1 : 0);
+            if (isRussianLanguagePakPath(ioPath)) {
+                compatLogFmt(
+                    "PAK RUSSIAN ALIAS: requested=%s candidate=%s resolved=%s ok=%d",
+                    ioPath,
+                    languageRelative.c_str(),
+                    languageResolved.empty() ? "<none>" : languageResolved.c_str(),
+                    languageResolvedOk ? 1 : 0);
+            } else {
+                compatLogFmt(
+                    "PAK LANGUAGE ALIAS: requested=%s candidate=%s resolved=%s ok=%d",
+                    ioPath,
+                    languageRelative.c_str(),
+                    languageResolved.empty() ? "<none>" : languageResolved.c_str(),
+                    languageResolvedOk ? 1 : 0);
+            }
 
             if (languageResolvedOk) {
                 FILE* lf = fopen(languageResolved.c_str(), mode);
-                compatLogFmt(
-                    "PAK LANGUAGE ALIAS OPEN: requested=%s actual=%s file=%p errno=%d",
-                    ioPath,
-                    languageResolved.c_str(),
-                    (void*)lf,
-                    errno);
+                if (isRussianLanguagePakPath(ioPath)) {
+                    compatLogFmt(
+                        "PAK RUSSIAN ALIAS OPEN: requested=%s actual=%s file=%p errno=%d",
+                        ioPath,
+                        languageResolved.c_str(),
+                        (void*)lf,
+                        errno);
+                } else {
+                    compatLogFmt(
+                        "PAK LANGUAGE ALIAS OPEN: requested=%s actual=%s file=%p errno=%d",
+                        ioPath,
+                        languageResolved.c_str(),
+                        (void*)lf,
+                        errno);
+                }
 
                 if (lf) {
                     f = lf;
